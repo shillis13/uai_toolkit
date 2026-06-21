@@ -1,0 +1,22 @@
+# ai-toolkit — user configuration
+#
+# Copy this to  $AI_ROOT/config.toml  and edit. This is the ONE file you
+# customize (the old idea of a shell ".rc", but cross-platform: TOML reads
+# natively on macOS, Linux, and Windows — a shell rc cannot).
+#
+# Locate your instance with the AI_ROOT environment variable. Everything else
+# is read from here. Code never contains personal paths or secrets — they live
+# here, in your private instance, and never travel with the package.
+
+[paths]
+# Optional overrides. Leave blank to use sensible per-OS defaults.
+# logs = "~/.ai_root/logs"
+
+[jsonl]
+# Pager for catjsonl/jcat output: "auto" | "always" | "never".
+# On Windows "auto" falls back from `less` to `more`.
+pager = "auto"
+
+[platform]
+# Terminal session substrate: "auto" | "tmux" | "zellij" | "none" | "windows".
+substrate = "auto"
