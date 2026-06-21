@@ -1,26 +1,29 @@
-# ai-toolkit
+# uai_toolkit
 
-Portable AI tooling — jsonl readers, hooks, and platform-agnostic helpers.
-Runs on macOS, Linux, and **Windows 11 with native Python (no WSL)**.
+Unified AI toolkit — portable scaffolding and CLI-agent utilities with a largely AI-platform-agnostic design.
+
+Package name: `ai_toolkit`.
 
 ## Install
 
 ```bash
-pipx install ai-toolkit          # or: pip install ai-toolkit
-# then point AI_ROOT at your instance and customize config.toml:
+pip install -e .
+# or, later: pipx install ai-toolkit
+```
+
+For instance-specific state, point `AI_ROOT` at your writable instance and customize `config.toml`:
+
+```bash
 cp config.example.toml "$AI_ROOT/config.toml"
 ```
 
-This installs real per-OS launchers for each tool (e.g. `read_jsonl`) — no
-symlinks, no PATH setup, no admin rights.
-
 ## Tools
 
-- **`read_jsonl`** — read/filter/inspect Claude/Codex/Gemini session transcripts.
+- `read_jsonl` — read/filter/inspect Claude/Codex/Gemini session transcripts.
 
 ## Layout
 
-- `src/ai_toolkit/` — the package (read-only, upgradeable).
-- `$AI_ROOT/` — your writable instance: `config.toml`, logs, overrides. Never overwritten on upgrade.
+- `src/ai_toolkit/` — portable package code.
+- `$AI_ROOT/` — writable local instance: config, logs, overrides. Never overwritten on upgrade.
 
-See `DESIGN.md` for architecture and the porting roadmap. Requires Python ≥ 3.10.
+See `DESIGN.md` for architecture and the porting roadmap. Requires Python >= 3.10.
