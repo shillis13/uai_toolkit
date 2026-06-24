@@ -22,6 +22,7 @@ mcp = ["mcp>=1.0", "pyyaml>=6", "jsonschema>=4"]
 [project.scripts]
 ai-toolkit = "ai_toolkit.cli:main"
 ai-mcp-knowledge = "ai_toolkit.mcp.knowledge.server:run"
+ai-mcp-workflow = "ai_toolkit.mcp.workflow.server:run"
 read_jsonl = "ai_toolkit.jsonl.read_jsonl:main"
 # Multi-tool j-tools — each a real per-OS launcher (replaces the busybox symlinks).
 jcat = "ai_toolkit.jsonl.catjsonl:jcat"

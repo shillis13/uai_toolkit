@@ -29,6 +29,7 @@ INSTANCE_SUBDIRS = ["data", "data/file_access", "logs"]
 # MCP servers to register: (name, module). Command is the active python -m module.
 MCP_SERVERS = [
     ("knowledge", "ai_toolkit.mcp.knowledge.server"),
+    ("workflow", "ai_toolkit.mcp.workflow.server"),
 ]
 
 
