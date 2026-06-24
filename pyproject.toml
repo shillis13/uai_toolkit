@@ -18,9 +18,14 @@ full = ["psutil>=5.9"]
 dev = ["pytest>=7"]
 
 [project.scripts]
+ai-toolkit = "ai_toolkit.cli:main"
 read_jsonl = "ai_toolkit.jsonl.read_jsonl:main"
 # Multi-tool dispatch (jcat/jgrep/...) lands here as console_scripts too —
 # each becomes a real per-OS launcher, no symlinks needed.
+# file_access anti-clobber hook handlers (wired by `ai-toolkit init`):
+ai-fa-track-read = "ai_toolkit.file_access.hooks:track_read"
+ai-fa-track-write = "ai_toolkit.file_access.hooks:track_write"
+ai-fa-check-write = "ai_toolkit.file_access.hooks:check_before_write"
 
 [tool.setuptools.packages.find]
 where = ["src"]

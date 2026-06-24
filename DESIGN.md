@@ -49,20 +49,32 @@ with native Python (no WSL). Authored by the **Portage** session, 2026-06-20.
      repo with an `npm` install path, not part of this Python package.
    - HARD GATE before any public push: PII/secret scrub; tie to Git Guardian.
 
+7. **Hooks wire directly; no directory-scanning dispatcher.** The live
+   `dispatch.py` scans a dir for executable handlers (`os.access(X_OK)`) and
+   shells to `bash`/`python3` — both Windows-hostile, and redundant with Claude
+   Code's native multi-hook-per-event + block-on-deny semantics. So the toolkit
+   ships handlers as console_scripts and `ai-toolkit init` writes them straight
+   into `settings.json` (idempotent merge). The dir-scanning dispatcher is a
+   deferred, optional power-user feature.
+
 ## Min Python: 3.10 (pervasive `X | Y` unions). Target 3.11+.
 
 ## Status
-- **Tool #1 ported: `read_jsonl`** (the cleanest, and work-critical). Closure carried:
-  `jsonl/{read_jsonl,standardized_session}.py`, `jsonl/platform_adapters/`,
-  `utils/standard_colors.py`. The `~/bin/ai` `sys.path` hack removed; imports now
-  resolve as `ai_toolkit.*`. Heavier features (archive/engram/REPL) are lazy and
-  deferred to a `full` extra.
-- `platform_compat/{locking,process}.py` — first Tier-B adapters (the pattern).
+- **`read_jsonl`** ✅ ported + verified. Closure: `jsonl/{read_jsonl,standardized_session}.py`,
+  `jsonl/platform_adapters/`, `utils/standard_colors.py`. `sys.path` hack removed;
+  imports resolve as `ai_toolkit.*`. Archive/engram/REPL lazy → `full` extra.
+- **`file_access`** ✅ ported + verified. `file_access/tracker.py` (SQLite WAL,
+  drop-in API, fixes the JSONL no-locking + non-atomic-prune bug; 8-proc×250-write
+  zero-loss proof in `tests/`). `file_access/hooks.py` = 3 console-script handlers
+  (`ai-fa-track-read/-write`, `ai-fa-check-write`); conflict→exit2 verified.
+- **`ai-toolkit init`** ✅ built + verified (`cli.py`). Creates AI_ROOT, copies
+  config.toml, idempotent `settings.json` hook merge (preserves existing), --dry-run.
+- `platform_compat/{locking,process}.py` — Tier-B adapters (the pattern).
 
 ## Roadmap
-- P1 (Windows-first MVP): `read_jsonl` ✅ → `file_access` (move to SQLite; fixes a
-  current macOS locking bug) → `hooks` (`dispatch.sh` → Python).
-- `ai-toolkit init` + MCP/hook registration.
+- P1 (Windows-first MVP): `read_jsonl` ✅ · `file_access` ✅ · hooks-via-`init` ✅.
+  Remaining P1 polish: `jcat/jgrep/...` as console_scripts; Windows validation on a real box.
+- Next: port the **MCP servers** (the bulk of skills) + have `init` register them.
 - P2 (home/Mac): `session_mgmt` (Windows substrate, psutil discovery, DB registry),
   `prompting` (scheduler backend; Desktop control stays macOS-only).
 
