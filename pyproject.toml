@@ -16,6 +16,8 @@ dependencies = [
 # Heavier features (archive/engram/REPL) and Windows shims, opt-in.
 full = ["psutil>=5.9"]
 dev = ["pytest>=7"]
+# MCP servers (knowledge, ...) — the skill surface. Opt-in: pip install ai-toolkit[mcp]
+mcp = ["mcp>=1.0", "pyyaml>=6", "jsonschema>=4"]
 
 [project.scripts]
 ai-toolkit = "ai_toolkit.cli:main"
