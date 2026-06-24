@@ -26,6 +26,11 @@ HOOK_WIRING = [
 
 INSTANCE_SUBDIRS = ["data", "data/file_access", "logs"]
 
+# MCP servers to register: (name, module). Command is the active python -m module.
+MCP_SERVERS = [
+    ("knowledge", "ai_toolkit.mcp.knowledge.server"),
+]
+
 
 # ---------------------------------------------------------------------------
 # settings.json hook merge (idempotent)
@@ -55,6 +60,22 @@ def merge_hooks(settings: dict) -> tuple[dict, list[str]]:
         })
         added.append(f"{event}[{matcher}] -> {command}")
     return settings, added
+
+
+def merge_mcp(config: dict, python: str, root: Path) -> tuple[dict, list[str]]:
+    """Register our MCP servers in a client config's mcpServers (idempotent)."""
+    servers = config.setdefault("mcpServers", {})
+    added = []
+    for name, module in MCP_SERVERS:
+        if name in servers:
+            continue
+        servers[name] = {
+            "command": python,
+            "args": ["-m", module],
+            "env": {"AI_ROOT": str(root)},
+        }
+        added.append(name)
+    return config, added
 
 
 # ---------------------------------------------------------------------------
@@ -114,6 +135,29 @@ def cmd_init(args: argparse.Namespace) -> int:
             settings_path.parent.mkdir(parents=True, exist_ok=True)
             settings_path.write_text(json.dumps(settings, indent=2) + "\n")
 
+    # 4) MCP server registration (idempotent merge into the client mcp config)
+    mcp_path = (
+        Path(args.mcp_config).expanduser() if args.mcp_config
+        else Path.home() / ".claude.json"
+    )
+    mcp_cfg: dict | None = {}
+    if mcp_path.is_file():
+        try:
+            mcp_cfg = json.loads(mcp_path.read_text() or "{}")
+        except json.JSONDecodeError:
+            print(f"  ! {mcp_path} is not valid JSON — skipping MCP registration")
+            mcp_cfg = None
+    if mcp_cfg is not None:
+        mcp_cfg, mcp_added = merge_mcp(mcp_cfg, sys.executable, root)
+        if not mcp_added:
+            print("  MCP servers already registered — nothing to add")
+        else:
+            for n in mcp_added:
+                print(f"  {tag}register MCP server: {n}")
+            if not dry:
+                mcp_path.parent.mkdir(parents=True, exist_ok=True)
+                mcp_path.write_text(json.dumps(mcp_cfg, indent=2) + "\n")
+
     print("done." if not dry else "dry-run complete (no changes written).")
     return 0
 
@@ -142,6 +186,7 @@ def main(argv: list[str] | None = None) -> int:
     p_init = sub.add_parser("init", help="Create AI_ROOT instance + wire hooks")
     p_init.add_argument("--ai-root", help="Instance root (default: $AI_ROOT / discovery)")
     p_init.add_argument("--settings", help="Claude settings.json (default: ~/.claude/settings.json)")
+    p_init.add_argument("--mcp-config", help="MCP client config for server registration (default: ~/.claude.json)")
     p_init.add_argument("--dry-run", action="store_true", help="Show actions without writing")
     p_init.set_defaults(func=cmd_init)
 

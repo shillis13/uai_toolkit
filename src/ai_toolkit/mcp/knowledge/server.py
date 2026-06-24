@@ -18,10 +18,10 @@ from mcp.server import Server, NotificationOptions
 from mcp.server.stdio import stdio_server
 from mcp.types import TextContent
 
-from ai_toolkit.mcp.knowledge.tools import knowledge_guidance
+from ai_toolkit.mcp.knowledge.tools import knowledge_guidance, knowledge_memory
 
 # Sub-modules registered with this server. Each exposes tools() + call_tool().
-MODULES = [knowledge_guidance]
+MODULES = [knowledge_guidance, knowledge_memory]
 
 server = Server("knowledge")
 
