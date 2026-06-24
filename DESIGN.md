@@ -69,6 +69,12 @@ with native Python (no WSL). Authored by the **Portage** session, 2026-06-20.
   (`ai-fa-track-read/-write`, `ai-fa-check-write`); conflict→exit2 verified.
 - **`ai-toolkit init`** ✅ built + verified (`cli.py`). Creates AI_ROOT, copies
   config.toml, idempotent `settings.json` hook merge (preserves existing), --dry-run.
+- **j-tools** ✅ ported + verified: `jcat/jgrep/jhead/jtail/jwc/jfmt` as console_scripts
+  (`catjsonl.py`, `main(tool=...)` per-tool entries). 3 `sys.path` hacks removed;
+  pager `less`→`more` on Windows + graceful fallback when absent. The heavy
+  `file_utils.fsFind/fsFilters` (~2.5k LoC + common_utils + yaml) dependency
+  **replaced** by a 90-line stdlib shim `jsonl/discovery.py` (recursive .jsonl/logs.json
+  + since/before mtime window; gitignore-respect dropped as moot for transcript dirs).
 - `platform_compat/{locking,process}.py` — Tier-B adapters (the pattern).
 
 ## Roadmap

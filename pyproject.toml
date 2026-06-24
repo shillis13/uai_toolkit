@@ -20,8 +20,13 @@ dev = ["pytest>=7"]
 [project.scripts]
 ai-toolkit = "ai_toolkit.cli:main"
 read_jsonl = "ai_toolkit.jsonl.read_jsonl:main"
-# Multi-tool dispatch (jcat/jgrep/...) lands here as console_scripts too —
-# each becomes a real per-OS launcher, no symlinks needed.
+# Multi-tool j-tools — each a real per-OS launcher (replaces the busybox symlinks).
+jcat = "ai_toolkit.jsonl.catjsonl:jcat"
+jgrep = "ai_toolkit.jsonl.catjsonl:jgrep"
+jhead = "ai_toolkit.jsonl.catjsonl:jhead"
+jtail = "ai_toolkit.jsonl.catjsonl:jtail"
+jwc = "ai_toolkit.jsonl.catjsonl:jwc"
+jfmt = "ai_toolkit.jsonl.catjsonl:jfmt"
 # file_access anti-clobber hook handlers (wired by `ai-toolkit init`):
 ai-fa-track-read = "ai_toolkit.file_access.hooks:track_read"
 ai-fa-track-write = "ai_toolkit.file_access.hooks:track_write"
