@@ -24,7 +24,7 @@ from pathlib import Path
 
 # Ensure search_lib is importable
 _SCRIPT_DIR = str(Path(__file__).resolve().parent)
-from ai_toolkit.scripts.histories import search_lib
+from ai_toolkit.history import search_lib
 
 
 def cmd_search(args):

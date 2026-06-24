@@ -27,14 +27,14 @@ from pathlib import Path
 # --- paths ---
 AI_ROOT = Path(os.environ.get("AI_ROOT", os.path.expanduser("~/AI/ai_root")))
 
-from ai_toolkit.scripts.context_files import guidance_lib
+from ai_toolkit.guidance import guidance_lib
 
 SESSION_TRAITS = AI_ROOT / "ai_general" / "scripts" / "session_mgmt" / "session_traits.py"
 BRIEFS_DIR = AI_ROOT / "ai_general" / "data" / "session_briefs"
 
 # --- Color support ---
 try:
-    from ai_toolkit.utils.standard_colors import c, bold, dim, heading
+    from ai_toolkit.common_utils.standard_colors import c, bold, dim, heading
     HAS_COLOR = True
 except ImportError:
     HAS_COLOR = False

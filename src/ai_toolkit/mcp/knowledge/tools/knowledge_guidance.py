@@ -14,7 +14,7 @@ from pathlib import Path
 
 from mcp.types import Tool, TextContent
 
-GUIDANCE_MODULE = "ai_toolkit.scripts.context_files.guidance_cli"
+GUIDANCE_MODULE = "ai_toolkit.guidance.guidance_cli"
 
 
 def _run_cli(subcommand, args=None):

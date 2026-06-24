@@ -13,7 +13,7 @@ from pathlib import Path
 
 from mcp.types import Tool, TextContent
 
-SEARCH_MODULE = "ai_toolkit.scripts.histories.search_cli"
+SEARCH_MODULE = "ai_toolkit.history.search_cli"
 
 
 def _run_cli(subcommand, args=None, timeout=30):

@@ -41,7 +41,7 @@ from pathlib import Path
 from typing import Any
 
 # Import standard_colors
-from ai_toolkit.utils.standard_colors import (
+from ai_toolkit.common_utils.standard_colors import (
     CODES as _SC_CODES,
     c as _sc_c,
     colors_enabled as _sc_colors_enabled,

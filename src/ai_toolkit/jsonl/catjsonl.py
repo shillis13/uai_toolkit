@@ -36,7 +36,7 @@ from ai_toolkit.jsonl.read_jsonl import (
     parse_session, find_jsonl, detect_platform,
     format_messages_from_schema, _ts_to_local,
 )
-from ai_toolkit.utils.standard_colors import set_color_mode as _sc_set_color_mode
+from ai_toolkit.common_utils.standard_colors import set_color_mode as _sc_set_color_mode
 from ai_toolkit.jsonl.discovery import discover_files
 
 

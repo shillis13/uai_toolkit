@@ -14,7 +14,7 @@ import sys
 from mcp.types import Tool, TextContent
 
 # Locate todo_mgr entry point
-TODO_MGR_MODULE = "ai_toolkit.scripts.tasks.todo_mgr"
+TODO_MGR_MODULE = "ai_toolkit.todo.todo_mgr"
 
 # Valid statuses for description text (loaded once at import)
 VALID_STATUSES = [

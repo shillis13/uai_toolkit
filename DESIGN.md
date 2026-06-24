@@ -10,6 +10,28 @@ with native Python (no WSL). Authored by the **Portage** session, 2026-06-20.
 - **`platform_compat`** — the Tier-B adapter layer: one module per OS-divergent concern, runtime dispatch, platform-blind callers.
 - **Tier A/B/C** — the portability change taxonomy (below).
 
+## Layout (src/ai_toolkit/)
+
+Flat-by-domain — no generic `scripts/` bucket, one shared-utils home.
+
+```
+install.py            the `ai-toolkit install` command (create AI_ROOT, wire hooks + MCP)
+paths.py              AI_ROOT discovery + config.toml
+jsonl/                read_jsonl + j-tools (catjsonl) + platform_adapters
+file_access/          SQLite anti-clobber tracker + hook handlers
+guidance/             guidance_cli/lib  (was scripts/context_files) — backs knowledge MCP
+memory/               memory_cli/lib    (was scripts/memories)
+history/              search_cli/lib    (was scripts/histories)
+todo/                 todo_mgr          (was scripts/tasks)
+mcp/                  shared/ framework + knowledge/ + workflow/ servers
+common_utils/         shared CLI libs (incl. standard_colors, folded in from utils/)
+platform_compat/      OS-divergence adapters (locking, process)
+```
+
+Naming: repo `uai_toolkit` (work) / `ai_toolkit` (public), but the **package is
+`ai_toolkit` in both** (Model A: promotion needs no import rewrite). The MCP
+servers invoke their backing domain CLIs via `python -m ai_toolkit.<domain>.<cli>`.
+
 ## Decisions (locked)
 
 1. **Ship vs. install split.** Package is read-only and upgradeable; the writable

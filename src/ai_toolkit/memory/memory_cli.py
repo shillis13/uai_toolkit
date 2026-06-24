@@ -22,7 +22,7 @@ from pathlib import Path
 # --- Path setup (mirrors knowledge/server.py) ---
 AI_ROOT = Path(os.environ.get("AI_ROOT", Path(__file__).resolve().parents[3]))
 SCRIPTS = AI_ROOT / "ai_general" / "scripts"
-from ai_toolkit.scripts.memories import memory_lib
+from ai_toolkit.memory import memory_lib
 
 
 # === Subcommand handlers ===

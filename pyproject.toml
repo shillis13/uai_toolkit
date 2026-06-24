@@ -20,7 +20,7 @@ dev = ["pytest>=7"]
 mcp = ["mcp>=1.0", "pyyaml>=6", "jsonschema>=4"]
 
 [project.scripts]
-ai-toolkit = "ai_toolkit.cli:main"
+ai-toolkit = "ai_toolkit.install:main"
 ai-mcp-knowledge = "ai_toolkit.mcp.knowledge.server:run"
 ai-mcp-workflow = "ai_toolkit.mcp.workflow.server:run"
 read_jsonl = "ai_toolkit.jsonl.read_jsonl:main"

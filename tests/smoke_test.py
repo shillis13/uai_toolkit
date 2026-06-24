@@ -48,7 +48,7 @@ def main() -> int:
         import ai_toolkit  # noqa: F401
         from ai_toolkit.jsonl import read_jsonl, catjsonl, discovery  # noqa: F401
         from ai_toolkit.file_access import tracker, hooks  # noqa: F401
-        from ai_toolkit import cli, paths  # noqa: F401
+        from ai_toolkit import install, paths  # noqa: F401
         from ai_toolkit.common_utils import lib_outputColors  # noqa: F401
         return True, "core + cli + file_access + common_utils"
     check("core package imports", imports)
@@ -78,7 +78,7 @@ def main() -> int:
         if not db.is_file():
             return None, "no guidance registry DB in AI_ROOT — content not materialized"
         r = subprocess.run(
-            [sys.executable, "-m", "ai_toolkit.scripts.context_files.guidance_cli", "test"],
+            [sys.executable, "-m", "ai_toolkit.guidance.guidance_cli", "test"],
             capture_output=True, text=True, timeout=30,
         )
         return (r.returncode == 0 and "OK" in r.stdout), r.stdout.strip().split(chr(10))[0][:60]

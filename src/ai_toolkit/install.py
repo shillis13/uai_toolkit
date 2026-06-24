@@ -92,7 +92,7 @@ def cmd_init(args: argparse.Namespace) -> int:
     )
     tag = "[dry-run] would " if dry else ""
 
-    print(f"ai-toolkit {__version__} init")
+    print(f"ai-toolkit {__version__} install")
     print(f"  AI_ROOT:  {root}")
     print(f"  settings: {settings_path}")
 
@@ -184,7 +184,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--version", action="version", version=f"ai-toolkit {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p_init = sub.add_parser("init", help="Create AI_ROOT instance + wire hooks")
+    p_init = sub.add_parser("install", aliases=["init"], help="Install: create AI_ROOT, wire hooks + register MCP servers")
     p_init.add_argument("--ai-root", help="Instance root (default: $AI_ROOT / discovery)")
     p_init.add_argument("--settings", help="Claude settings.json (default: ~/.claude/settings.json)")
     p_init.add_argument("--mcp-config", help="MCP client config for server registration (default: ~/.claude.json)")

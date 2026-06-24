@@ -14,7 +14,7 @@ import sys
 from pathlib import Path
 from mcp.types import Tool, TextContent
 
-MEMORY_MODULE = "ai_toolkit.scripts.memories.memory_cli"
+MEMORY_MODULE = "ai_toolkit.memory.memory_cli"
 
 
 def _run_cli(subcommand: str, args: list = None) -> str:
