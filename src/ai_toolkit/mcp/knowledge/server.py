@@ -18,10 +18,16 @@ from mcp.server import Server, NotificationOptions
 from mcp.server.stdio import stdio_server
 from mcp.types import TextContent
 
-from ai_toolkit.mcp.knowledge.tools import knowledge_guidance, knowledge_memory
+from ai_toolkit.mcp.knowledge.tools import (
+    knowledge_guidance,
+    knowledge_memory,
+    knowledge_search,
+    knowledge_jsonl,
+)
 
 # Sub-modules registered with this server. Each exposes tools() + call_tool().
-MODULES = [knowledge_guidance, knowledge_memory]
+# chat_pipeline is deferred (heavy: subprocesses the 7-stage pipeline + yaml).
+MODULES = [knowledge_guidance, knowledge_memory, knowledge_search, knowledge_jsonl]
 
 server = Server("knowledge")
 
