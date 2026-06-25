@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Smoke test — validate an ai_toolkit install (esp. on a fresh Linux/WSL box).
+"""Smoke test — validate an uai_toolkit install (esp. on a fresh Linux/WSL box).
 
 Run after `pip install -e '.[mcp]'`:
 
@@ -39,23 +39,23 @@ def check(label: str, fn):
 
 
 def main() -> int:
-    print("ai_toolkit smoke test")
+    print("uai_toolkit smoke test")
     print(f"  python {sys.version.split()[0]}  |  AI_ROOT={os.environ.get('AI_ROOT', '(unset)')}\n")
 
     check("python >= 3.10", lambda: (sys.version_info >= (3, 10), None))
 
     def imports():
-        import ai_toolkit  # noqa: F401
-        from ai_toolkit.jsonl import read_jsonl, catjsonl, discovery  # noqa: F401
-        from ai_toolkit.file_access import tracker, hooks  # noqa: F401
-        from ai_toolkit import install, paths  # noqa: F401
-        from ai_toolkit.common_utils import lib_outputColors  # noqa: F401
+        import uai_toolkit  # noqa: F401
+        from uai_toolkit.jsonl import read_jsonl, catjsonl, discovery  # noqa: F401
+        from uai_toolkit.file_access import tracker, hooks  # noqa: F401
+        from uai_toolkit import install, paths  # noqa: F401
+        from uai_toolkit.common_utils import lib_outputColors  # noqa: F401
         return True, "core + cli + file_access + common_utils"
     check("core package imports", imports)
 
     def cli_runs():
         exe = Path(sys.executable).with_name("read_jsonl")
-        cmd = [str(exe)] if exe.exists() else [sys.executable, "-m", "ai_toolkit.jsonl.read_jsonl"]
+        cmd = [str(exe)] if exe.exists() else [sys.executable, "-m", "uai_toolkit.jsonl.read_jsonl"]
         r = subprocess.run(cmd + ["--help"], capture_output=True, text=True, timeout=30)
         return (r.returncode == 0 and "read_jsonl" in r.stdout), "read_jsonl --help"
     check("read_jsonl runs", cli_runs)
@@ -65,8 +65,8 @@ def main() -> int:
             import mcp  # noqa: F401
         except ImportError:
             return None, "mcp extra not installed (pip install '.[mcp]')"
-        from ai_toolkit.mcp.knowledge import server as k
-        from ai_toolkit.mcp.workflow import server as w
+        from uai_toolkit.mcp.knowledge import server as k
+        from uai_toolkit.mcp.workflow import server as w
         return True, f"knowledge {len(k.DISPATCH)} tools, workflow {len(w.DISPATCH)} tools"
     check("MCP servers import + list tools", mcp_imports)
 
@@ -78,7 +78,7 @@ def main() -> int:
         if not db.is_file():
             return None, "no guidance registry DB in AI_ROOT — content not materialized"
         r = subprocess.run(
-            [sys.executable, "-m", "ai_toolkit.guidance.guidance_cli", "test"],
+            [sys.executable, "-m", "uai_toolkit.guidance.guidance_cli", "test"],
             capture_output=True, text=True, timeout=30,
         )
         return (r.returncode == 0 and "OK" in r.stdout), r.stdout.strip().split(chr(10))[0][:60]

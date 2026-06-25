@@ -13,7 +13,7 @@ from concurrent.futures import ProcessPoolExecutor
 def _set_root(root: str):
     """Point this (possibly spawned) process at the shared AI_ROOT."""
     os.environ["AI_ROOT"] = root
-    from ai_toolkit import paths
+    from uai_toolkit import paths
     paths.ai_root.cache_clear()
     paths.config.cache_clear()
 
@@ -21,7 +21,7 @@ def _set_root(root: str):
 def _worker(args):
     root, session, file_path, n = args
     _set_root(root)  # spawn-safe: every worker targets the SAME db
-    from ai_toolkit.file_access import tracker
+    from uai_toolkit.file_access import tracker
     for _ in range(n):
         tracker.log_write(session, file_path)
     return n
@@ -30,7 +30,7 @@ def _worker(args):
 def main() -> int:
     root = tempfile.mkdtemp(prefix="fa_test_")
     _set_root(root)
-    from ai_toolkit.file_access import tracker
+    from uai_toolkit.file_access import tracker
     import sqlite3
 
     target = os.path.join(root, "some_file.py")

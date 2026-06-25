@@ -3,7 +3,7 @@ requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "ai-toolkit"
+name = "uai-toolkit"
 version = "0.1.0"
 description = "Portable AI tooling — jsonl readers, hooks, and platform-agnostic helpers."
 requires-python = ">=3.10"
@@ -16,28 +16,28 @@ dependencies = [
 # Heavier features (archive/engram/REPL) and Windows shims, opt-in.
 full = ["psutil>=5.9"]
 dev = ["pytest>=7"]
-# MCP servers (knowledge, ...) — the skill surface. Opt-in: pip install ai-toolkit[mcp]
+# MCP servers (knowledge, ...) — the skill surface. Opt-in: pip install uai-toolkit[mcp]
 mcp = ["mcp>=1.0", "pyyaml>=6", "jsonschema>=4"]
 
 [project.scripts]
-ai-toolkit = "ai_toolkit.install:main"
-ai-mcp-knowledge = "ai_toolkit.mcp.knowledge.server:run"
-ai-mcp-workflow = "ai_toolkit.mcp.workflow.server:run"
-read_jsonl = "ai_toolkit.jsonl.read_jsonl:main"
+uai-toolkit = "uai_toolkit.install:main"
+uai-mcp-knowledge = "uai_toolkit.mcp.knowledge.server:run"
+uai-mcp-workflow = "uai_toolkit.mcp.workflow.server:run"
+read_jsonl = "uai_toolkit.jsonl.read_jsonl:main"
 # Multi-tool j-tools — each a real per-OS launcher (replaces the busybox symlinks).
-jcat = "ai_toolkit.jsonl.catjsonl:jcat"
-jgrep = "ai_toolkit.jsonl.catjsonl:jgrep"
-jhead = "ai_toolkit.jsonl.catjsonl:jhead"
-jtail = "ai_toolkit.jsonl.catjsonl:jtail"
-jwc = "ai_toolkit.jsonl.catjsonl:jwc"
-jfmt = "ai_toolkit.jsonl.catjsonl:jfmt"
-# file_access anti-clobber hook handlers (wired by `ai-toolkit init`):
-ai-fa-track-read = "ai_toolkit.file_access.hooks:track_read"
-ai-fa-track-write = "ai_toolkit.file_access.hooks:track_write"
-ai-fa-check-write = "ai_toolkit.file_access.hooks:check_before_write"
+jcat = "uai_toolkit.jsonl.catjsonl:jcat"
+jgrep = "uai_toolkit.jsonl.catjsonl:jgrep"
+jhead = "uai_toolkit.jsonl.catjsonl:jhead"
+jtail = "uai_toolkit.jsonl.catjsonl:jtail"
+jwc = "uai_toolkit.jsonl.catjsonl:jwc"
+jfmt = "uai_toolkit.jsonl.catjsonl:jfmt"
+# file_access anti-clobber hook handlers (wired by `uai-toolkit init`):
+ai-fa-track-read = "uai_toolkit.file_access.hooks:track_read"
+ai-fa-track-write = "uai_toolkit.file_access.hooks:track_write"
+ai-fa-check-write = "uai_toolkit.file_access.hooks:check_before_write"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-data]
-"ai_toolkit" = ["py.typed"]
+"uai_toolkit" = ["py.typed"]

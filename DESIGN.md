@@ -1,4 +1,4 @@
-# ai-toolkit — Design
+# uai-toolkit — Design (work repo; public counterpart = ai-toolkit)
 
 Portable distribution of AI tooling (ported from `~/bin/ai`). First consumer:
 PianoMan on **Windows 11 at work**. Targets Linux (near-zero) and Windows 11
@@ -10,12 +10,12 @@ with native Python (no WSL). Authored by the **Portage** session, 2026-06-20.
 - **`platform_compat`** — the Tier-B adapter layer: one module per OS-divergent concern, runtime dispatch, platform-blind callers.
 - **Tier A/B/C** — the portability change taxonomy (below).
 
-## Layout (src/ai_toolkit/)
+## Layout (src/uai_toolkit/)
 
 Flat-by-domain — no generic `scripts/` bucket, one shared-utils home.
 
 ```
-install.py            the `ai-toolkit install` command (create AI_ROOT, wire hooks + MCP)
+install.py            the `uai-toolkit install` command (create AI_ROOT, wire hooks + MCP)
 paths.py              AI_ROOT discovery + config.toml
 jsonl/                read_jsonl + j-tools (catjsonl) + platform_adapters
 file_access/          SQLite anti-clobber tracker + hook handlers
@@ -28,9 +28,9 @@ common_utils/         shared CLI libs (incl. standard_colors, folded in from uti
 platform_compat/      OS-divergence adapters (locking, process)
 ```
 
-Naming: repo `uai_toolkit` (work) / `ai_toolkit` (public), but the **package is
-`ai_toolkit` in both** (Model A: promotion needs no import rewrite). The MCP
-servers invoke their backing domain CLIs via `python -m ai_toolkit.<domain>.<cli>`.
+Naming: **repo == package each** — work repo `uai_toolkit` / package `uai_toolkit`;
+public repo `ai_toolkit` / package `ai_toolkit` (conventional; see decision 6).
+The MCP servers invoke their backing domain CLIs via `python -m uai_toolkit.<domain>.<cli>`.
 
 ## Decisions (locked)
 
@@ -60,13 +60,17 @@ servers invoke their backing domain CLIs via `python -m ai_toolkit.<domain>.<cli
    an `ai-toolkit init` subcommand (idempotent: create `AI_ROOT`, write config,
    register MCP servers + hooks).
 
-6. **Two repos — Model A (public = subset of work):**
-   - **work/private repo** (this one) = source of truth; what PianoMan installs at work.
-   - **public repo** = a curated subset, pushed *out* of this one when a tool is
-     ready to share. They look the same because public is literally a slice.
-   - Scrub is a one-time promotion gate, not a recurring sync diff — safe because
-     **code carries no personal data** (it all lives in `config.toml`/`AI_ROOT`,
-     which is never part of the public subset).
+6. **Two repos — two distinct products, each repo==package (revised 2026-06-24):**
+   - **work repo `uai_toolkit`** (package `uai_toolkit`) = source of truth; the
+     full UAI-flavored kit PianoMan installs at work (`uai-toolkit install`).
+   - **public repo `ai_toolkit`** (package `ai_toolkit`) = the general/public kit.
+   - Each is conventionally named (repo==package). Superseded the original
+     "Model A / byte-identical subset": promoting a tool work→public now copies
+     the files **and rewrites the namespace** (`uai_toolkit.`→`ai_toolkit.`, a
+     one-line `sed` in a promotion script). Trade chosen for naming clarity;
+     promotion is occasional so the rewrite cost is negligible.
+   - Scrub is a one-time promotion gate — safe because **code carries no personal
+     data** (it all lives in `config.toml`/`AI_ROOT`, never shipped).
    - **Memorex is separate** — it's TypeScript/Node (`node-pty`, `@xterm`), its own
      repo with an `npm` install path, not part of this Python package.
    - HARD GATE before any public push: PII/secret scrub; tie to Git Guardian.

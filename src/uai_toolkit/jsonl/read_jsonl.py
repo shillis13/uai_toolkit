@@ -1,0 +1,3234 @@
+#!/usr/bin/env python3
+"""
+read_jsonl.py - Read and extract messages from CLI JSONL conversation files.
+
+Supports Claude CLI, Codex CLI, Gemini CLI, and Anti-Gravity session formats.
+Platform is auto-detected from file path or content; use --platform to override.
+
+Usage:
+    # Interactive REPL mode
+    read_jsonl.py
+
+    # List all sessions for a project directory (Claude only)
+    read_jsonl.py list [project_dir] [--limit N]
+
+    # Read messages from a specific session UUID (searches all platforms)
+    read_jsonl.py read <uuid> [--format json|text|markdown] [--platform claude|codex|gemini|agy]
+
+    # Read messages from one or more JSONL files directly
+    read_jsonl.py read-file <path> [path2 ...] [--format json|text|markdown] [--platform claude|codex|gemini|agy]
+
+    # Find JSONL file for a UUID (prints path, searches all platforms)
+    read_jsonl.py find <uuid>
+
+    # Summary of a session
+    read_jsonl.py summary <uuid> [--platform claude|codex|gemini|agy]
+"""
+
+from __future__ import annotations
+
+import atexit
+import json
+import os
+import readline
+import shlex
+import sys
+import warnings
+from dataclasses import dataclass, field
+from datetime import datetime
+from enum import Enum
+from pathlib import Path
+from typing import Any
+
+# Import standard_colors
+from uai_toolkit.common_utils.standard_colors import (
+    CODES as _SC_CODES,
+    c as _sc_c,
+    colors_enabled as _sc_colors_enabled,
+    set_color_mode as _sc_set_color_mode,
+    format_help as _sc_format_help,
+)
+
+
+from uai_toolkit.jsonl.platform_adapters import adapter_for_platform, detect_platform as _detect_platform_adapter
+from uai_toolkit.jsonl.standardized_session import load_standardized_session, is_standardized_session_file
+
+
+CLAUDE_DIR = Path.home() / ".claude"
+PROJECTS_DIR = CLAUDE_DIR / "projects"
+HISTORY_FILE = CLAUDE_DIR / "history.jsonl"
+
+CODEX_DIR = Path.home() / ".codex"
+CODEX_SESSIONS_DIR = CODEX_DIR / "sessions"
+CODEX_ARCHIVE_DIR = CODEX_DIR / "archived_sessions"
+GEMINI_DIR = Path.home() / ".gemini"
+GEMINI_HISTORY_DIR = GEMINI_DIR / "tmp"
+
+VERSION = "3.0.0"
+READLINE_HISTORY = Path.home() / ".read_jsonl_history"
+
+class Colors:
+    """ANSI color code constants — delegates to standard_colors for detection.
+
+    Raw code attributes preserved for backward compatibility with callers that
+    pass Colors.CONSTANT values into c(). Detection now routes through
+    standard_colors.colors_enabled() so NO_COLOR, --no-color, and TTY detection
+    all work consistently.
+    """
+    _enabled = None  # None = auto via standard_colors; True/False = override
+
+    # Raw codes (backward compat — catjsonl.py passes these into c())
+    RESET         = _SC_CODES["reset"]
+    BOLD          = _SC_CODES["bold"]
+    DIM           = _SC_CODES["dim"]
+    ITALIC        = _SC_CODES["italic"]
+    BLUE          = _SC_CODES["blue"]
+    GREEN         = _SC_CODES["green"]
+    YELLOW        = _SC_CODES["yellow"]
+    CYAN          = _SC_CODES["cyan"]
+    MAGENTA       = _SC_CODES["magenta"]
+    RED           = _SC_CODES["red"]
+    WHITE         = _SC_CODES["white"]
+    BRIGHT_BLUE   = _SC_CODES["bright_blue"]
+    BRIGHT_GREEN  = _SC_CODES["bright_green"]
+    BRIGHT_YELLOW = _SC_CODES["bright_yellow"]
+    BRIGHT_CYAN   = _SC_CODES["bright_cyan"]
+    BRIGHT_MAGENTA = _SC_CODES["bright_magenta"]
+    BRIGHT_WHITE  = _SC_CODES["bright_white"]
+
+    @classmethod
+    def enabled(cls) -> bool:
+        if cls._enabled is not None:
+            return cls._enabled
+        return _sc_colors_enabled()
+
+
+def c(text: str, *codes: str) -> str:
+    """Apply raw ANSI codes or standard_colors style names to text.
+
+    Accepts both Colors.CONSTANT raw escape strings (for backward compat with
+    catjsonl.py) and named styles from standard_colors (e.g. 'red', 'bold').
+    """
+    if not Colors.enabled():
+        return text
+    # codes may be raw ANSI escape strings (e.g. "\033[1m") or style names
+    combined = "".join(codes)
+    return f"{combined}{text}{Colors.RESET}"
+
+
+COMMAND_ALIASES = {
+    "?": "help",
+    "h": "help",
+    "r": "read",
+    "rf": "read-file",
+    "f": "find",
+    "s": "summary",
+    "st": "stats",
+    "ls": "list",
+    "cx": "compactions",
+}
+
+
+class MessageType(Enum):
+    USER = "user"               # Human-typed user messages
+    RESPONSE = "response"       # Assistant text responses
+    THINKING = "thinking"       # Claude thinking blocks
+    TOOL_USE = "tool_use"       # Tool/function calls
+    TOOL_RESULT = "tool_result" # Tool results
+    SYSTEM = "system"           # System/developer messages
+    META = "meta"               # Session metadata
+    SKILL = "skill"             # Skill expansion (isMeta + sourceToolUseID or skill-like content)
+    AGENT_RESULT = "agent_result"  # Subagent/task notification (origin.kind == task-notification)
+    INJECTED = "injected"       # Other non-human injected content (isMeta without skill/agent markers)
+
+    # Backward compat: allow MessageType("text") to resolve to RESPONSE
+    @classmethod
+    def _missing_(cls, value):
+        if value == "text":
+            return cls.RESPONSE
+        return None
+
+
+@dataclass
+class Message:
+    role: str
+    type: MessageType
+    content: str
+    timestamp: str
+    platform: str = ""
+    tool_name: str = ""
+    tool_input: dict = field(default_factory=dict)
+    tool_call_id: str = ""
+    line_number: int = 0       # message ordinal: 1-based position in the parsed message stream — NOT the raw file line
+    source_line: int = 0       # 1-indexed raw JSONL file line this message came from (0 if unknown)
+    turn_number: int = 0       # 1-indexed conversation turn this message belongs to (0 if unknown)
+    raw: dict = field(default_factory=dict, repr=False)
+
+    def to_dict(self, include_raw: bool = False) -> dict:
+        """Serialize to dict for JSON output."""
+        d = {
+            "role": self.role,
+            "type": self.type.value,
+            "content": self.content,
+            "timestamp": self.timestamp,
+            "platform": self.platform,
+            "line_number": self.line_number,   # message ordinal
+            "source_line": self.source_line,   # raw JSONL file line
+            "turn_number": self.turn_number,   # conversation turn
+        }
+        if self.tool_name:
+            d["tool_name"] = self.tool_name
+        if self.tool_input:
+            d["tool_input"] = self.tool_input
+        if self.tool_call_id:
+            d["tool_call_id"] = self.tool_call_id
+        if include_raw:
+            d["raw"] = self.raw
+        return d
+
+
+@dataclass
+class Turn:
+    """A turn: user message + all assistant/tool messages until next user message."""
+    number: int                  # 1-indexed turn number
+    messages: list[Message] = field(default_factory=list)
+
+    @property
+    def user_message(self) -> Message | None:
+        return next((m for m in self.messages if m.type == MessageType.USER), None)
+
+    @property
+    def timestamp(self) -> str:
+        return self.messages[0].timestamp if self.messages else ""
+
+    def to_dict(self, include_raw: bool = False) -> dict:
+        return {
+            "number": self.number,
+            "timestamp": self.timestamp,
+            "messages": [m.to_dict(include_raw) for m in self.messages],
+        }
+
+
+@dataclass
+class DayGroup:
+    """Messages grouped by calendar day."""
+    date: str                    # YYYY-MM-DD
+    label: str                   # "Today", "Yesterday", or "YYYY-MM-DD — Wednesday"
+    turns: list[Turn] = field(default_factory=list)
+
+    def to_dict(self, include_raw: bool = False) -> dict:
+        return {
+            "date": self.date,
+            "label": self.label,
+            "turns": [t.to_dict(include_raw) for t in self.turns],
+        }
+
+
+# ---------------------------------------------------------------------------
+# Grouping functions
+# ---------------------------------------------------------------------------
+
+def group_into_turns(messages: list[Message]) -> list[Turn]:
+    """Group messages into turns. A turn starts with a user message and
+    includes all subsequent messages until the next user message or EOF."""
+    turns: list[Turn] = []
+    current: list[Message] = []
+    turn_num = 1
+
+    for msg in messages:
+        if msg.type == MessageType.USER and current:
+            turns.append(Turn(number=turn_num, messages=current))
+            turn_num += 1
+            current = []
+        current.append(msg)
+
+    if current:
+        turns.append(Turn(number=turn_num, messages=current))
+
+    return turns
+
+
+def _date_label(date_str: str) -> str:
+    """Human-readable label for a date string."""
+    today = datetime.now().strftime("%Y-%m-%d")
+    yesterday = datetime.fromtimestamp(
+        datetime.now().timestamp() - 86400
+    ).strftime("%Y-%m-%d")
+    try:
+        dt = datetime.strptime(date_str, "%Y-%m-%d")
+        day_name = dt.strftime("%A")
+        if date_str == today:
+            return f"Today — {day_name}"
+        if date_str == yesterday:
+            return f"Yesterday — {day_name}"
+        return f"{date_str} — {day_name}"
+    except ValueError:
+        return date_str
+
+
+def group_by_day(turns: list[Turn]) -> list[DayGroup]:
+    """Group turns by calendar day based on first message timestamp."""
+    day_map: dict[str, list[Turn]] = {}
+
+    for turn in turns:
+        ts = turn.timestamp
+        date_key = "Unknown"
+        if ts:
+            try:
+                cleaned = ts.replace("Z", "+00:00")
+                dt = datetime.fromisoformat(cleaned).astimezone()
+                date_key = dt.strftime("%Y-%m-%d")
+            except (ValueError, TypeError):
+                pass
+        day_map.setdefault(date_key, []).append(turn)
+
+    return [
+        DayGroup(date=date, label=_date_label(date), turns=day_turns)
+        for date, day_turns in sorted(day_map.items())
+    ]
+
+
+def structure_session(messages: list[Message]) -> list[DayGroup]:
+    """Full pipeline: messages → turns → day groups."""
+    turns = group_into_turns(messages)
+    return group_by_day(turns)
+
+
+def _strip_uri(identifier: str) -> str:
+    """Extract session ID from a URI, or return as-is if not a URI.
+
+    Handles uai://session/<id>, prompt://target/<id>, and any scheme://path/<id>.
+    """
+    if "://" not in identifier:
+        return identifier
+    try:
+        from urllib.parse import urlparse
+        parsed = urlparse(identifier)
+        path_parts = parsed.path.strip("/").split("/")
+        if path_parts:
+            return path_parts[-1]
+    except Exception:
+        pass
+    return identifier
+
+
+def _resolve_via_session_store(query: str) -> Path | None:
+    """Try to resolve a query via session_store (tracking ID, display name, etc.).
+
+    Accepts URIs (uai://session/<id>, prompt://target/<id>), tracking IDs,
+    display names, CLI UUIDs, and UUID prefixes.
+
+    Returns the first existing transcript path, or falls back to CLI UUID
+    for filesystem search. Returns None if session_store is unavailable or
+    no match is found.
+    """
+    try:
+        # Optional enhancement: resolve via an external session_store if one is
+        # configured. Set AI_SESSION_STORE_PATH to its module path to enable;
+        # absent that, this lookup is skipped (UUID/path search still works).
+        store_path_str = os.environ.get("AI_SESSION_STORE_PATH")
+        if not store_path_str:
+            return None
+        store_path = Path(store_path_str).expanduser()
+        if not store_path.exists():
+            return None
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("session_store", store_path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        store = mod.SessionStore()
+        session = store.resolve(query)
+        if not session:
+            return None
+
+        # Try transcript_path first (list of JSONL paths)
+        paths = session.get("transcript_path", [])
+        if isinstance(paths, str):
+            paths = [paths]
+        for tp in paths:
+            p = Path(tp).expanduser()
+            if p.exists():
+                return p
+
+        # Fall back to CLI UUID for filesystem search
+        cli_uuid = session.get("cli_session_id")
+        if cli_uuid:
+            # Don't recurse — just check Claude project dirs directly
+            for proj_dir in PROJECTS_DIR.iterdir():
+                if not proj_dir.is_dir():
+                    continue
+                candidate = proj_dir / f"{cli_uuid}.jsonl"
+                if candidate.exists():
+                    return candidate
+    except Exception:
+        pass
+    return None
+
+
+def find_jsonl(query: str) -> Path | None:
+    """Find a session file by full or partial UUID, or by direct file path.
+
+    If query is an existing file path (absolute or relative), returns it directly.
+    Otherwise searches: Claude projects -> Codex sessions -> Gemini history -> Codex archive.
+    Partial matching: query is matched as a prefix or substring of the UUID
+    portion of the filename or content.
+    """
+    # Strip URI wrapper if present (uai://session/<id>, prompt://target/<id>, etc.)
+    query = _strip_uri(query)
+
+    # Direct file path
+    p = Path(query).expanduser()
+    if p.exists() and p.is_file():
+        return p
+
+    # Try session_store: resolves tracking ID, display name, terminal session, CLI UUID
+    resolved_path = _resolve_via_session_store(query)
+    if resolved_path:
+        return resolved_path
+
+    candidates = []
+    query = query.lower()
+
+    # 1. Claude: {uuid}.jsonl in project dirs
+    if PROJECTS_DIR.exists():
+        for proj_dir in PROJECTS_DIR.iterdir():
+            if not proj_dir.is_dir():
+                continue
+            for f in proj_dir.glob("*.jsonl"):
+                stem = f.stem.lower()
+                if stem == query or stem.startswith(query) or query in stem:
+                    candidates.append(f)
+
+    # 2. Codex: rollout-{date}-{uuid}.jsonl in date tree
+    # 3. Gemini: session-{date}-{partial_uuid}.json in tmp/*/chats/
+    search_paths = [
+        (CODEX_SESSIONS_DIR, "*.jsonl"),
+        (GEMINI_HISTORY_DIR, "session-*.json"),
+        (CODEX_ARCHIVE_DIR, "*.jsonl"),
+    ]
+
+    for search_dir, pattern in search_paths:
+        if not search_dir.exists():
+            continue
+        for f in search_dir.rglob(pattern):
+            name = f.stem.lower()
+            # Codex: last 36 chars are usually the UUID
+            if f.suffix == ".jsonl" and len(name) >= 36:
+                file_uuid = name[-36:]
+                if file_uuid == query or file_uuid.startswith(query) or query in file_uuid:
+                    candidates.append(f)
+                    continue
+
+            # Gemini: last 8 chars of stem are usually the partial UUID
+            if f.suffix == ".json" and name.startswith("session-"):
+                if len(name) >= 8:
+                    partial_uuid = name[-8:]
+                    if query == partial_uuid or query in name:
+                        candidates.append(f)
+                        continue
+                    # For Gemini, if it's a long query, maybe it's the full UUID from inside
+                    if len(query) >= 32:
+                        try:
+                            with open(f) as jf:
+                                data = json.load(jf)
+                                if str(data.get("sessionId", "")).lower() == query:
+                                    candidates.append(f)
+                        except (json.JSONDecodeError, OSError):
+                            pass
+
+    if len(candidates) == 1:
+        return candidates[0]
+    elif len(candidates) > 1:
+        # Deduplicate candidates by path
+        seen = set()
+        unique_candidates = []
+        for c in candidates:
+            if c not in seen:
+                unique_candidates.append(c)
+                seen.add(c)
+        
+        if len(unique_candidates) == 1:
+            return unique_candidates[0]
+            
+        print(f"Ambiguous match for '{query}' -- {len(unique_candidates)} files found:", file=sys.stderr)
+        for c in unique_candidates[:10]:
+            print(f"  {c}", file=sys.stderr)
+        return None
+    return None
+
+
+def _normalize_timestamp(ts_raw) -> str:
+    """Convert any timestamp format to ISO string."""
+    if isinstance(ts_raw, (int, float)):
+        return datetime.fromtimestamp(ts_raw / 1000 if ts_raw > 1e12 else ts_raw).isoformat()
+    elif isinstance(ts_raw, str):
+        return ts_raw
+    return ""
+
+
+def _ts_to_local(ts: str) -> str:
+    """Convert a UTC ISO timestamp string to local time for display.
+
+    Handles: '2026-04-10T00:32:13.509Z', '2026-04-10T00:32:13Z',
+             '2026-04-10T00:32:13+00:00', and already-local strings.
+    Returns 'YYYY-MM-DD HH:MM:SS' in local timezone, or the original string on failure.
+    """
+    if not ts:
+        return ts
+    try:
+        from datetime import timezone
+        # Try parsing with Z suffix
+        cleaned = ts.replace("Z", "+00:00")
+        dt = datetime.fromisoformat(cleaned)
+        # Convert to local time
+        local_dt = dt.astimezone()
+        return local_dt.strftime("%Y-%m-%d %H:%M:%S")
+    except (ValueError, TypeError):
+        return ts
+
+
+def detect_platform(jsonl_path: Path) -> str:
+    """Detect which CLI platform produced a JSONL/JSON file.
+
+    Returns one of: agy, claude, codex, gemini, standardized.
+    """
+    return _detect_platform_adapter(jsonl_path)
+
+
+
+def _src_line(source_ids) -> int:
+    """Raw 1-indexed JSONL file line from a record's source_ids (e.g. 'src-012711' -> 12711)."""
+    if source_ids:
+        s = source_ids[0]
+        if isinstance(s, str) and s.startswith("src-"):
+            try:
+                return int(s[4:])
+            except ValueError:
+                pass
+    return 0
+
+
+def _standardized_to_messages(session) -> list[Message]:
+    messages: list[Message] = []
+    for record in session.message_records:
+        if not record.visible:
+            continue
+        try:
+            msg_type = MessageType(record.message_type)
+        except ValueError:
+            continue
+        messages.append(
+            Message(
+                role=record.role,
+                type=msg_type,
+                content=record.content_text,
+                timestamp=record.timestamp,
+                platform=session.header.platform,
+                tool_name=record.tool_name,
+                tool_input=record.tool_input,
+                tool_call_id=record.tool_call_id,
+                line_number=record.sequence,
+                source_line=_src_line(record.source_ids),
+                raw={
+                    "standardized_record": record.to_envelope(),
+                    "session_header": session.header.to_envelope(),
+                },
+            )
+        )
+    return messages
+
+
+
+OFFLOAD_ARCHIVE_SUFFIX = ".archive"
+
+
+def resolve_archived_stubs(messages: list[Message], jsonl_path: Path) -> list[Message]:
+    """Rehydrate offload stubs in place from their co-located archive (opt-in view).
+
+    offload_tool_results.py replaces aged tool_result.content / tool_use.input with
+    a stub carrying a portable ref:  '… → ref <uuid8>/<id>.<field>.txt …'.  The body
+    lives at  <transcript_dir>/<transcript_stem>.<uuid8>.archive/<id>.<field>.txt.
+    This resolves the ref against the CURRENT transcript (so a forked copy resolves to
+    its own archive) and substitutes the body. Read-only and best-effort: a missing
+    archive leaves the stub untouched. Off by default — callers opt in (e.g. `--resolve`)
+    so summary/stats keep reflecting the lean on-disk reality.
+    """
+    import re
+    ref_re = re.compile(r"→ ref (\S+/\S+\.txt)")
+    jsonl_path = Path(jsonl_path)
+    base, stem = jsonl_path.parent, jsonl_path.stem
+
+    def _sub(text):
+        if not isinstance(text, str):
+            return text, False
+        m = ref_re.search(text)
+        if not m:
+            return text, False
+        uuid8, _, fname = m.group(1).partition("/")
+        body = base / f"{stem}.{uuid8}{OFFLOAD_ARCHIVE_SUFFIX}" / fname
+        try:
+            return body.read_text(encoding="utf-8"), True
+        except OSError:
+            return text, False
+
+    for msg in messages:
+        new, ok = _sub(msg.content)
+        if ok:
+            msg.content = new
+        if isinstance(msg.tool_input, dict):
+            for k, v in list(msg.tool_input.items()):
+                nv, ok2 = _sub(v)
+                if ok2:
+                    msg.tool_input[k] = nv
+    return messages
+
+
+def _assign_turn_numbers(messages: list[Message]) -> list[Message]:
+    """Stamp each message with its absolute 1-indexed conversation turn number.
+
+    A turn starts at a USER message and runs until the next USER message (mirrors
+    group_into_turns). Turn numbers are assigned once on the full parsed stream so
+    they stay stable/absolute regardless of any later --range/--type filtering.
+    """
+    turn_num = 1
+    started = False
+    for m in messages:
+        if m.type == MessageType.USER and started:
+            turn_num += 1
+            started = False
+        m.turn_number = turn_num
+        started = True
+    return messages
+
+
+def parse_session(jsonl_path: Path, platform: str | None = None) -> list[Message]:
+    """Parse a session file into a list of Message objects.
+
+    Native platform files are first converted into the standardized schema, then
+    the rest of read_jsonl operates on the standardized message records.
+    """
+    if is_standardized_session_file(jsonl_path):
+        msgs = _standardized_to_messages(load_standardized_session(jsonl_path))
+    else:
+        if platform is None:
+            platform = detect_platform(jsonl_path)
+        if platform == "standardized":
+            msgs = _standardized_to_messages(load_standardized_session(jsonl_path))
+        else:
+            adapter = adapter_for_platform(platform)
+            session = adapter.from_file(jsonl_path)
+            msgs = _standardized_to_messages(session)
+    return _assign_turn_numbers(msgs)
+
+
+
+def _parse_codex(jsonl_path: Path) -> list[Message]:
+    return parse_session(jsonl_path, platform="codex")
+
+
+
+def _parse_gemini(jsonl_path: Path) -> list[Message]:
+    return parse_session(jsonl_path, platform="gemini")
+
+
+
+def _parse_claude(jsonl_path: Path) -> list[Message]:
+    return parse_session(jsonl_path, platform="claude")
+
+
+
+def extract_messages(jsonl_path: Path, platform: str | None = None) -> list[dict[str, Any]]:
+    """Extract user/assistant text messages. Returns list[dict] for backward compatibility.
+    Prefer parse_session() for new code.
+    """
+    msgs = parse_session(jsonl_path, platform=platform)
+    result = []
+    for m in msgs:
+        if m.type in (MessageType.USER, MessageType.RESPONSE):
+            result.append({"role": m.role, "content": m.content, "timestamp": m.timestamp})
+    return result
+
+
+def extract_tool_uses(jsonl_path: Path, platform: str | None = None) -> list[dict[str, Any]]:
+    """Extract tool uses as list[dict]. Backward-compatible interface."""
+    msgs = parse_session(jsonl_path, platform=platform)
+    return [
+        {"tool_name": m.tool_name, "tool_input": m.tool_input, "timestamp": m.timestamp}
+        for m in msgs if m.type == MessageType.TOOL_USE
+    ]
+
+
+# Raw line `type` values that form the conversation stream (the basis of what is
+# actually sent to the model, modulo the compaction boundary). Everything else is
+# client-side bookkeeping that parse_session discards and the model never sees.
+_CONVERSATION_LINE_TYPES = {"user", "assistant"}
+
+
+def raw_line_breakdown(jsonl_path: Path) -> dict[str, Any]:
+    """Categorize RAW JSONL lines by `type` into conversation (model-facing) vs
+    client-only (never sent), with per-type line count + char size.
+
+    Operates on raw lines, so it sees the client-only records (file-history
+    snapshots, attachments, mode/title/agent state, progress, ...) that
+    parse_session() drops. `conversation` + `client_only` sum exactly to `total`,
+    so a client-only contribution is trivial to calculate out.
+
+    NOTE: sizes are raw JSONL chars (incl. JSON overhead + base64 image data,
+    which is char-huge but token-cheap), NOT tokens; and `conversation` still
+    counts pre-compaction lines that aren't actually sent. Use as proportions.
+    """
+    by_type: dict[str, dict] = {}
+    conv = {"count": 0, "chars": 0}
+    client = {"count": 0, "chars": 0}
+    total = {"count": 0, "chars": 0}
+    # Sub-breakouts within the two conversation raw line types. `user` is split
+    # LINE-wise (each user line is either a prompt or carries tool_result(s) —
+    # mutually exclusive, so prompts+tool_results sum exactly to the user total).
+    # `assistant` is split BLOCK-wise (one assistant line commonly mixes
+    # text+thinking+tool_use), so counts are blocks and chars are block JSON
+    # bytes — a within-line decomposition that does NOT sum to the line total
+    # (the per-line envelope/metadata is excluded).
+    sub = {
+        "user": {"prompts": {"count": 0, "chars": 0},
+                 "tool_results": {"count": 0, "chars": 0}},
+        "assistant": {"replies": {"count": 0, "chars": 0},
+                      "thinking": {"count": 0, "chars": 0},
+                      "tool_use": {"count": 0, "chars": 0}},
+    }
+    try:
+        with open(jsonl_path, encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                n = len(line)
+                total["count"] += 1
+                total["chars"] += n
+                obj = None
+                try:
+                    obj = json.loads(line)
+                    t = obj.get("type", "?") if isinstance(obj, dict) else "?"
+                except Exception:
+                    t = "<unparseable>"
+                slot = by_type.setdefault(t, {"count": 0, "chars": 0})
+                slot["count"] += 1
+                slot["chars"] += n
+                bucket = conv if t in _CONVERSATION_LINE_TYPES else client
+                bucket["count"] += 1
+                bucket["chars"] += n
+                # ---- sub-breakouts ----
+                if isinstance(obj, dict) and t in ("user", "assistant"):
+                    msg = obj.get("message")
+                    content = msg.get("content") if isinstance(msg, dict) else obj.get("content")
+                    if t == "user":
+                        has_tr = isinstance(content, list) and any(
+                            isinstance(b, dict) and b.get("type") == "tool_result" for b in content)
+                        key = "tool_results" if has_tr else "prompts"
+                        sub["user"][key]["count"] += 1
+                        sub["user"][key]["chars"] += n
+                    else:  # assistant — block-wise
+                        if isinstance(content, list):
+                            for b in content:
+                                if not isinstance(b, dict):
+                                    continue
+                                bt = b.get("type")
+                                if bt == "text":
+                                    k = "replies"
+                                elif bt == "thinking":
+                                    k = "thinking"
+                                elif bt == "tool_use":
+                                    k = "tool_use"
+                                else:
+                                    continue
+                                sub["assistant"][k]["count"] += 1
+                                sub["assistant"][k]["chars"] += len(
+                                    json.dumps(b, ensure_ascii=False))
+                        elif isinstance(content, str):
+                            sub["assistant"]["replies"]["count"] += 1
+                            sub["assistant"]["replies"]["chars"] += len(content)
+    except OSError:
+        return {}
+    return {
+        "total": total,
+        "conversation": conv,
+        "client_only": client,
+        "client_only_pct": round(100 * client["chars"] / total["chars"], 1) if total["chars"] else 0,
+        "by_type": dict(sorted(by_type.items(), key=lambda kv: -kv[1]["chars"])),
+        "sub": sub,
+    }
+
+
+def _format_raw_line_breakdown(bd: dict) -> str:
+    """Render raw_line_breakdown() as a text section for the stats command."""
+    if not bd:
+        return ""
+    t, conv, cl = bd["total"], bd["conversation"], bd["client_only"]
+    out = ["", c("RAW LINE BREAKDOWN", Colors.BOLD) + c("  (by raw line `type`; chars = file bytes, NOT tokens)", Colors.DIM)]
+    # Same-term-different-meaning warning: 'user'/'assistant' here are RAW LINE TYPES,
+    # which collide with the SEMANTIC User/AI/Tools/Think in the Totals block above.
+    out.append(c("  [!] TERM COLLISION: 'user'/'assistant' below are raw line TYPES, NOT the semantic", Colors.YELLOW))
+    out.append(c("      User/AI/Tools/Think in Totals above. A tool_result is a 'user'-type line; tool_use", Colors.DIM))
+    out.append(c("      + thinking ride in 'assistant'-type lines. So raw 'user' = Totals(User + tool_results),", Colors.DIM))
+    out.append(c("      and Totals(Tools) is split across both raw types. Same word, different axis.", Colors.DIM))
+    out.append(f"  total         {t['count']:>6,} lines  {t['chars']:>12,} chars")
+    out.append(f"  conversation  {conv['count']:>6,} lines  {conv['chars']:>12,} chars   " + c("(user+assistant role lines — model-facing stream)", Colors.DIM))
+    out.append(f"  client-only   {cl['count']:>6,} lines  {cl['chars']:>12,} chars   " + c(f"({bd['client_only_pct']}% of file — NEVER sent to model)", Colors.DIM))
+    out.append(c("  per raw type:", Colors.DIM))
+    _incl = {"user": c("  (role: prompts + tool_results)", Colors.YELLOW),
+             "assistant": c("  (role: AI text + thinking + tool_use)", Colors.YELLOW)}
+    sub = bd.get("sub", {})
+    for typ, d in bd["by_type"].items():
+        if typ in _CONVERSATION_LINE_TYPES:
+            tag = _incl.get(typ, "")
+        else:
+            tag = c("  client-only", Colors.DIM)
+        out.append(f"    {typ:<22}{d['count']:>6,} lines  {d['chars']:>12,} chars{tag}")
+        # sub-breakouts beneath the user / assistant raw line types
+        if typ == "user" and sub.get("user"):
+            su = sub["user"]
+            for sk, label in (("prompts", "user: prompts"),
+                              ("tool_results", "user: tool_results")):
+                sd = su[sk]
+                out.append(c(f"      {label:<20}{sd['count']:>6,} lines  {sd['chars']:>12,} chars"
+                             "  (line-wise; sums to user)", Colors.DIM))
+        elif typ == "assistant" and sub.get("assistant"):
+            sa = sub["assistant"]
+            for sk, label in (("replies", "assistant: replies"),
+                              ("thinking", "assistant: thinking"),
+                              ("tool_use", "assistant: tool_use")):
+                sd = sa[sk]
+                out.append(c(f"      {label:<20}{sd['count']:>6,} blk    {sd['chars']:>12,} chars"
+                             "  (block-wise; block JSON bytes)", Colors.DIM))
+    out.append(c("  note: chars are raw JSONL bytes (incl. JSON overhead + base64 images, which are", Colors.DIM))
+    out.append(c("        char-huge but token-cheap); 'conversation' still counts pre-compaction lines", Colors.DIM))
+    out.append(c("        that aren't sent. Treat as proportions, not token counts.", Colors.DIM))
+    return "\n".join(out)
+
+
+# =============================================================================
+# ADDITIVE STATS (2026-06): offload/engram stub accounting + per-line
+# client-only FIELD accounting + a semantic/raw/model-facing reconciliation.
+# All read-only; none of this touches parse_session / human_turn_indices / the
+# public functions other tools import. Stub prefixes are pulled lazily from
+# lib_jsonl_archive + lib_engram so there is no circular import at module load.
+# =============================================================================
+
+def _stub_prefixes() -> tuple[tuple[str, ...], str]:
+    """(offload STUB_PREFIXES, engram stub prefix), loaded lazily/best-effort."""
+    offload = ()
+    engram = "[engram archived:"
+    try:
+        import lib_jsonl_archive
+        offload = tuple(lib_jsonl_archive.STUB_PREFIXES)
+    except Exception:
+        offload = (
+            "[archived:", "[tool result stripped:", "[input archived:",
+            "[input stripped:", "[embed archived:", "[embed stripped:",
+        )
+    try:
+        import lib_engram
+        engram = lib_engram.ENGRAM_STUB_PREFIX
+    except Exception:
+        pass
+    return offload, engram
+
+
+def stub_accounting(jsonl_path: Path) -> dict[str, Any]:
+    """Count and size the blocks CURRENTLY replaced by offload/engram stubs.
+
+    Walks raw lines and inspects message.content blocks (and top-level content)
+    for stub-prefixed strings, so already-offloaded content is visible as its own
+    category instead of silently counting as normal content. A stub is detected
+    by lib_jsonl_archive.STUB_PREFIXES (offload) or the '[engram archived:' prefix.
+
+    Categorizes by where the stub sits:
+      tool_result   — a tool_result block whose .content is a stub
+      tool_use_input— a tool_use block whose .input[k] is a stub
+      embed         — an embed-kind stub ('[embed …]') sitting as a text/content block
+      engram        — an '[engram archived:' stub (whole-turn engram page-out)
+    'bytes' = current on-disk stub text length (what the stub costs now, NOT the
+    original it replaced). Returns counts + bytes per category and totals.
+    """
+    offload_prefixes, engram_prefix = _stub_prefixes()
+
+    def _is_offload_stub(v) -> bool:
+        return isinstance(v, str) and v.lstrip().startswith(offload_prefixes)
+
+    def _is_engram_stub(v) -> bool:
+        return isinstance(v, str) and v.lstrip().startswith(engram_prefix)
+
+    def _is_embed_stub(v) -> bool:
+        return isinstance(v, str) and v.lstrip().startswith(("[embed archived:", "[embed stripped:"))
+
+    cats = {k: {"count": 0, "bytes": 0}
+            for k in ("tool_result", "tool_use_input", "embed", "engram")}
+
+    def _add(cat: str, text: str) -> None:
+        cats[cat]["count"] += 1
+        cats[cat]["bytes"] += len(text)
+
+    try:
+        with open(jsonl_path, encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                if not line.strip():
+                    continue
+                try:
+                    o = json.loads(line)
+                except Exception:
+                    continue
+                if not isinstance(o, dict):
+                    continue
+                msg = o.get("message")
+                content = msg.get("content") if isinstance(msg, dict) else o.get("content")
+                # whole-turn engram stub can be a plain string content
+                if isinstance(content, str):
+                    if _is_engram_stub(content):
+                        _add("engram", content)
+                    continue
+                if not isinstance(content, list):
+                    continue
+                for b in content:
+                    if not isinstance(b, dict):
+                        continue
+                    bt = b.get("type")
+                    if bt == "tool_result":
+                        v = b.get("content")
+                        # tool_result content can be str or list-of-text-blocks
+                        if _is_engram_stub(v):
+                            _add("engram", v)
+                        elif _is_offload_stub(v):
+                            _add("tool_result", v)
+                        elif isinstance(v, list):
+                            for sub in v:
+                                if isinstance(sub, dict) and _is_offload_stub(sub.get("text")):
+                                    _add("tool_result", sub["text"])
+                    elif bt == "tool_use" and isinstance(b.get("input"), dict):
+                        for vv in b["input"].values():
+                            if _is_offload_stub(vv):
+                                _add("tool_use_input", vv)
+                    elif bt in ("text", "image"):
+                        txt = b.get("text")
+                        if _is_embed_stub(txt):
+                            _add("embed", txt)
+                        elif _is_engram_stub(txt):
+                            _add("engram", txt)
+                        elif _is_offload_stub(txt):
+                            _add("embed", txt)
+    except OSError:
+        return {}
+
+    total = {"count": sum(v["count"] for v in cats.values()),
+             "bytes": sum(v["bytes"] for v in cats.values())}
+    return {"categories": cats, "total": total}
+
+
+def _format_stub_accounting(sa: dict) -> str:
+    """Render stub_accounting() as a labeled additive stats section."""
+    if not sa or not sa.get("total", {}).get("count"):
+        out = ["", c("OFFLOADED / STUBBED ACCOUNTING", Colors.BOLD, Colors.BRIGHT_CYAN)]
+        out.append(c("  (blocks already replaced by offload/engram stubs — detected via "
+                     "lib_jsonl_archive.STUB_PREFIXES + '[engram archived:')", Colors.DIM))
+        out.append(c("  none found — no offloaded/stubbed content in this transcript.", Colors.DIM))
+        return "\n".join(out)
+    cats, total = sa["categories"], sa["total"]
+    out = ["", c("OFFLOADED / STUBBED ACCOUNTING", Colors.BOLD, Colors.BRIGHT_CYAN)]
+    out.append(c("  (blocks already replaced by offload/engram stubs — detected via "
+                 "lib_jsonl_archive.STUB_PREFIXES + '[engram archived:')", Colors.DIM))
+    out.append(c("  'bytes' = CURRENT stub text size on disk, not the original it replaced.", Colors.DIM))
+    labels = {
+        "tool_result": "tool_result stubs",
+        "tool_use_input": "tool_use-input stubs",
+        "embed": "embed stubs",
+        "engram": "engram stubs",
+    }
+    for key in ("tool_result", "tool_use_input", "embed", "engram"):
+        d = cats[key]
+        out.append(f"    {labels[key]:<22}{d['count']:>6,} stubs  {d['bytes']:>12,} stub bytes")
+    out.append(f"    {'TOTAL':<22}{total['count']:>6,} stubs  {total['bytes']:>12,} stub bytes")
+    return "\n".join(out)
+
+
+# Top-level / sub fields that ride along inside user/assistant conversation lines
+# but are NEVER sent to the model (client-side bookkeeping). The big one is the
+# top-level `toolUseResult` — it duplicates the tool output already carried in the
+# tool_result block and on a real transcript can be ~30% of the whole file.
+def conversation_client_only_fields(jsonl_path: Path) -> dict[str, Any]:
+    """Sum bytes of client-only FIELDS carried inside user/assistant lines.
+
+    read_jsonl's RAW LINE BREAKDOWN classifies model-facing-ness by LINE TYPE,
+    so a whole user/assistant line counts as 'conversation'. But those lines carry
+    fat fields the model never sees. This measures them so 'conversation' can be
+    corrected down to a real model-facing estimate.
+
+    Fields measured (only on type in {user, assistant}):
+      toolUseResult  — top-level; client-only (duplicates the tool_result block)
+      message.usage  — token-accounting metadata; client-only
+      signature      — thinking-block signature; PROBABLY API-REQUIRED, reported
+                       separately as 'probably-required', NOT asserted client-only
+
+    'conversation_raw_bytes' = raw byte length of all user/assistant lines (matches
+    raw_line_breakdown's 'conversation' chars). 'model_facing_estimate' subtracts
+    only the two genuinely client-only fields (toolUseResult + usage), leaving the
+    probably-required signature inside the estimate.
+    """
+    tur_bytes = usage_bytes = sig_bytes = 0
+    tur_count = usage_count = sig_count = 0
+    conv_lines = 0
+    conv_raw_bytes = 0
+    try:
+        with open(jsonl_path, encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                n = len(line)
+                try:
+                    o = json.loads(line)
+                except Exception:
+                    continue
+                if not isinstance(o, dict):
+                    continue
+                if o.get("type") not in _CONVERSATION_LINE_TYPES:
+                    continue
+                conv_lines += 1
+                conv_raw_bytes += n
+                # top-level toolUseResult (str or json)
+                if "toolUseResult" in o:
+                    tur = o["toolUseResult"]
+                    tur_bytes += len(tur) if isinstance(tur, str) else len(
+                        json.dumps(tur, ensure_ascii=False))
+                    tur_count += 1
+                msg = o.get("message")
+                if isinstance(msg, dict):
+                    if isinstance(msg.get("usage"), (dict, list)):
+                        usage_bytes += len(json.dumps(msg["usage"], ensure_ascii=False))
+                        usage_count += 1
+                    elif isinstance(msg.get("usage"), str):
+                        usage_bytes += len(msg["usage"]); usage_count += 1
+                    content = msg.get("content")
+                    if isinstance(content, list):
+                        for b in content:
+                            if isinstance(b, dict) and isinstance(b.get("signature"), str):
+                                sig_bytes += len(b["signature"]); sig_count += 1
+    except OSError:
+        return {}
+
+    client_only_bytes = tur_bytes + usage_bytes  # signature deliberately excluded
+    model_facing = conv_raw_bytes - client_only_bytes
+    return {
+        "conversation_lines": conv_lines,
+        "conversation_raw_bytes": conv_raw_bytes,
+        "toolUseResult": {"count": tur_count, "bytes": tur_bytes},
+        "usage": {"count": usage_count, "bytes": usage_bytes},
+        "signature": {"count": sig_count, "bytes": sig_bytes},
+        "client_only_field_bytes": client_only_bytes,
+        "model_facing_estimate": model_facing,
+        "model_facing_pct_of_conv": (
+            round(100 * model_facing / conv_raw_bytes, 1) if conv_raw_bytes else 0),
+    }
+
+
+def _format_conversation_client_only_fields(cf: dict, bd: dict | None = None) -> str:
+    """Render conversation_client_only_fields() + a short reconciliation note."""
+    if not cf:
+        return ""
+    out = ["", c("CLIENT-ONLY FIELDS WITHIN CONVERSATION LINES", Colors.BOLD, Colors.BRIGHT_CYAN)]
+    out.append(c("  (fat fields riding inside user/assistant lines that the model NEVER sees —", Colors.DIM))
+    out.append(c("   RAW LINE BREAKDOWN counts these lines whole as 'conversation', overstating it)", Colors.DIM))
+    conv = cf["conversation_raw_bytes"]
+    out.append(f"  conversation raw bytes        {conv:>12,}   " + c("(user+assistant lines, whole)", Colors.DIM))
+    out.append(c("  client-only fields (subtracted):", Colors.DIM))
+    tur = cf["toolUseResult"]
+    out.append(f"    toolUseResult (top-level)   {tur['bytes']:>12,}  in {tur['count']:>5,} lines   "
+               + c("CLIENT-ONLY — duplicates tool_result output", Colors.YELLOW))
+    us = cf["usage"]
+    out.append(f"    message.usage               {us['bytes']:>12,}  in {us['count']:>5,} lines   "
+               + c("CLIENT-ONLY — token accounting", Colors.YELLOW))
+    out.append(f"    = client-only field bytes   {cf['client_only_field_bytes']:>12,}")
+    sig = cf["signature"]
+    out.append(f"  thinking signature            {sig['bytes']:>12,}  in {sig['count']:>5,} blocks  "
+               + c("probably API-REQUIRED — NOT subtracted", Colors.DIM))
+    out.append("")
+    out.append(c(f"  MODEL-FACING ESTIMATE         {cf['model_facing_estimate']:>12,}   "
+                 f"(conv raw − client-only fields = {cf['model_facing_pct_of_conv']}% of conv)",
+                 Colors.BOLD, Colors.BRIGHT_GREEN))
+    # ---- reconciliation note: three axes ----
+    out.append("")
+    out.append(c("  RECONCILIATION — three different axes (why the numbers differ):", Colors.BOLD))
+    out.append(c("    1. SEMANTIC text (Totals block): rendered message text only — chars/words of", Colors.DIM))
+    out.append(c("       actual prose/tool I/O. Excludes ALL JSON envelope + metadata + duplicated fields.", Colors.DIM))
+    out.append(c("    2. FULL-FILE bytes (RAW LINE BREAKDOWN): every byte on disk — JSON envelope,", Colors.DIM))
+    out.append(c("       per-record metadata (uuid/cwd/gitBranch/version/…), base64 images, AND the", Colors.DIM))
+    out.append(c("       client-only fields above (esp. toolUseResult, which alone can be ~30% of file).", Colors.DIM))
+    out.append(c("    3. MODEL-FACING estimate (this section): conversation raw bytes minus the", Colors.DIM))
+    out.append(c("       client-only toolUseResult + usage fields — the closest of the three to what", Colors.DIM))
+    out.append(c("       is actually streamed to the model. So Totals << Model-facing << Full-file.", Colors.DIM))
+    return "\n".join(out)
+
+
+# =============================================================================
+# MODEL-FACING — BOTTOM-UP computation + KEEP/OFFLOADABLE/THINKING ledger (2026-06)
+# Additive: a more accurate, bottom-up model-facing byte figure (summing only the
+# JSON bytes of message.content BLOCKS) plus a decision ledger that splits that
+# payload into conversational memory (KEEP), offloadable tool data (OFFLOADABLE,
+# with the sub-512B headroom called out), and thinking/signature (THINKING).
+# Read-only; does not touch parse_session / human_turn_indices / public APIs.
+# =============================================================================
+
+def model_facing_ledger(jsonl_path: Path) -> dict[str, Any]:
+    """Bottom-up model-facing bytes + a KEEP / OFFLOADABLE / THINKING ledger.
+
+    Walks raw user/assistant lines and sums the JSON bytes of the message.content
+    BLOCKS only (text + thinking[incl signature] + tool_use + tool_result) — the
+    actual API-request payload. This is the BOTTOM-UP figure: unlike the top-down
+    conversation_client_only_fields estimate (conv raw − toolUseResult − usage),
+    it ALSO excludes per-record client metadata (parentUuid, cwd, sessionId, uuid,
+    timestamp, requestId, slug, isSidechain, version, message.id/model/stop_reason/
+    usage, …), so it lines up with reality instead of overstating. Image blocks are
+    excluded (byte-huge, token-cheap; counted as vision tokens elsewhere).
+
+    Decomposes that payload into a decision ledger, OVERALL and per compaction
+    interval:
+      KEEP        — user-prompt text + assistant text (conversational memory).
+      OFFLOADABLE — tool_use.input + tool_result.content (non-memory tool data),
+                    split: already-stubbed / inline ≥ floor / inline < floor.
+                    The inline-<floor bucket is the untapped headroom skipped by a
+                    normal offload run (it sits below --min-bytes).
+      THINKING    — thinking text + signature; reclaimable only by routing the turn
+                    off-chain (consolidation), NOT offloadable (signature is
+                    API-required).
+
+    Category buckets use INNER payload bytes (the reclaimable/semantic content);
+    the per-block JSON envelope is reported as the gap to the bottom-up block-JSON
+    total. Approx tokens ≈ bytes / 4.
+    """
+    try:
+        import lib_jsonl_archive as _lja
+        offload_prefixes = tuple(_lja.STUB_PREFIXES)
+        min_floor = _lja.MIN_BYTES
+        _wire = _lja.wire_size
+        _is_stub = _lja.is_stub
+    except Exception:
+        offload_prefixes, _ = _stub_prefixes()
+
+        def _wire(v):
+            return len(v) if isinstance(v, str) else len(json.dumps(v, ensure_ascii=False))
+
+        def _is_stub(v):
+            return isinstance(v, str) and v.lstrip().startswith(offload_prefixes)
+        min_floor = 512
+
+    def _blank():
+        return {
+            "keep": {"user": 0, "assistant": 0},
+            "offloadable": {
+                "stubbed": {"count": 0, "bytes": 0},
+                "inline_ge": {"count": 0, "bytes": 0},
+                "inline_lt": {"count": 0, "bytes": 0},
+            },
+            "thinking": {"text_bytes": 0, "sig_bytes": 0, "count": 0},
+            "block_json_bytes": 0,   # bottom-up: Σ len(json.dumps(block))
+            "inner_bytes": 0,        # Σ inner payloads attributed to categories
+        }
+
+    intervals = compaction_intervals(jsonl_path)
+    iv_acc = {iv["index"]: _blank() for iv in intervals}
+    overall = _blank()
+    last_index = intervals[-1]["index"]
+
+    def _which(lineno: int):
+        for iv in intervals:
+            if iv["start_line"] <= lineno <= iv["end_line"]:
+                return iv["index"]
+        return None
+
+    def _result_is_stub(v) -> bool:
+        if _is_stub(v):
+            return True
+        if isinstance(v, list):
+            return any(isinstance(s, dict) and _is_stub(s.get("text")) for s in v)
+        return False
+
+    try:
+        with open(jsonl_path, encoding="utf-8", errors="replace") as fh:
+            for i, line in enumerate(fh, start=1):
+                if not line.strip():
+                    continue
+                try:
+                    o = json.loads(line)
+                except Exception:
+                    continue
+                if not isinstance(o, dict):
+                    continue
+                ltype = o.get("type")
+                if ltype not in _CONVERSATION_LINE_TYPES:
+                    continue
+                idx = _which(i)
+                accs = [overall] + ([iv_acc[idx]] if idx is not None else [])
+                role = "user" if ltype == "user" else "assistant"
+                msg = o.get("message")
+                content = msg.get("content") if isinstance(msg, dict) else o.get("content")
+
+                if isinstance(content, str):
+                    bj = len(json.dumps(content, ensure_ascii=False))
+                    inner = len(content)
+                    for a in accs:
+                        a["block_json_bytes"] += bj
+                        a["inner_bytes"] += inner
+                        a["keep"][role] += inner
+                    continue
+                if not isinstance(content, list):
+                    continue
+
+                for b in content:
+                    if not isinstance(b, dict):
+                        continue
+                    bt = b.get("type")
+                    if bt not in ("text", "thinking", "tool_use", "tool_result"):
+                        continue
+                    bj = len(json.dumps(b, ensure_ascii=False))
+                    for a in accs:
+                        a["block_json_bytes"] += bj
+
+                    if bt == "text":
+                        inner = len(b.get("text") or "")
+                        for a in accs:
+                            a["keep"][role] += inner
+                            a["inner_bytes"] += inner
+                    elif bt == "thinking":
+                        tt = len(b.get("thinking") or "")
+                        sg = len(b.get("signature") or "")
+                        for a in accs:
+                            a["thinking"]["text_bytes"] += tt
+                            a["thinking"]["sig_bytes"] += sg
+                            a["thinking"]["count"] += 1
+                            a["inner_bytes"] += tt + sg
+                    else:  # tool_use / tool_result — OFFLOADABLE non-memory
+                        if bt == "tool_use":
+                            payload = b.get("input")
+                            is_stub = isinstance(payload, dict) and any(
+                                _is_stub(v) for v in payload.values())
+                        else:
+                            payload = b.get("content")
+                            is_stub = _result_is_stub(payload)
+                        inner = _wire(payload) if payload is not None else 0
+                        if is_stub:
+                            bucket = "stubbed"
+                        elif inner >= min_floor:
+                            bucket = "inline_ge"
+                        else:
+                            bucket = "inline_lt"
+                        for a in accs:
+                            a["offloadable"][bucket]["count"] += 1
+                            a["offloadable"][bucket]["bytes"] += inner
+                            a["inner_bytes"] += inner
+    except OSError:
+        return {}
+
+    return {
+        "min_floor": min_floor,
+        "model_facing_bottom_up": overall["block_json_bytes"],
+        "overall": overall,
+        "live_index": last_index,
+        "live": iv_acc.get(last_index),
+        "intervals": iv_acc,
+    }
+
+
+def _format_model_facing_ledger(ml: dict, cf: dict | None = None,
+                                semantic_chars: int | None = None) -> str:
+    """Render model_facing_ledger(): bottom-up figure + decision ledger."""
+    if not ml or not ml.get("overall"):
+        return ""
+    floor = ml["min_floor"]
+    bu = ml["model_facing_bottom_up"]
+    ov = ml["overall"]
+
+    def _n(x):
+        return f"{x:>13,}"
+
+    def _tok(x):
+        return c(f"~{x // 4:>10,} tok", Colors.DIM)
+
+    out = ["", c("MODEL-FACING — BOTTOM-UP + LEDGER", Colors.BOLD, Colors.BRIGHT_GREEN)]
+    out.append(c("  (bottom-up = Σ JSON bytes of message.content BLOCKS only [text+thinking+tool_use+", Colors.DIM))
+    out.append(c("   tool_result] — the actual API request payload. Excludes per-record client metadata", Colors.DIM))
+    out.append(c("   uuid/cwd/sessionId/timestamp/requestId/message.id/model/usage/… AND toolUseResult.)", Colors.DIM))
+    out.append("")
+    out.append(c(f"  MODEL-FACING BOTTOM-UP        {_n(bu)}   {_tok(bu)}", Colors.BOLD, Colors.BRIGHT_GREEN))
+    if cf and cf.get("model_facing_estimate") is not None:
+        td = cf["model_facing_estimate"]
+        gap = td - bu
+        out.append(f"  top-down estimate (old)       {_n(td)}   " + c("conv raw − toolUseResult − usage (OVERSTATES)", Colors.DIM))
+        out.append(c(f"  gap (top-down − bottom-up)    {_n(gap)}   = per-record CLIENT METADATA, also NOT sent", Colors.YELLOW))
+    if semantic_chars:
+        ratio = bu / semantic_chars if semantic_chars else 0
+        out.append(f"  Totals semantic chars         {_n(semantic_chars)}   "
+                   + c(f"bottom-up / semantic = {ratio:.2f}x  (JSON-escaping/structure, not 8.5x)", Colors.DIM))
+    env = ov["block_json_bytes"] - ov["inner_bytes"]
+    out.append(f"  per-block JSON envelope       {_n(env)}   " + c("(block type tags/ids/braces; bottom-up − ledger payload)", Colors.DIM))
+
+    def _ledger_block(title: str, a: dict) -> list[str]:
+        keep_u, keep_a = a["keep"]["user"], a["keep"]["assistant"]
+        keep = keep_u + keep_a
+        off = a["offloadable"]
+        st, ge, lt = off["stubbed"], off["inline_ge"], off["inline_lt"]
+        offtot = st["bytes"] + ge["bytes"] + lt["bytes"]
+        th = a["thinking"]
+        L = [c(f"  {title}", Colors.BOLD)]
+        L.append(c("    KEEP  conversational memory (user prompts + assistant text)", Colors.BRIGHT_CYAN))
+        L.append(f"      user prompts            {_n(keep_u)}   {_tok(keep_u)}")
+        L.append(f"      assistant text          {_n(keep_a)}   {_tok(keep_a)}")
+        L.append(c(f"      = KEEP total            {_n(keep)}   {_tok(keep)}", Colors.BOLD))
+        L.append(c("    OFFLOADABLE non-memory  tool_use.input + tool_result.content (inner payload)", Colors.BRIGHT_CYAN))
+        L.append(f"      already-stubbed         {_n(st['bytes'])}   {_tok(st['bytes'])}  in {st['count']:>5,} blocks")
+        L.append(f"      inline >= {floor}B         {_n(ge['bytes'])}   {_tok(ge['bytes'])}  in {ge['count']:>5,} blocks  "
+                 + c("(a normal run would offload these)", Colors.DIM))
+        L.append(c(f"      inline <  {floor}B HEADROOM {_n(lt['bytes'])}   ~{lt['bytes'] // 4:>10,} tok  in {lt['count']:>5,} blocks  "
+                   "<-- BELOW floor, skipped today", Colors.YELLOW))
+        L.append(c(f"          (untapped: lowering --min-bytes below {floor} would reclaim these {lt['count']:,} blocks)", Colors.DIM))
+        L.append(c(f"      = OFFLOADABLE total     {_n(offtot)}   {_tok(offtot)}", Colors.BOLD))
+        L.append(c("    THINKING  consolidation-only — NOT offloadable", Colors.BRIGHT_CYAN))
+        L.append(f"      thinking text           {_n(th['text_bytes'])}   {_tok(th['text_bytes'])}  in {th['count']:>5,} blocks")
+        L.append(c(f"      signature               {_n(th['sig_bytes'])}   ~{th['sig_bytes'] // 4:>10,} tok  "
+                   "API-REQUIRED (off-chain only)", Colors.DIM))
+        return L
+
+    out.append("")
+    out.extend(_ledger_block("LEDGER — OVERALL (whole file)", ov))
+    live = ml.get("live")
+    if live is not None and ml.get("live_index") not in (None, 0):
+        out.append("")
+        out.extend(_ledger_block(f"LEDGER — LIVE interval {ml['live_index']} (post-last-compaction, current context)", live))
+    out.append("")
+    out.append(c("  NOTE: THINKING is reclaimable ONLY by routing the turn off-chain (consolidation),", Colors.DIM))
+    out.append(c("        NOT by offloading — the signature is API-required and cannot be stubbed.", Colors.DIM))
+    out.append(c("  FLAG: open question — whether signature bytes count against the model's", Colors.YELLOW))
+    out.append(c("        context-token budget is UNVERIFIED.", Colors.YELLOW))
+    return "\n".join(out)
+
+
+# =============================================================================
+# Compaction detection + intervals + client-only line inclusion
+# =============================================================================
+#
+# A "compaction event" is where the CLI summarized the prior conversation and
+# replaced it with a fresh system message (the "new system messaging"). It is
+# detected on a RAW line carrying the JSON field `isCompactSummary == true`.
+# The `type=="system"` line with `subtype=="compact_boundary"` that immediately
+# precedes the summary is part of the same event; the event's START LINE is the
+# earliest of the two (the boundary line if present immediately before, else the
+# summary line itself). These markers can live on RAW lines that parse_session
+# drops, so detection scans the raw file directly.
+
+
+def _raw_line_count(jsonl_path: Path) -> int:
+    """Count raw lines in a JSONL file (1 line == 1 record)."""
+    n = 0
+    try:
+        with open(jsonl_path, encoding="utf-8", errors="replace") as fh:
+            for _ in fh:
+                n += 1
+    except OSError:
+        return 0
+    return n
+
+
+def find_compactions(jsonl_path: Path) -> list[dict]:
+    """Scan RAW lines for compaction events.
+
+    Returns one dict per event, 1-indexed and in file order:
+      {"index": k, "start_line": <earliest raw line of the event>,
+       "summary_line": <raw line with isCompactSummary>,
+       "timestamp": <ts or "">, "summary_chars": <len of the summary line>}
+    """
+    events: list[dict] = []
+    prev_line_num = 0
+    prev_obj: dict | None = None
+    try:
+        with open(jsonl_path, encoding="utf-8", errors="replace") as fh:
+            for i, line in enumerate(fh, start=1):
+                try:
+                    obj = json.loads(line)
+                except Exception:
+                    obj = None
+                if isinstance(obj, dict) and obj.get("isCompactSummary") is True:
+                    start_line = i
+                    if (
+                        prev_obj is not None
+                        and prev_line_num == i - 1
+                        and prev_obj.get("type") == "system"
+                        and prev_obj.get("subtype") == "compact_boundary"
+                    ):
+                        start_line = prev_line_num
+                    events.append({
+                        "index": len(events) + 1,
+                        "start_line": start_line,
+                        "summary_line": i,
+                        "timestamp": obj.get("timestamp", "") or "",
+                        "summary_chars": len(line.rstrip("\n")),
+                    })
+                prev_line_num, prev_obj = i, obj if isinstance(obj, dict) else None
+    except OSError:
+        return []
+    return events
+
+
+def compaction_intervals(jsonl_path: Path) -> list[dict]:
+    """Partition the raw file into compaction intervals.
+
+    interval 0 = "prologue": raw lines 1 .. (first event start_line - 1). May be
+    empty (end_line < start_line) if the file opens with a compaction.
+    interval k (k=1..N) = event k start_line .. (event k+1 start_line - 1) or EOF.
+    The LAST interval is the live/current region. With no events, interval 0
+    spans the whole file.
+
+    Returns [{"index": i, "start_line": s, "end_line": e, "is_prologue": bool}, ...].
+    """
+    events = find_compactions(jsonl_path)
+    total = _raw_line_count(jsonl_path)
+    if not events:
+        return [{"index": 0, "start_line": 1, "end_line": total, "is_prologue": True}]
+
+    intervals = [{
+        "index": 0,
+        "start_line": 1,
+        "end_line": events[0]["start_line"] - 1,
+        "is_prologue": True,
+    }]
+    for i, ev in enumerate(events):
+        start = ev["start_line"]
+        end = (events[i + 1]["start_line"] - 1) if i + 1 < len(events) else total
+        intervals.append({
+            "index": i + 1,
+            "start_line": start,
+            "end_line": end,
+            "is_prologue": False,
+        })
+    return intervals
+
+
+def _select_intervals(spec: str, intervals: list[dict]) -> tuple[list[dict] | None, str | None]:
+    """Resolve an --interval SPEC against the file's intervals.
+
+    SPEC supports: a single integer (0=prologue, 1..N); the words `last`/`live`
+    (final interval); negative indices (-1 = last); comma lists ("1,3"); and
+    ranges ("2-4"). Returns (selected_intervals, None) or (None, error_message).
+    """
+    max_index = intervals[-1]["index"]
+    valid = {iv["index"] for iv in intervals}
+    chosen: list[int] = []
+    for token in spec.split(","):
+        token = token.strip().lower()
+        if not token:
+            continue
+        if token in ("last", "live"):
+            chosen.append(intervals[-1]["index"])
+        elif token.startswith("-"):
+            try:
+                idx = int(token)
+                chosen.append(intervals[idx]["index"])
+            except (ValueError, IndexError):
+                return None, f"Invalid/out-of-range interval index: {token}"
+        elif "-" in token:
+            lo_s, hi_s = token.split("-", 1)
+            try:
+                lo, hi = int(lo_s), int(hi_s)
+            except ValueError:
+                return None, f"Invalid interval range: {token}"
+            chosen.extend(range(lo, hi + 1))
+        else:
+            try:
+                chosen.append(int(token))
+            except ValueError:
+                return None, f"Invalid interval token: {token}"
+
+    bad = sorted({i for i in chosen if i not in valid})
+    if bad:
+        note = "no compactions in this file" if max_index == 0 else f"{max_index} compaction(s)"
+        return None, (
+            f"Requested interval(s) {bad} not available — file has intervals 0..{max_index} ({note})."
+        )
+    want = set(chosen)
+    return [iv for iv in intervals if iv["index"] in want], None
+
+
+def _apply_interval_filter(msgs: list[Message], selected: list[dict]) -> list[Message]:
+    """Keep only messages whose source_line falls within a selected interval."""
+    if not selected:
+        return msgs
+    ranges = [(iv["start_line"], iv["end_line"]) for iv in selected]
+    return [
+        m for m in msgs
+        if m.source_line and any(s <= m.source_line <= e for s, e in ranges)
+    ]
+
+
+def _meta_preview(obj: dict, limit: int = 200) -> str:
+    """Compact one-line preview of a raw client-only record (sans `type`)."""
+    payload = {k: v for k, v in obj.items() if k != "type"}
+    try:
+        s = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    except Exception:
+        s = str(payload)
+    s = s.replace("\n", " ").replace("\r", " ")
+    if len(s) > limit:
+        s = s[:limit] + "…"
+    return s
+
+
+def client_only_meta_messages(jsonl_path: Path) -> list[Message]:
+    """Build META Message objects for every RAW line whose `type` is NOT a
+    conversation type (i.e. client-only: attachment, file-history-snapshot,
+    system, mode, custom-title, agent-name, agent-color, permission-mode,
+    bridge-session, last-prompt, queue-operation, progress, ...).
+
+    parse_session drops these; this surfaces them so --include-client-only can
+    merge them inline. Each carries source_line for sorting/filtering.
+    """
+    metas: list[Message] = []
+    try:
+        with open(jsonl_path, encoding="utf-8", errors="replace") as fh:
+            for i, line in enumerate(fh, start=1):
+                if not line.strip():
+                    continue
+                try:
+                    obj = json.loads(line)
+                except Exception:
+                    continue
+                if not isinstance(obj, dict):
+                    continue
+                ltype = obj.get("type", "?")
+                if ltype in _CONVERSATION_LINE_TYPES:
+                    continue
+                metas.append(Message(
+                    role="meta",
+                    type=MessageType.META,
+                    content=f"[{ltype}] {_meta_preview(obj)}",
+                    timestamp=_normalize_timestamp(obj.get("timestamp", "")) if obj.get("timestamp") else "",
+                    source_line=i,
+                    raw=obj,
+                ))
+    except OSError:
+        return []
+    return metas
+
+
+def session_summary(jsonl_path: Path, platform: str | None = None) -> dict[str, Any]:
+    """Get summary info for a session file."""
+    msgs = parse_session(jsonl_path, platform=platform)
+    if not msgs:
+        return {"message_count": 0, "raw_line_breakdown": raw_line_breakdown(jsonl_path)}
+
+    text_msgs = [m for m in msgs if m.type in (MessageType.USER, MessageType.RESPONSE)]
+    first_user = next((m for m in text_msgs if m.role == "user"), None)
+
+    return {
+        "message_count": len(msgs),
+        "text_messages": len(text_msgs),
+        "user_messages": sum(1 for m in text_msgs if m.role == "user"),
+        "assistant_messages": sum(1 for m in text_msgs if m.role == "assistant"),
+        "tool_calls": sum(1 for m in msgs if m.type == MessageType.TOOL_USE),
+        "first_timestamp": msgs[0].timestamp,
+        "last_timestamp": msgs[-1].timestamp,
+        "platform": msgs[0].platform,
+        "first_message_preview": (first_user.content[:120] + "...") if first_user else "",
+        "file_size_bytes": jsonl_path.stat().st_size,
+        "raw_line_breakdown": raw_line_breakdown(jsonl_path),
+    }
+
+
+def _count_words(text: str) -> int:
+    return len(text.split()) if text else 0
+
+
+def _size_str(chars: int, words: int) -> str:
+    """Format chars | words for display."""
+    return f"{chars:>8,} chars | {words:>6,} words"
+
+
+def _tally_by_type(msgs: list[Message]) -> dict:
+    """Per-type counts/chars/words for a list of Messages.
+
+    Uses the EXACT same categorization as session_stats' day-loop so that
+    interval tallies sum to the whole-session totals:
+      USER -> user, RESPONSE -> ai, TOOL_USE+TOOL_RESULT -> tools,
+      THINKING -> think (chars only). For TOOL_USE the JSON-serialized
+      tool_input is added to the char/word counts (matching the day-loop).
+    `chars`/`words` are the running totals across ALL message types (the value
+    shown on the whole-session "Turns" line), so uncategorized types still
+    contribute there. Returns a dict mirroring the `totals` per-type shape.
+    """
+    acc = {
+        "messages": 0,
+        "chars": 0, "words": 0,
+        "user": {"count": 0, "chars": 0, "words": 0},
+        "ai": {"count": 0, "chars": 0, "words": 0},
+        "tools": {"count": 0, "chars": 0, "words": 0},
+        "thinking": {"count": 0, "chars": 0},
+    }
+    for m in msgs:
+        acc["messages"] += 1
+        if m.type == MessageType.TOOL_USE and m.tool_input:
+            input_str = json.dumps(m.tool_input) if isinstance(m.tool_input, dict) else str(m.tool_input)
+            mc = len(m.content) + len(input_str)
+            mw = _count_words(m.content) + _count_words(input_str)
+        else:
+            mc = len(m.content)
+            mw = _count_words(m.content)
+        acc["chars"] += mc
+        acc["words"] += mw
+        if m.type == MessageType.USER:
+            acc["user"]["count"] += 1; acc["user"]["chars"] += mc; acc["user"]["words"] += mw
+        elif m.type == MessageType.RESPONSE:
+            acc["ai"]["count"] += 1; acc["ai"]["chars"] += mc; acc["ai"]["words"] += mw
+        elif m.type in (MessageType.TOOL_USE, MessageType.TOOL_RESULT):
+            acc["tools"]["count"] += 1; acc["tools"]["chars"] += mc; acc["tools"]["words"] += mw
+        elif m.type == MessageType.THINKING:
+            acc["thinking"]["count"] += 1; acc["thinking"]["chars"] += mc
+    return acc
+
+
+def session_stats(jsonl_path: Path, platform: str | None = None,
+                  fmt: str = "text", show_tools: bool = False,
+                  split_offloaded: bool = False) -> str | dict:
+    """Generate detailed statistics for a session.
+
+    Returns formatted text or a structured dict (fmt='json').
+
+    When split_offloaded is True (text format only), a co-located Full/Stub
+    breakout is inlined under each User/AI/Tools line in the per-Day, Totals,
+    and per-compaction-interval sections.
+    """
+    msgs = parse_session(jsonl_path, platform=platform)
+    if not msgs:
+        return "No messages found." if fmt == "text" else {"error": "no messages"}
+
+    turns = group_into_turns(msgs)
+    days = group_by_day(turns)
+
+    # Detect system prompt (first system/meta messages before first user)
+    sys_chars = 0
+    sys_words = 0
+    for m in msgs:
+        if m.type in (MessageType.USER, MessageType.RESPONSE):
+            break
+        if m.type in (MessageType.SYSTEM, MessageType.META):
+            sys_chars += len(m.content)
+            sys_words += _count_words(m.content)
+
+    # Per-tool-name accumulator
+    def _new_tool_acc():
+        return {"count": 0, "chars": 0, "words": 0,
+                "input_chars": 0, "result_chars": 0, "result_words": 0}
+
+    def _merge_tool_acc(dst, src):
+        for k in dst:
+            dst[k] += src[k]
+
+    # Per-day stats
+    day_stats = []
+    total_turns = 0
+    total_chars = 0
+    total_words = 0
+    total_user_n = 0
+    total_user_chars = 0
+    total_user_words = 0
+    total_ai_n = 0
+    total_ai_chars = 0
+    total_ai_words = 0
+    total_tool_n = 0
+    total_tool_chars = 0
+    total_tool_words = 0
+    total_thinking_n = 0
+    total_thinking_chars = 0
+    total_tool_detail: dict[str, dict] = {}
+
+    # Build call_id → tool_name lookup from all messages
+    call_id_to_name: dict[str, str] = {}
+    for m in msgs:
+        if m.type == MessageType.TOOL_USE and m.tool_call_id and m.tool_name:
+            call_id_to_name[m.tool_call_id] = m.tool_name
+
+    for day in days:
+        d_turns = len(day.turns)
+        d_user_n = d_user_chars = d_user_words = 0
+        d_ai_n = d_ai_chars = d_ai_words = 0
+        d_tool_n = d_tool_chars = d_tool_words = 0
+        d_thinking_n = d_thinking_chars = 0
+        d_chars = d_words = 0
+        d_first_ts = d_last_ts = ""
+        d_tool_detail: dict[str, dict] = {}
+
+        for turn in day.turns:
+            for m in turn.messages:
+                # For tool messages, count tool_input content too
+                if m.type == MessageType.TOOL_USE and m.tool_input:
+                    input_str = json.dumps(m.tool_input) if isinstance(m.tool_input, dict) else str(m.tool_input)
+                    mc = len(m.content) + len(input_str)
+                    mw = _count_words(m.content) + _count_words(input_str)
+                else:
+                    mc = len(m.content)
+                    mw = _count_words(m.content)
+                d_chars += mc
+                d_words += mw
+                if not d_first_ts and m.timestamp:
+                    d_first_ts = m.timestamp
+                if m.timestamp:
+                    d_last_ts = m.timestamp
+
+                if m.type == MessageType.USER:
+                    d_user_n += 1; d_user_chars += mc; d_user_words += mw
+                elif m.type == MessageType.RESPONSE:
+                    d_ai_n += 1; d_ai_chars += mc; d_ai_words += mw
+                elif m.type == MessageType.TOOL_USE:
+                    d_tool_n += 1; d_tool_chars += mc; d_tool_words += mw
+                    tname = m.tool_name or "unknown"
+                    if tname not in d_tool_detail:
+                        d_tool_detail[tname] = _new_tool_acc()
+                    d_tool_detail[tname]["count"] += 1
+                    input_str = json.dumps(m.tool_input) if isinstance(m.tool_input, dict) else str(m.tool_input)
+                    d_tool_detail[tname]["input_chars"] += len(input_str)
+                    d_tool_detail[tname]["chars"] += mc
+                    d_tool_detail[tname]["words"] += mw
+                elif m.type == MessageType.TOOL_RESULT:
+                    d_tool_n += 1; d_tool_chars += mc; d_tool_words += mw
+                    tname = m.tool_name or call_id_to_name.get(m.tool_call_id, "") or "unknown"
+                    if tname not in d_tool_detail:
+                        d_tool_detail[tname] = _new_tool_acc()
+                    d_tool_detail[tname]["result_chars"] += mc
+                    d_tool_detail[tname]["result_words"] += mw
+                elif m.type == MessageType.THINKING:
+                    d_thinking_n += 1; d_thinking_chars += mc
+
+        ds = {
+            "date": day.date, "label": day.label,
+            "time_range": [_ts_to_local(d_first_ts), _ts_to_local(d_last_ts)],
+            "turns": d_turns, "chars": d_chars, "words": d_words,
+            "user": {"count": d_user_n, "chars": d_user_chars, "words": d_user_words},
+            "ai": {"count": d_ai_n, "chars": d_ai_chars, "words": d_ai_words},
+            "tools": {"count": d_tool_n, "chars": d_tool_chars, "words": d_tool_words},
+            "tool_detail": d_tool_detail,
+            "thinking": {"count": d_thinking_n, "chars": d_thinking_chars},
+        }
+        day_stats.append(ds)
+        total_turns += d_turns
+        total_chars += d_chars; total_words += d_words
+        total_user_n += d_user_n; total_user_chars += d_user_chars; total_user_words += d_user_words
+        total_ai_n += d_ai_n; total_ai_chars += d_ai_chars; total_ai_words += d_ai_words
+        total_tool_n += d_tool_n; total_tool_chars += d_tool_chars; total_tool_words += d_tool_words
+        total_thinking_n += d_thinking_n; total_thinking_chars += d_thinking_chars
+        for tname, tacc in d_tool_detail.items():
+            if tname not in total_tool_detail:
+                total_tool_detail[tname] = _new_tool_acc()
+            _merge_tool_acc(total_tool_detail[tname], tacc)
+
+    first_ts = _ts_to_local(msgs[0].timestamp) if msgs[0].timestamp else "?"
+    last_ts = _ts_to_local(msgs[-1].timestamp) if msgs[-1].timestamp else "?"
+
+    result = {
+        "file": str(jsonl_path),
+        "file_size_bytes": jsonl_path.stat().st_size,
+        "platform": msgs[0].platform,
+        "date_range": [first_ts, last_ts],
+        "num_days": len(days),
+        "system_prompt": {"chars": sys_chars, "words": sys_words},
+        "days": day_stats,
+        "totals": {
+            "turns": total_turns, "chars": total_chars, "words": total_words,
+            "user": {"count": total_user_n, "chars": total_user_chars, "words": total_user_words},
+            "ai": {"count": total_ai_n, "chars": total_ai_chars, "words": total_ai_words},
+            "tools": {"count": total_tool_n, "chars": total_tool_chars, "words": total_tool_words},
+            "tool_detail": total_tool_detail,
+            "thinking": {"count": total_thinking_n, "chars": total_thinking_chars},
+            "messages": len(msgs),
+        },
+    }
+
+    # ---- Per-compaction-interval breakdown ----
+    # Same per-type tally (via _tally_by_type) applied to the messages whose
+    # raw source_line falls inside each interval. Sums to the whole-session
+    # totals (modulo any messages with source_line == 0, which can't be placed).
+    intervals = compaction_intervals(jsonl_path)
+    last_index = intervals[-1]["index"]
+    interval_stats = []
+    interval_splits: dict[int, dict] = {}
+    for iv in intervals:
+        idx, s, e = iv["index"], iv["start_line"], iv["end_line"]
+        if e >= s:
+            in_msgs = [m for m in msgs if m.source_line and s <= m.source_line <= e]
+            in_turns = sum(
+                1 for tn in turns
+                if tn.messages and tn.messages[0].source_line
+                and s <= tn.messages[0].source_line <= e
+            )
+        else:
+            in_msgs, in_turns = [], 0
+        if split_offloaded:
+            interval_splits[idx] = split_offloaded_tally(in_msgs)
+        interval_stats.append({
+            "index": idx, "start_line": s, "end_line": e,
+            "is_prologue": iv["is_prologue"], "is_live": (idx == last_index),
+            "turns": in_turns, **_tally_by_type(in_msgs),
+        })
+    result["intervals"] = interval_stats
+
+    if fmt == "json":
+        return result
+
+    # Text format
+    S = _size_str
+
+    # --split-offloaded: co-located Full/Stub breakouts (per-Day, Totals, interval)
+    total_split = split_offloaded_tally(msgs) if split_offloaded else None
+    day_splits = ([split_offloaded_tally([m for tn in day.turns for m in tn.messages])
+                   for day in days] if split_offloaded else None)
+
+    def _split_sub(cat: dict) -> list[str]:
+        """Two indented sub-lines (Full / Stub) for one role's split tally."""
+        f, st = cat["full"], cat["stub"]
+        return [
+            c(f"        Full: {f['count']:>4}  | {S(f['chars'], f['words'])}", Colors.DIM),
+            c(f"        Stub: {st['count']:>4}  | {S(st['chars'], st['words'])}", Colors.YELLOW),
+        ]
+
+    lines = [
+        c("Stats Summary", Colors.BOLD, Colors.BRIGHT_CYAN),
+        f"  File:     {jsonl_path.name} ({result['file_size_bytes']:,} bytes)",
+        f"  Platform: {result['platform']}",
+        f"  Date Range: {first_ts}  —  {last_ts}",
+        f"  Num Days:   {len(days)}",
+        f"  System Prompt: {S(sys_chars, sys_words)}",
+        "",
+    ]
+
+    def _render_tool_detail(detail: dict, indent: str = "        ") -> list[str]:
+        """Render per-tool breakdown, sorted by total chars descending."""
+        if not detail:
+            return []
+        sorted_tools = sorted(detail.items(), key=lambda kv: kv[1]["chars"] + kv[1].get("result_chars", 0), reverse=True)
+        out = []
+        for tname, ta in sorted_tools:
+            total_c = ta["chars"] + ta.get("result_chars", 0)
+            total_w = ta["words"] + ta.get("result_words", 0)
+            calls = ta["count"]
+            res_c = ta.get("result_chars", 0)
+            label = c(f"{tname}", Colors.YELLOW)
+            out.append(f"{indent}{label}: {calls:>4} calls | {S(total_c, total_w)}")
+            if res_c:
+                out.append(f"{indent}  input: {ta['input_chars']:>8,} chars  results: {res_c:>8,} chars")
+        return out
+
+    for i, ds in enumerate(day_stats):
+        lines.append(c(f"  Day {i+1}: {ds['label']}", Colors.BOLD))
+        lines.append(f"    {ds['time_range'][0]}  —  {ds['time_range'][1]}")
+        lines.append(f"    Turns: {ds['turns']:>4}  | {S(ds['chars'], ds['words'])}")
+        lines.append(f"      User:   {ds['user']['count']:>4}  | {S(ds['user']['chars'], ds['user']['words'])}")
+        if split_offloaded:
+            lines.extend(_split_sub(day_splits[i]['user']))
+        lines.append(f"      AI:     {ds['ai']['count']:>4}  | {S(ds['ai']['chars'], ds['ai']['words'])}")
+        if split_offloaded:
+            lines.extend(_split_sub(day_splits[i]['ai']))
+        lines.append(f"      Tools:  {ds['tools']['count']:>4}  | {S(ds['tools']['chars'], ds['tools']['words'])}")
+        if split_offloaded:
+            lines.extend(_split_sub(day_splits[i]['tools']))
+        if ds['thinking']['count']:
+            lines.append(f"      Think:  {ds['thinking']['count']:>4}  | {ds['thinking']['chars']:>8,} chars")
+        if show_tools and ds.get('tool_detail'):
+            lines.extend(_render_tool_detail(ds['tool_detail']))
+        lines.append("")
+
+    lines.append(c("  Totals:", Colors.BOLD, Colors.BRIGHT_CYAN)
+                 + c("   (SEMANTIC roles: User=human prompts, Tools=tool_use+tool_result, AI=text, Think=thinking)", Colors.DIM))
+    lines.append(c("    [!] 'User'/'AI' here are SEMANTIC; the RAW LINE BREAKDOWN below reuses 'user'/'assistant'", Colors.YELLOW))
+    lines.append(c("        as raw line TYPES (tool_result is a 'user' line) — same words, different axis.", Colors.DIM))
+    t = result['totals']
+    lines.append(f"    Messages: {t['messages']:>4}")
+    lines.append(f"    Turns:    {t['turns']:>4}  | {S(t['chars'], t['words'])}")
+    lines.append(f"      User:   {t['user']['count']:>4}  | {S(t['user']['chars'], t['user']['words'])}")
+    if split_offloaded:
+        lines.extend(_split_sub(total_split['user']))
+    lines.append(f"      AI:     {t['ai']['count']:>4}  | {S(t['ai']['chars'], t['ai']['words'])}")
+    if split_offloaded:
+        lines.extend(_split_sub(total_split['ai']))
+    lines.append(f"      Tools:  {t['tools']['count']:>4}  | {S(t['tools']['chars'], t['tools']['words'])}")
+    if split_offloaded:
+        lines.extend(_split_sub(total_split['tools']))
+    if t['thinking']['count']:
+        lines.append(f"      Think:  {t['thinking']['count']:>4}  | {t['thinking']['chars']:>8,} chars")
+    if show_tools and t.get('tool_detail'):
+        lines.append(c("    Tool Breakdown:", Colors.BOLD))
+        lines.extend(_render_tool_detail(t['tool_detail'], indent="      "))
+
+    # ---- BY COMPACTION INTERVAL ----
+    lines.append("")
+    lines.append(c("  BY COMPACTION INTERVAL", Colors.BOLD, Colors.BRIGHT_CYAN))
+    lines.append(c(
+        f"    {len(interval_stats)} interval(s); Turns = user-prompt messages "
+        f"whose source line falls in the interval", Colors.DIM))
+    lines.append("")
+    for istat in interval_stats:
+        s, e = istat["start_line"], istat["end_line"]
+        rng = f"{s}-{e}" if e >= s else "(empty)"
+        tags = []
+        if istat["is_prologue"]:
+            tags.append("prologue")
+        if istat["is_live"]:
+            tags.append("LIVE")
+        tag = (", " + ", ".join(tags)) if tags else ""
+        lines.append(c(f"  Interval {istat['index']}  (lines {rng}{tag})", Colors.BOLD))
+        lines.append(f"    Turns:  {istat['turns']:>4}  | {S(istat['chars'], istat['words'])}")
+        lines.append(f"      User:   {istat['user']['count']:>4}  | {S(istat['user']['chars'], istat['user']['words'])}")
+        if split_offloaded:
+            lines.extend(_split_sub(interval_splits[istat['index']]['user']))
+        lines.append(f"      AI:     {istat['ai']['count']:>4}  | {S(istat['ai']['chars'], istat['ai']['words'])}")
+        if split_offloaded:
+            lines.extend(_split_sub(interval_splits[istat['index']]['ai']))
+        lines.append(f"      Tools:  {istat['tools']['count']:>4}  | {S(istat['tools']['chars'], istat['tools']['words'])}")
+        if split_offloaded:
+            lines.extend(_split_sub(interval_splits[istat['index']]['tools']))
+        if istat['thinking']['count']:
+            lines.append(f"      Think:  {istat['thinking']['count']:>4}  | {istat['thinking']['chars']:>8,} chars")
+        lines.append("")
+
+    lines.append(c("─" * 60, Colors.DIM))
+
+    return "\n".join(lines)
+
+
+def list_sessions(platform: str | None = None, limit: int = 20) -> list[dict[str, Any]]:
+    """List recent sessions across one or all platforms."""
+    sessions = []
+    
+    # Helper to add a session
+    def add_session(path: Path, p_name: str, uuid: str):
+        try:
+            mtime = datetime.fromtimestamp(path.stat().st_mtime).isoformat()
+            sessions.append({
+                "uuid": uuid,
+                "timestamp": mtime,
+                "platform": p_name,
+                "path": str(path),
+                "has_file": True,
+            })
+        except: pass
+
+    # 1. Claude
+    if not platform or platform == "claude":
+        if PROJECTS_DIR.exists():
+            for f in PROJECTS_DIR.rglob("*.jsonl"):
+                add_session(f, "claude", f.stem)
+
+    # 2. Codex
+    if not platform or platform == "codex":
+        for d in [CODEX_SESSIONS_DIR, CODEX_ARCHIVE_DIR]:
+            if d.exists():
+                for f in d.rglob("*.jsonl"):
+                    if len(f.stem) >= 36:
+                        add_session(f, "codex", f.stem[-36:])
+
+    # 3. Gemini
+    if not platform or platform == "gemini":
+        if GEMINI_HISTORY_DIR.exists():
+            for f in GEMINI_HISTORY_DIR.rglob("session-*.json"):
+                # We use the partial UUID from filename for speed, 
+                # or read it if it's a small file.
+                uuid = f.stem[-8:]
+                if f.stat().st_size < 10000: # only read if small
+                    try:
+                        with open(f) as jf:
+                            data = json.load(jf)
+                            uuid = data.get("sessionId", uuid)
+                    except: pass
+                add_session(f, "gemini", uuid)
+
+    # Sort by timestamp (mtime)
+    sessions.sort(key=lambda x: x["timestamp"], reverse=True)
+    return sessions[:limit]
+
+
+def format_messages(messages: list[dict], fmt: str = "text") -> str:
+    """Format messages for output."""
+    if fmt == "json":
+        return json.dumps(messages, indent=2)
+    elif fmt == "markdown":
+        parts = []
+        for m in messages:
+            prefix = "**User**" if m["role"] == "user" else "**Assistant**"
+            parts.append(f"{prefix} ({_ts_to_local(m['timestamp'])}):\n\n{m['content']}\n")
+        return "\n---\n\n".join(parts)
+    else:  # text
+        parts = []
+        for m in messages:
+            prefix = "USER" if m["role"] == "user" else "ASSISTANT"
+            parts.append(f"[{_ts_to_local(m['timestamp'])}] {prefix}:\n{m['content']}\n")
+        return "\n" + "=" * 60 + "\n\n".join(parts)
+
+
+# =============================================================================
+# Range parsing
+# =============================================================================
+
+
+def _parse_range(range_str: str, total: int) -> tuple[int, int]:
+    """Parse a range string (1-based) into 0-based start/end indices.
+
+    Formats:
+        '1-10'  -> messages 1 through 10
+        '5-'    -> messages 5 through end
+        '-20'   -> last 20 messages
+    Returns (start, end) as 0-based indices suitable for slicing.
+    """
+    range_str = range_str.strip()
+    if range_str.startswith("-"):
+        # Last N messages
+        n = int(range_str[1:])
+        return max(0, total - n), total
+    elif range_str.endswith("-"):
+        # From N to end
+        start = int(range_str[:-1]) - 1
+        return max(0, start), total
+    elif "-" in range_str:
+        parts = range_str.split("-", 1)
+        start = int(parts[0]) - 1
+        end = int(parts[1])
+        return max(0, start), min(total, end)
+    else:
+        # Single message
+        idx = int(range_str) - 1
+        return max(0, idx), min(total, idx + 1)
+
+
+def _apply_range(messages: list, range_str: str | None) -> tuple[list, int]:
+    """Apply range filter to a list of messages.
+
+    Supports message ranges and turn ranges:
+        '1-10'    -> messages 1 through 10
+        '-20'     -> last 20 messages
+        't1-10'   -> turns 1 through 10 (all messages within those turns)
+        't-4'     -> last 4 turns
+        't125-'   -> turns 125 through end
+        't30'     -> turn 30 only
+
+    Returns (filtered_messages, start_index) where start_index is the
+    0-based offset of the first returned message in the original list.
+    """
+    if not range_str:
+        return messages, 0
+
+    range_str = range_str.strip()
+
+    # Turn-based range: prefix with 't'
+    if range_str.lower().startswith("t"):
+        turn_range = range_str[1:]  # strip the 't' prefix
+        turns = group_into_turns(messages)
+        t_start, t_end = _parse_range(turn_range, len(turns))
+        selected_turns = turns[t_start:t_end]
+        if not selected_turns:
+            return [], 0
+        # Collect all messages from selected turns
+        selected_msgs = []
+        for t in selected_turns:
+            selected_msgs.extend(t.messages)
+        # Find the offset of the first selected message in the original list
+        if selected_msgs:
+            first_msg = selected_msgs[0]
+            offset = next((i for i, m in enumerate(messages) if m is first_msg), 0)
+        else:
+            offset = 0
+        return selected_msgs, offset
+
+    # Message-based range (default)
+    start, end = _parse_range(range_str, len(messages))
+    return messages[start:end], start
+
+
+# =============================================================================
+# REPL/CLI helpers
+# =============================================================================
+
+
+def _parse_flag(args: list[str], flag: str, multi: bool = False) -> str | None:
+    """Extract a --flag value from args list, return None if absent.
+
+    If multi=True, collects consecutive non-flag values after the flag
+    and joins them with commas. Handles: --type user, response → "user,response"
+    """
+    if flag not in args:
+        return None
+    idx = args.index(flag)
+    if idx + 1 >= len(args):
+        return None
+    if not multi:
+        return args[idx + 1]
+    # Collect all consecutive non-flag values
+    values = []
+    for i in range(idx + 1, len(args)):
+        arg = args[i]
+        if arg.startswith("--"):
+            break
+        # Strip commas and whitespace, skip empty
+        cleaned = arg.strip().strip(",").strip()
+        if cleaned:
+            # Could contain comma-separated values itself
+            for part in cleaned.split(","):
+                part = part.strip()
+                if part:
+                    values.append(part)
+    return ",".join(values) if values else None
+
+
+def _strip_flags(args: list[str], flags: list[str], multi_flags: list[str] | None = None) -> list[str]:
+    """Remove --flag value pairs from args, return remaining positional args.
+
+    multi_flags: flags that consume all consecutive non-flag values (e.g., --type user, response).
+    """
+    multi_flags = multi_flags or []
+    result = []
+    skip_next = False
+    skip_multi = False
+    for arg in args:
+        if skip_next:
+            skip_next = False
+            continue
+        if skip_multi:
+            if arg.startswith("--"):
+                skip_multi = False
+                # Fall through to check this arg
+            else:
+                continue  # Skip this value (belongs to multi-flag)
+        if arg in multi_flags:
+            skip_multi = True
+            continue
+        if arg in flags:
+            skip_next = True
+            continue
+        if not arg.startswith("--"):
+            result.append(arg)
+    return result
+
+
+def _sort_messages_by_ts(msgs: list[Message], order: str) -> list[Message]:
+    """Sort messages by timestamp. order: 'newest' or 'oldest'."""
+    def _sort_key(m: Message):
+        ts = m.timestamp
+        if not ts:
+            return datetime.min
+        try:
+            dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+            return dt
+        except (ValueError, TypeError):
+            return datetime.min
+    return sorted(msgs, key=_sort_key, reverse=(order == "newest"))
+
+
+def _parse_type_filter(type_str: str | None) -> list[str] | None:
+    """Parse comma-separated type filter into list of type values."""
+    if not type_str:
+        return None
+    return [t.strip() for t in type_str.split(",")]
+
+
+def _apply_type_filter(msgs: list[Message], type_values: list[str] | None) -> list[Message]:
+    """Filter messages by type value(s)."""
+    if not type_values:
+        return msgs
+    return [m for m in msgs if m.type.value in type_values]
+
+
+PRIVATE_MARKER = "[/PRIVATE]"
+
+def _apply_private_filter(msgs: list[Message], *, show_private: bool = False) -> list[Message]:
+    """Filter out thinking blocks marked as private.
+
+    A thinking block containing [/PRIVATE] anywhere in its content is treated
+    as private and excluded from output. Only the ending marker is needed --
+    if present, the entire thinking block is private.
+
+    Non-thinking messages are never filtered by this function.
+
+    Args:
+        msgs: List of messages to filter.
+        show_private: If True, include private blocks (for auditing).
+            Private blocks will have a [PRIVATE] prefix added to their content.
+    """
+    result = []
+    for m in msgs:
+        if m.type == MessageType.THINKING and PRIVATE_MARKER in m.content:
+            if show_private:
+                # Auditing mode: show but clearly mark
+                marked = Message(
+                    role=m.role, type=m.type,
+                    content=f"[PRIVATE THINKING BLOCK]\n{m.content}",
+                    timestamp=m.timestamp, platform=m.platform,
+                    tool_name=m.tool_name, tool_input=m.tool_input,
+                    tool_call_id=m.tool_call_id, line_number=m.line_number,
+                )
+                result.append(marked)
+            # else: skip entirely
+        else:
+            result.append(m)
+    return result
+
+
+def format_messages_from_schema(messages: list[Message], fmt: str = "text",
+                                 msg_num_offset: int = 0) -> str:
+    """Format Message objects for display.
+
+    Formats: text, json, flat, markdown, structured, raw.
+    'structured' returns JSON with day > turn > message hierarchy.
+    'flat' returns a flat JSON array using Message.to_dict() (all fields including line_number).
+    'raw' returns the original JSONL entries as a JSON array (unprocessed).
+    """
+    if fmt == "raw":
+        # Return original JSONL entries for messages that have raw data
+        raw_entries = [m.raw for m in messages if m.raw]
+        return json.dumps(raw_entries, indent=2)
+
+    if fmt == "structured":
+        days = structure_session(messages)
+        return json.dumps([d.to_dict() for d in days], indent=2)
+
+    if fmt == "flat":
+        return json.dumps([m.to_dict() for m in messages], indent=2)
+
+    if fmt == "json":
+        return json.dumps([
+            {"role": m.role, "type": m.type.value, "content": m.content,
+             "timestamp": m.timestamp, "platform": m.platform,
+             **({"tool_name": m.tool_name, "tool_input": m.tool_input} if m.type == MessageType.TOOL_USE else {}),
+             **({"tool_call_id": m.tool_call_id} if m.tool_call_id else {}),
+            } for m in messages
+        ], indent=2)
+    elif fmt == "markdown":
+        parts = []
+        for m in messages:
+            prefix = f"**{m.role.title()}**"
+            local_ts = _ts_to_local(m.timestamp)
+            if m.type == MessageType.TOOL_USE:
+                parts.append(f"{prefix} ({local_ts}) -- tool: `{m.tool_name}`\n\n```json\n{json.dumps(m.tool_input, indent=2, ensure_ascii=False)}\n```\n")
+            elif m.type == MessageType.TOOL_RESULT:
+                parts.append(f"{prefix} ({local_ts}) -- tool result:\n\n```\n{m.content[:500]}\n```\n")
+            else:
+                parts.append(f"{prefix} ({local_ts}):\n\n{m.content}\n")
+        return "\n---\n\n".join(parts)
+    else:  # text
+        parts = []
+        sep = c("=" * 60, Colors.DIM)
+        for i, m in enumerate(messages):
+            num = msg_num_offset + i + 1
+            turn_tag = f"T{m.turn_number} " if m.turn_number else ""     # conversation turn
+            line_tag = f" L{m.source_line}" if m.source_line else ""     # raw JSONL file line
+            num_str = c(f"[{turn_tag}#{num}{line_tag}]", Colors.BRIGHT_CYAN, Colors.BOLD)
+            ts = c(f"[{_ts_to_local(m.timestamp)}]", Colors.DIM)
+
+            if m.type == MessageType.TOOL_USE:
+                label = c("TOOL_USE", Colors.YELLOW)
+                tool = c(m.tool_name, Colors.YELLOW, Colors.BOLD)
+                content = c(json.dumps(m.tool_input, indent=2, ensure_ascii=False), Colors.DIM)
+                parts.append(f"{num_str} {ts} {label} ({tool}):\n{content}\n")
+            elif m.type == MessageType.TOOL_RESULT:
+                label = c("TOOL_RESULT", Colors.DIM, Colors.YELLOW)
+                content = c(m.content[:500], Colors.DIM)
+                parts.append(f"{num_str} {ts} {label}:\n{content}\n")
+            elif m.type == MessageType.META:
+                label = c("META", Colors.DIM)
+                content = c(m.content, Colors.DIM)
+                parts.append(f"{num_str} {ts} {label}: {content}\n")
+            elif m.type == MessageType.SYSTEM:
+                label = c("SYSTEM", Colors.BRIGHT_MAGENTA, Colors.BOLD)
+                content = c(m.content, Colors.DIM)
+                parts.append(f"{num_str} {ts} {label}:\n{content}\n")
+            elif m.type == MessageType.THINKING:
+                label = c("THINKING", Colors.MAGENTA)
+                content = c(m.content, Colors.DIM, Colors.ITALIC)
+                parts.append(f"{num_str} {ts} {label}:\n{content}\n")
+            elif m.type == MessageType.SKILL:
+                label = c("SKILL", Colors.CYAN)
+                content = c(m.content, Colors.DIM)
+                parts.append(f"{num_str} {ts} {label}:\n{content}\n")
+            elif m.type == MessageType.AGENT_RESULT:
+                label = c("AGENT_RESULT", Colors.YELLOW, Colors.BOLD)
+                content = c(m.content, Colors.DIM)
+                parts.append(f"{num_str} {ts} {label}:\n{content}\n")
+            elif m.type == MessageType.INJECTED:
+                label = c("INJECTED", Colors.DIM, Colors.ITALIC)
+                content = c(m.content, Colors.DIM)
+                parts.append(f"{num_str} {ts} {label}:\n{content}\n")
+            elif m.type == MessageType.USER:
+                label = c("USER", Colors.BRIGHT_BLUE, Colors.BOLD)
+                content = c(m.content, Colors.BRIGHT_WHITE)
+                parts.append(f"{num_str} {ts} {label}:\n{content}\n")
+            elif m.type == MessageType.RESPONSE:
+                label = c("RESPONSE", Colors.BRIGHT_GREEN)
+                content = c(m.content, Colors.BRIGHT_WHITE)
+                parts.append(f"{num_str} {ts} {label}:\n{content}\n")
+            else:
+                label = c(m.type.value.upper(), Colors.DIM)
+                parts.append(f"{num_str} {ts} {label}:\n{m.content}\n")
+        return "\n" + (sep + "\n\n").join(parts)
+
+
+# =============================================================================
+# Command implementations
+# =============================================================================
+
+
+def cmd_read(args: list[str]) -> str:
+    """Read messages from a session by UUID."""
+    if not args:
+        return "Usage: read <uuid> [--format F] [--platform P] [--type T] [--range R]"
+    query = args[0]
+    fmt = _parse_flag(args, "--format") or "text"
+    platform = _parse_flag(args, "--platform")
+    type_filter = _parse_type_filter(_parse_flag(args, "--type", multi=True))
+    range_str = _parse_flag(args, "--range")
+    show_private = "--show-private" in args
+    resolve = "--resolve" in args
+
+    path = find_jsonl(query)
+    if not path:
+        return c(f"Session not found: {query}", Colors.RED)
+
+    msgs = parse_session(path, platform=platform)
+    if resolve:
+        msgs = resolve_archived_stubs(msgs, path)
+    msgs, range_offset = _apply_range(msgs, range_str)   # range first: turn-grouping needs USER msgs
+    msgs = _apply_type_filter(msgs, type_filter)
+    msgs = _apply_private_filter(msgs, show_private=show_private)
+    return format_messages_from_schema(msgs, fmt, msg_num_offset=range_offset)
+
+
+def cmd_read_file(args: list[str]) -> str:
+    """Read messages from one or more file paths."""
+    fmt = _parse_flag(args, "--format") or "text"
+    platform = _parse_flag(args, "--platform")
+    type_filter = _parse_type_filter(_parse_flag(args, "--type", multi=True))
+    range_str = _parse_flag(args, "--range")
+    show_private = "--show-private" in args
+    resolve = "--resolve" in args
+    paths = _strip_flags(args, ["--format", "--platform", "--range", "--show-private", "--resolve"], multi_flags=["--type"])
+
+    if not paths:
+        return "Usage: read-file <path> [path2 ...] [--format F] [--platform P] [--type T] [--range R] [--resolve]"
+
+    all_msgs = []
+    for p_str in paths:
+        p = Path(p_str)
+        if not p.exists():
+            return c(f"File not found: {p}", Colors.RED)
+        m = parse_session(p, platform=platform)
+        if resolve:
+            m = resolve_archived_stubs(m, p)
+        all_msgs.extend(m)
+
+    all_msgs, range_offset = _apply_range(all_msgs, range_str)   # range first: turn-grouping needs USER msgs
+    all_msgs = _apply_type_filter(all_msgs, type_filter)
+    all_msgs = _apply_private_filter(all_msgs, show_private=show_private)
+    return format_messages_from_schema(all_msgs, fmt, msg_num_offset=range_offset)
+
+
+def cmd_find(args: list[str]) -> str:
+    """Find session file by UUID."""
+    if not args:
+        return "Usage: find <uuid>"
+    result = find_jsonl(args[0])
+    if result:
+        return str(result)
+    return c(f"Not found: {args[0]}", Colors.RED)
+
+
+def cmd_summary(args: list[str]) -> str:
+    """Show session summary."""
+    if not args:
+        return "Usage: summary <uuid> [--platform claude|codex|gemini|agy]"
+    platform = _parse_flag(args, "--platform")
+    path = find_jsonl(args[0])
+    if not path:
+        return c(f"Session not found: {args[0]}", Colors.RED)
+    summary = session_summary(path)
+    return json.dumps(summary, indent=2)
+
+
+# =============================================================================
+# ADDITIVE STATS FLAGS (2026-06): --split-offloaded. Read-only; does not touch
+# parse_session / human_turn_indices / the public functions other tools import.
+# When set, co-located Full/Stub breakouts are inlined under each User/AI/Tools
+# line (per-Day, Totals, and per compaction interval). Default OFF.
+# =============================================================================
+
+def _all_stub_prefixes() -> tuple[str, ...]:
+    """Offload STUB_PREFIXES + the engram stub prefix, as one tuple."""
+    off, eng = _stub_prefixes()
+    return tuple(off) + (eng,)
+
+
+def _value_is_stub(v, prefixes) -> bool:
+    return isinstance(v, str) and v.lstrip().startswith(prefixes)
+
+
+def _message_is_stub(m, prefixes) -> bool:
+    """True if this Message's rendered content or any tool_input value is a stub."""
+    if _value_is_stub(m.content, prefixes):
+        return True
+    if isinstance(m.tool_input, dict):
+        return any(_value_is_stub(v, prefixes) for v in m.tool_input.values())
+    return False
+
+
+def _msg_chars_words(m) -> tuple[int, int]:
+    """Char/word size of a Message under the SAME rule the Totals day-loop uses
+    (tool_use adds its JSON-serialized input)."""
+    if m.type == MessageType.TOOL_USE and m.tool_input:
+        input_str = json.dumps(m.tool_input) if isinstance(m.tool_input, dict) else str(m.tool_input)
+        return len(m.content) + len(input_str), _count_words(m.content) + _count_words(input_str)
+    return len(m.content), _count_words(m.content)
+
+
+def _msg_chars(m) -> int:
+    """Char size of a Message under the SAME rule the Totals day-loop uses
+    (tool_use adds its JSON-serialized input)."""
+    return _msg_chars_words(m)[0]
+
+
+def split_offloaded_tally(msgs: list[Message]) -> dict:
+    """For User / AI / Tools, split each into stub vs full (count + chars + words).
+
+    Stub = the Message's content / tool_input is currently an offload or engram
+    stub (detected via lib_jsonl_archive.STUB_PREFIXES + '[engram archived:').
+    Counts/chars/words for full+stub sum to the per-role Totals lines.
+    """
+    prefixes = _all_stub_prefixes()
+    cats = {k: {"stub": {"count": 0, "chars": 0, "words": 0},
+                "full": {"count": 0, "chars": 0, "words": 0}}
+            for k in ("user", "ai", "tools")}
+    for m in msgs:
+        if m.type == MessageType.USER:
+            cat = "user"
+        elif m.type == MessageType.RESPONSE:
+            cat = "ai"
+        elif m.type in (MessageType.TOOL_USE, MessageType.TOOL_RESULT):
+            cat = "tools"
+        else:
+            continue
+        bucket = "stub" if _message_is_stub(m, prefixes) else "full"
+        mc, mw = _msg_chars_words(m)
+        cats[cat][bucket]["count"] += 1
+        cats[cat][bucket]["chars"] += mc
+        cats[cat][bucket]["words"] += mw
+    return cats
+
+
+def _format_context_caveat() -> str:
+    """Always-on note: these stats are the TRANSCRIPT only, not total context."""
+    out = ["", c("─" * 60, Colors.DIM),
+           c("NOTE — what these numbers do and DON'T cover", Colors.BOLD, Colors.YELLOW)]
+    out.append(c("  These statistics cover the TRANSCRIPT (the message stream in this JSONL) ONLY.", Colors.DIM))
+    out.append(c("  The model's ACTUAL per-request context ALSO includes the preamble Claude Code", Colors.DIM))
+    out.append(c("  builds from config and does NOT store in the JSONL: the system prompt, tool/MCP", Colors.DIM))
+    out.append(c("  schemas, and injected CLAUDE.md / memory / context files. That preamble typically", Colors.DIM))
+    out.append(c("  DOMINATES context. So 'model-facing' here = the conversation's contribution, NOT", Colors.DIM))
+    out.append(c("  total context. Run /context for the true split.", Colors.DIM))
+    return "\n".join(out)
+
+
+def cmd_stats(args: list[str]) -> str:
+    """Show detailed session statistics."""
+    if not args:
+        return ("Usage: stats <uuid> [--platform P] [--format text|json] [--tools] "
+                "[--split-offloaded]")
+    fmt = _parse_flag(args, "--format") or "text"
+    platform = _parse_flag(args, "--platform")
+    show_tools = "--tools" in args
+    split_offloaded = "--split-offloaded" in args
+    bool_flags = {"--tools", "--split-offloaded"}
+    args = [a for a in args if a not in bool_flags]
+    query = _strip_flags(args, ["--format", "--platform"])[0] if _strip_flags(args, ["--format", "--platform"]) else args[0]
+    path = find_jsonl(query)
+    if not path:
+        return c(f"Session not found: {query}", Colors.RED)
+    result = session_stats(path, platform=platform, fmt=fmt, show_tools=show_tools,
+                           split_offloaded=split_offloaded)
+    bd = raw_line_breakdown(path)
+    sa = stub_accounting(path)
+    cf = conversation_client_only_fields(path)
+    ml = model_facing_ledger(path)
+    if isinstance(result, dict):
+        result["raw_line_breakdown"] = bd
+        result["stub_accounting"] = sa
+        result["conversation_client_only_fields"] = cf
+        result["model_facing_ledger"] = ml
+        if split_offloaded:
+            result["split_offloaded"] = split_offloaded_tally(parse_session(path, platform=platform))
+        result["context_caveat"] = (
+            "Stats cover the TRANSCRIPT only; the model's per-request context also "
+            "includes the system prompt + tool/MCP schemas + injected "
+            "CLAUDE.md/memory/context files (NOT stored in JSONL, usually dominant). "
+            "Run /context for the true split.")
+        return json.dumps(result, indent=2)
+    # semantic-total chars (Totals block) for the bottom-up/semantic ratio
+    semantic_chars = None
+    try:
+        _sd = session_stats(path, platform=platform, fmt="json")
+        if isinstance(_sd, dict):
+            semantic_chars = _sd.get("totals", {}).get("chars")
+    except Exception:
+        semantic_chars = None
+    parts = [
+        result,
+        "\n" + _format_raw_line_breakdown(bd),
+        "\n" + _format_stub_accounting(sa),
+        "\n" + _format_conversation_client_only_fields(cf, bd),
+        "\n" + _format_model_facing_ledger(ml, cf, semantic_chars),
+    ]
+    parts.append("\n" + _format_context_caveat())
+    return "".join(parts)
+
+
+def cmd_compactions(args: list[str]) -> str:
+    """List compaction events and their resulting intervals for a session."""
+    platform = _parse_flag(args, "--platform")
+    positionals = _strip_flags(args, ["--platform"])
+    if not positionals:
+        return "Usage: compactions <uuid|path> [--platform P]"
+    path = find_jsonl(positionals[0])
+    if not path:
+        return c(f"Session not found: {positionals[0]}", Colors.RED)
+
+    events = find_compactions(path)
+    intervals = compaction_intervals(path)
+    msgs = parse_session(path, platform=platform)
+
+    def _count(s: int, e: int) -> int:
+        return sum(1 for m in msgs if m.source_line and s <= m.source_line <= e)
+
+    ev_by_index = {ev["index"]: ev for ev in events}
+
+    header = c(f"COMPACTIONS — {path.name}", Colors.BOLD, Colors.BRIGHT_CYAN)
+    n = len(events)
+    sub = c(f"  {n} compaction event(s); {len(intervals)} interval(s); {len(msgs)} parsed messages", Colors.DIM)
+    cols = c(
+        f"  {'idx':>3}  {'start_line':>10}  {'timestamp':<19}  {'sum_chars':>9}  {'interval_lines':<16}  {'msgs':>6}  region",
+        Colors.BOLD,
+    )
+    lines = [header, sub, "", cols, c("  " + "-" * 84, Colors.DIM)]
+
+    for iv in intervals:
+        idx = iv["index"]
+        s, e = iv["start_line"], iv["end_line"]
+        rng = f"{s}-{e}" if e >= s else "(empty)"
+        cnt = _count(s, e) if e >= s else 0
+        if iv["is_prologue"]:
+            ts_disp, sum_chars = "-", "-"
+            region = "prologue"
+        else:
+            ev = ev_by_index.get(idx, {})
+            ts_disp = _ts_to_local(ev.get("timestamp", "")) or "-"
+            sum_chars = f"{ev.get('summary_chars', 0):,}"
+            region = "live" if idx == intervals[-1]["index"] else ""
+        start_disp = "-" if iv["is_prologue"] else str(s)
+        lines.append(
+            f"  {idx:>3}  {start_disp:>10}  {ts_disp:<19}  {str(sum_chars):>9}  {rng:<16}  {cnt:>6}  {region}"
+        )
+
+    if not events:
+        lines.append("")
+        lines.append(c("  No compaction events found (interval 0 spans the whole file).", Colors.DIM))
+    return "\n".join(lines)
+
+
+def cmd_list_sessions(args: list[str]) -> str:
+    """List sessions with optional platform filter."""
+    platform = _parse_flag(args, "--platform")
+    limit = int(_parse_flag(args, "--limit") or "20")
+    
+    sessions = list_sessions(platform, limit)
+    if not sessions:
+        return "No sessions found."
+        
+    lines = [f"{'TIMESTAMP':<20} | {'PLATFORM':<8} | {'UUID':<36}", "-" * 70]
+    for s in sessions:
+        ts = _ts_to_local(s.get("timestamp", "?"))
+        p = s.get("platform", "???")
+        u = s.get("uuid", "???")
+        lines.append(f"{ts:<20} | {p:<8} | {u:<36}")
+    return "\n".join(lines)
+
+
+def _command_help_entries() -> dict[str, dict]:
+    """Registry of all commands with help metadata.
+
+    Each entry: {
+        "usage":   str,            # one-line usage
+        "summary": str,            # short description
+        "detail":  list[str],      # longer explanation lines (plain text, colorized at render time)
+        "options": list[tuple],    # [(flag, description), ...]
+        "examples": list[str],     # example invocations
+        "aliases": list[str],      # short aliases
+        "repl_only": bool,         # True if only available inside the REPL
+    }
+    """
+    types_list = "user, response, thinking, tool_use, tool_result, system, meta"
+    return {
+        "read": {
+            "usage": "read <uuid|path> [uuid2 ...] [options]",
+            "summary": "Read session by UUID or file path (multiple OK)",
+            "detail": [
+                "Accepts one or more UUIDs (partial match OK) or direct file paths.",
+                "For UUIDs, searches Claude, Codex, and Gemini session directories.",
+                "A partial UUID (e.g. '7edf') is enough if it uniquely identifies a session.",
+                "Multiple targets: messages are grouped by file in order by default.",
+                "Use --sort to flatten and sort all messages by timestamp across files.",
+                "In REPL mode, toggle and range state are applied automatically.",
+            ],
+            "options": [
+                ("--format json|text|markdown", "Output format (default: text)"),
+                ("--platform claude|codex|gemini|agy", "Force platform detection (default: auto)"),
+                ("--type TYPE[,TYPE]", f"Filter by message type: {types_list}"),
+                ("--range RANGE", "Message range: 1-10, -20, 5-, t1-5, t-4"),
+                ("--interval SPEC", "Keep only messages in compaction interval(s): 0=prologue, 1..N, last|live, -1, '1,3', '2-4'"),
+                ("--include-client-only", "Merge client-only raw lines (attachment, file-history-snapshot, system, ...) inline as META"),
+                ("--sort newest|oldest", "Sort all messages by timestamp across files"),
+                ("--show-private", "Include private thinking blocks (hidden by default)"),
+            ],
+            "examples": ["read 7edf", "read 7edf a1b2 --sort newest", "read 7edf --type user,response", "read 7edf --range t1-5 --format markdown", "read 7edf --interval last", "read 7edf --interval 0 --include-client-only"],
+            "aliases": ["r"],
+            "repl_only": False,
+        },
+        "read-file": {
+            "usage": "read-file <path> [path2 ...] [options]",
+            "summary": "Read one or more JSONL/JSON files directly",
+            "detail": [
+                "Reads messages from explicit file paths instead of searching by UUID.",
+                "Accepts multiple paths; messages are grouped by file in order by default.",
+                "Use --sort to flatten and sort all messages by timestamp across files.",
+                "Platform is auto-detected from path and file content.",
+            ],
+            "options": [
+                ("--format json|text|markdown", "Output format (default: text)"),
+                ("--platform claude|codex|gemini|agy", "Force platform detection (default: auto)"),
+                ("--type TYPE[,TYPE]", f"Filter by message type: {types_list}"),
+                ("--range RANGE", "Message range: 1-10, -20, 5-, t1-5, t-4"),
+                ("--interval SPEC", "Keep only messages in compaction interval(s): 0=prologue, 1..N, last|live, -1, '1,3', '2-4'"),
+                ("--include-client-only", "Merge client-only raw lines (attachment, file-history-snapshot, system, ...) inline as META"),
+                ("--sort newest|oldest", "Sort all messages by timestamp across files"),
+                ("--show-private", "Include private thinking blocks"),
+            ],
+            "examples": ["read-file session.jsonl", "read-file f1.jsonl f2.jsonl --sort newest --type user,response", "read-file session.jsonl --interval last --include-client-only"],
+            "aliases": ["rf"],
+            "repl_only": False,
+        },
+        "find": {
+            "usage": "find <uuid>",
+            "summary": "Print the file path for a session UUID",
+            "detail": [
+                "Searches all platform session directories and prints the absolute path",
+                "of the JSONL file matching the given UUID (partial match OK).",
+                "Useful for scripting and piping into other tools.",
+            ],
+            "options": [],
+            "examples": ["find 7edf", "find e0954f5d-fae8-49ff-8e91-c77db0d73227"],
+            "aliases": ["f"],
+            "repl_only": False,
+        },
+        "summary": {
+            "usage": "summary <uuid|path> [--platform P]",
+            "summary": "Show session summary as JSON (msg counts, timestamps, platform)",
+            "detail": [
+                "Accepts a UUID (partial match OK) or a direct file path.",
+                "Outputs a JSON object with session metadata: message counts by type,",
+                "first and last timestamps, platform, and total message count.",
+            ],
+            "options": [
+                ("--platform claude|codex|gemini|agy", "Force platform detection"),
+            ],
+            "examples": ["summary 7edf"],
+            "aliases": ["s"],
+            "repl_only": False,
+        },
+        "stats": {
+            "usage": "stats <uuid|path> [options]",
+            "summary": "Detailed session statistics (types, tools, timing)",
+            "detail": [
+                "Accepts a UUID (partial match OK) or a direct file path.",
+                "Shows comprehensive session statistics including message counts by type,",
+                "tool usage breakdown (with --tools), timing, and token estimates.",
+            ],
+            "options": [
+                ("--format text|json", "Output format (default: text)"),
+                ("--platform claude|codex|gemini|agy", "Force platform detection"),
+                ("--tools", "Include per-tool usage breakdown"),
+                ("--split-offloaded", "Inline a Full/Stub breakout under each User/AI/Tools line"),
+            ],
+            "examples": ["stats 7edf", "stats 7edf --tools", "stats 7edf --format json",
+                         "stats 7edf --split-offloaded"],
+            "aliases": ["st"],
+            "repl_only": False,
+        },
+        "compactions": {
+            "usage": "compactions <uuid|path> [--platform P]",
+            "summary": "List compaction events and their intervals",
+            "detail": [
+                "Scans RAW lines for compaction events (lines with isCompactSummary==true,",
+                "plus any immediately-preceding compact_boundary system line).",
+                "Prints a table of intervals: index, start line, timestamp, summary size,",
+                "raw-line range, and how many parsed messages fall in each interval.",
+                "Interval 0 is the prologue; the last interval is the live/current region.",
+                "Use the interval indexes here with 'read --interval'.",
+            ],
+            "options": [
+                ("--platform claude|codex|gemini|agy", "Force platform detection"),
+            ],
+            "examples": ["compactions 7edf", "cx 004c1360"],
+            "aliases": ["cx"],
+            "repl_only": False,
+        },
+        "list": {
+            "usage": "list [--platform P] [--limit N]",
+            "summary": "List recent sessions across all platforms",
+            "detail": [
+                "Shows recent sessions sorted by timestamp.",
+                "By default searches Claude, Codex, and Gemini session directories.",
+            ],
+            "options": [
+                ("--platform claude|codex|gemini|agy", "Show only sessions for one platform"),
+                ("--limit N", "Number of sessions to show (default: 20)"),
+            ],
+            "examples": ["list", "list --platform claude --limit 50"],
+            "aliases": ["ls"],
+            "repl_only": False,
+        },
+        "toggle": {
+            "usage": "toggle <type>",
+            "summary": "Toggle visibility of a message type on/off",
+            "detail": [
+                "Toggles whether messages of the given type are shown in subsequent",
+                "read/read-file output. Default state: tool_use and tool_result are OFF,",
+                "all others are ON. Use 'show' to see current state.",
+                f"Valid types: {types_list}, skill, agent_result, injected",
+            ],
+            "options": [],
+            "examples": ["toggle tool_use", "toggle thinking"],
+            "aliases": [],
+            "repl_only": True,
+        },
+        "show": {
+            "usage": "show",
+            "summary": "Show current type visibility and range filter state",
+            "detail": [
+                "Displays which message types are ON/OFF and the active range filter.",
+                "Types toggled OFF will be hidden from read/read-file output.",
+            ],
+            "options": [],
+            "examples": ["show"],
+            "aliases": [],
+            "repl_only": True,
+        },
+        "range": {
+            "usage": "range <range> | range off",
+            "summary": "Set or clear the persistent range filter",
+            "detail": [
+                "Sets a range filter that persists across read commands in the REPL.",
+                "Message ranges are 1-based. Turn ranges use a 't' prefix.",
+                "  1-10    messages 1 through 10",
+                "  -20     last 20 messages",
+                "  5-      message 5 to end",
+                "  t1-5    turns 1 through 5 (a turn = one user + one assistant exchange)",
+                "  t-4     last 4 turns",
+                "'range off' clears the filter. 'range' with no args shows current state.",
+            ],
+            "options": [],
+            "examples": ["range 1-10", "range -20", "range t1-5", "range off"],
+            "aliases": [],
+            "repl_only": True,
+        },
+        "help": {
+            "usage": "help [command]",
+            "summary": "Show this help, or detailed help for a specific command",
+            "detail": [
+                "With no arguments, shows a summary of all commands.",
+                "With a command name, shows detailed help for that command.",
+            ],
+            "options": [],
+            "examples": ["help", "help read", "help toggle"],
+            "aliases": ["?", "h"],
+            "repl_only": False,
+        },
+    }
+
+
+def _render_command_help(cmd_name: str, entry: dict) -> str:
+    """Render detailed help for a single command."""
+    H = lambda t: c(t, Colors.BOLD, Colors.BRIGHT_CYAN)
+    C = lambda t: c(t, Colors.BRIGHT_GREEN)
+    D = lambda t: c(t, Colors.DIM)
+    F = lambda t: c(t, Colors.YELLOW)
+
+    lines = [
+        H(cmd_name) + ("  " + D("(REPL only)") if entry.get("repl_only") else ""),
+        f"  {C(entry['usage'])}",
+        "",
+    ]
+    for line in entry["detail"]:
+        lines.append(f"  {line}")
+
+    if entry["options"]:
+        lines.append("")
+        lines.append(f"  {H('Options:')}")
+        for flag, desc in entry["options"]:
+            lines.append(f"    {F(flag)}")
+            lines.append(f"      {D(desc)}")
+
+    if entry["examples"]:
+        lines.append("")
+        lines.append(f"  {H('Examples:')}")
+        for ex in entry["examples"]:
+            lines.append(f"    {C(ex)}")
+
+    if entry["aliases"]:
+        lines.append("")
+        lines.append(f"  {D('Aliases: ' + ', '.join(entry['aliases']))}")
+
+    return "\n".join(lines)
+
+
+def cmd_help(args: list[str]) -> str:
+    """Show help overview or per-command help."""
+    entries = _command_help_entries()
+
+    # Per-command help: help read, help toggle, etc.
+    if args:
+        cmd_name = args[0].lower()
+        cmd_name = COMMAND_ALIASES.get(cmd_name, cmd_name)
+        if cmd_name in entries:
+            return _render_command_help(cmd_name, entries[cmd_name])
+        return c(f"Unknown command: {cmd_name}. Type 'help' for a list of commands.", Colors.YELLOW)
+
+    H = lambda t: c(t, Colors.BOLD, Colors.BRIGHT_CYAN)
+    C = lambda t: c(t, Colors.BRIGHT_GREEN)
+    D = lambda t: c(t, Colors.DIM)
+    F = lambda t: c(t, Colors.YELLOW)
+
+    lines = [
+        c("read_jsonl", Colors.BOLD) + f" v{VERSION}" + D(" -- multi-platform CLI session reader"),
+        "",
+        H("USAGE"),
+        f"  {C('read_jsonl.py')}                                   {D('Start interactive REPL')}",
+        f"  {C('read_jsonl.py')} {F('<command>')} {D('[target]')} {D('[options]')}     {D('Run a single command')}",
+        f"  {C('read_jsonl.py')} {F('--help')} | {F('help')} {D('[command]')}          {D('Show help')}",
+        "",
+        H("COMMANDS"),
+    ]
+    for name, entry in entries.items():
+        if entry.get("repl_only") or name == "help":
+            continue
+        alias_str = ""
+        if entry["aliases"]:
+            alias_str = D(f"  ({', '.join(entry['aliases'])})")
+        lines.append(f"  {C(name):<30s} {D(entry['summary'])}{alias_str}")
+
+    lines.append("")
+    lines.append(H("REPL COMMANDS") + D(" (interactive mode only)"))
+    for name, entry in entries.items():
+        if not entry.get("repl_only"):
+            continue
+        lines.append(f"  {C(name):<30s} {D(entry['summary'])}")
+
+    lines.append("")
+    lines.append(f"  {C('help'):<30s} {D(entries['help']['summary'])}")
+    lines.append(f"  {C('quit'):<30s} {D('Exit the REPL')}")
+
+    lines.append("")
+    lines.append(H("OPTIONS") + D(" (available on read, read-file, and list)"))
+    lines.append(f"  {F('--platform')} {D('claude|codex|gemini|agy')}  {D('Filter or force platform (default: all/auto)')}")
+    lines.append(f"  {F('--format')} {D('json|text|markdown')}    {D('Output format (default: text)')}")
+    lines.append(f"  {F('--type')} {D('user,response,...')}       {D('Filter by message type (comma-separated)')}")
+    lines.append(f"          {D('Types: user, response, thinking, tool_use, tool_result, system, meta')}")
+    lines.append(f"  {F('--range')} {D('1-10 | -20 | t1-5 | t-4')}  {D('Message range (1-based) or turn range (t prefix)')}")
+    lines.append(f"  {F('--limit')} {D('N')}                  {D('Limit number of sessions shown (default: 20)')}")
+    lines.append(f"  {F('--no-color')}                    {D('Disable color output (for piping to tools that choke on ANSI)')}")
+    lines.append(f"  {F('--resolve')}                     {D('Rehydrate offload stubs from their archive (read/read-file; off by default)')}")
+    lines.append(f"  {F('--interval')} {D('SPEC')}               {D('Filter to compaction interval(s): 0=prologue, 1..N, last|live, -1, 1,3, 2-4 (read/read-file)')}")
+    lines.append(f"  {F('--include-client-only')}         {D('Merge client-only raw lines inline as META (read/read-file). See: compactions')}")
+
+    lines.append("")
+    lines.append(H("OUTPUT FIELDS"))
+    lines.append(f"  {D('Message header is')} {c('[Tt #N LMMM]', Colors.BRIGHT_CYAN, Colors.BOLD)}{D(':')}")
+    lines.append(f"    {F('Tt')}   {D('= conversation turn number (1-based; a turn = one user message + all replies until the next user message)')}")
+    lines.append(f"    {F('#N')}   {D('= message number (1-based ordinal over CONVERSATION messages only)')}")
+    lines.append(f"    {F('LMMM')} {D('= raw JSONL file line this message came from')}")
+    lines.append(f"  {D('json fields: turn_number=Tt, line_number=#N, source_line=LMMM')}")
+    lines.append(f"  {D('WHY #N != LMMM: one JSONL line can yield several messages (an assistant line may hold a')}")
+    lines.append(f"  {D('thinking + a tool_use + text → 3 messages, 1 line), and most JSONL lines are not messages at')}")
+    lines.append(f"  {D('all (file-history snapshots, progress, attachments, mode/title/agent state). So #N << LMMM.')}")
+
+    lines.append("")
+    lines.append(D("Type 'help <command>' for detailed help on any command."))
+
+    return "\n".join(lines)
+
+
+def _help_examples() -> str:
+    """Show help with sample output for key commands."""
+    H = lambda t: c(t, Colors.BOLD, Colors.BRIGHT_CYAN)
+    C = lambda t: c(t, Colors.BRIGHT_GREEN)
+    D = lambda t: c(t, Colors.DIM)
+    F = lambda t: c(t, Colors.YELLOW)
+
+    # Build sample output snippets
+    _sample_tool_input = '{"file_path": "/deploy.sh"}'
+    _sample_json_output = '[{"role": "user", "type": "user", "content": "...", ...}]'
+    # Header format is [Tt #N LMMM]: turn / message-ordinal / raw file line.
+    # All four below are one turn (T1): a user prompt + the assistant's reply blocks.
+    sample_num1 = c("[T1 #1 L13]", Colors.BRIGHT_CYAN, Colors.BOLD)
+    sample_num2 = c("[T1 #2 L14]", Colors.BRIGHT_CYAN, Colors.BOLD)
+    sample_num3 = c("[T1 #3 L14]", Colors.BRIGHT_CYAN, Colors.BOLD)
+    sample_num4 = c("[T1 #4 L14]", Colors.BRIGHT_CYAN, Colors.BOLD)
+    sample_ts = c("[2026-03-31T14:22:05]", Colors.DIM)
+    sample_user = c("USER", Colors.BRIGHT_BLUE, Colors.BOLD)
+    sample_resp = c("RESPONSE", Colors.BRIGHT_GREEN)
+    sample_think = c("THINKING", Colors.MAGENTA)
+    sample_tool = c("TOOL_USE", Colors.YELLOW)
+    sample_sep = c("=" * 40, Colors.DIM)
+
+    lines = [
+        c("read_jsonl", Colors.BOLD) + " -- Examples with sample output",
+        "",
+        H("READING A SESSION"),
+        f"  $ {C('read_jsonl.py read 7edf')}",
+        "",
+        f"  {sample_sep}",
+        f"  {sample_num1} {sample_ts} {sample_user}:",
+        f"  {c('List all Python files in the project', Colors.BRIGHT_WHITE)}",
+        f"  {sample_sep}",
+        f"  {sample_num2} {sample_ts} {sample_resp}:",
+        f"  {c('I will search for Python files in the project directory.', Colors.BRIGHT_WHITE)}",
+        "",
+        H("FILTERING BY TYPE"),
+        f"  $ {C('read_jsonl.py read 7edf')} {F('--type user,response')}",
+        f"  {D('Shows only user messages and assistant text responses (no tools)')}",
+        "",
+        f"  $ {C('read_jsonl.py read 7edf')} {F('--type thinking')}",
+        f"  {D('Shows only Claude thinking blocks')}",
+        "",
+        H("RANGE SELECTION"),
+        f"  $ {C('read_jsonl.py read 7edf')} {F('--range 1-5')}",
+        f"  {D('First 5 messages only')}",
+        "",
+        f"  $ {C('read_jsonl.py read 7edf')} {F('--range -10')}",
+        f"  {D('Last 10 messages')}",
+        "",
+        H("REPL MODE WITH TOGGLES"),
+        f"  $ {C('read_jsonl.py')}",
+        f"  {c('jsonl>', Colors.CYAN)} read 7edf",
+        f"  {D('...(messages displayed)...')}",
+        f"  {c('jsonl>', Colors.CYAN)} toggle tool_use",
+        f"  {D('tool_use: OFF')}",
+        f"  {c('jsonl>', Colors.CYAN)} toggle tool_result",
+        f"  {D('tool_result: OFF')}",
+        f"  {c('jsonl>', Colors.CYAN)} show",
+        f"    user: {c('ON', Colors.GREEN)}  response: {c('ON', Colors.GREEN)}  thinking: {c('ON', Colors.GREEN)}",
+        f"    tool_use: {c('OFF', Colors.RED)}  tool_result: {c('OFF', Colors.RED)}  system: {c('ON', Colors.GREEN)}  meta: {c('ON', Colors.GREEN)}",
+        "",
+        H("TEXT OUTPUT FORMAT"),
+        f"  {sample_num1} {sample_ts} {sample_user}:",
+        f"  {c('What does the deploy script do?', Colors.BRIGHT_WHITE)}",
+        f"  {sample_sep}",
+        f"  {sample_num2} {sample_ts} {sample_think}:",
+        f"  {c('Let me look at the deploy script to understand its purpose...', Colors.DIM, Colors.ITALIC)}",
+        f"  {sample_sep}",
+        f"  {sample_num3} {sample_ts} {sample_tool} ({c('Read', Colors.YELLOW, Colors.BOLD)}):",
+        f"  {c(_sample_tool_input, Colors.DIM)}",
+        f"  {sample_sep}",
+        f"  {sample_num4} {sample_ts} {sample_resp}:",
+        f"  {c('The deploy script runs database migrations then restarts services.', Colors.BRIGHT_WHITE)}",
+        "",
+        H("JSON OUTPUT"),
+        f"  $ {C('read_jsonl.py read 7edf')} {F('--format json')}",
+        f"  {D(_sample_json_output)}",
+    ]
+    return "\n".join(lines)
+
+
+# =============================================================================
+# REPL toggle state
+# =============================================================================
+
+_repl_toggles: dict[str, bool] = {
+    "user": True,
+    "response": True,
+    "thinking": True,
+    "tool_use": False,
+    "tool_result": False,
+    "system": True,
+    "meta": True,
+    "skill": True,
+    "agent_result": True,
+    "injected": True,
+}
+
+_repl_range: str | None = None
+
+
+def _apply_toggles(msgs: list[Message]) -> list[Message]:
+    """Filter messages based on current REPL toggle state."""
+    return [m for m in msgs if _repl_toggles.get(m.type.value, True)]
+
+
+def cmd_toggle(args: list[str]) -> str:
+    """Toggle visibility of a message type."""
+    if not args:
+        return "Usage: toggle <type>  (types: user, response, thinking, tool_use, tool_result, system, meta)"
+    type_name = args[0].lower()
+    if type_name not in _repl_toggles:
+        return c(f"Unknown type: {type_name}. Valid: {', '.join(_repl_toggles.keys())}", Colors.YELLOW)
+    _repl_toggles[type_name] = not _repl_toggles[type_name]
+    state = c("ON", Colors.GREEN) if _repl_toggles[type_name] else c("OFF", Colors.RED)
+    return f"{type_name}: {state}"
+
+
+def cmd_show(args: list[str]) -> str:
+    """Show current toggle state."""
+    parts = []
+    for t, on in _repl_toggles.items():
+        state = c("ON", Colors.GREEN) if on else c("OFF", Colors.RED)
+        parts.append(f"  {t}: {state}")
+    result = "\n".join(parts)
+    if _repl_range:
+        result += f"\n  range: {c(_repl_range, Colors.YELLOW)}"
+    else:
+        result += f"\n  range: {c('(all)', Colors.DIM)}"
+    return result
+
+
+def run_command(line: str, interactive: bool = True) -> str | None:
+    """Parse and execute a command. Returns output string or None."""
+    global _repl_range
+
+    try:
+        parts = shlex.split(line)
+    except ValueError as e:
+        return f"Parse error: {e}"
+
+    if not parts:
+        return None
+
+    cmd = parts[0].lower().lstrip("-")
+    args = parts[1:]
+    cmd = COMMAND_ALIASES.get(cmd, cmd)
+
+    # Per-command help: "read help", "toggle help", etc.
+    if args and args[0].lower() == "help" and cmd != "help":
+        return cmd_help([cmd])
+
+    # REPL-only commands
+    if interactive:
+        if cmd == "toggle":
+            return cmd_toggle(args)
+        if cmd == "show":
+            return cmd_show(args)
+        if cmd == "range":
+            if args and args[0].lower() == "off":
+                _repl_range = None
+                return c("Range filter cleared.", Colors.DIM)
+            elif args:
+                _repl_range = args[0]
+                return c(f"Range set to: {_repl_range}", Colors.YELLOW)
+            else:
+                if _repl_range:
+                    return c(f"Current range: {_repl_range}", Colors.YELLOW)
+                return c("No range set. Usage: range 1-10 | range 5- | range -20 | range off", Colors.DIM)
+
+    commands = {
+        "read": lambda: _cmd_read_with_repl(args, interactive),
+        "read-file": lambda: _cmd_read_file_with_repl(args, interactive),
+        "find": lambda: cmd_find(args),
+        "summary": lambda: cmd_summary(args),
+        "stats": lambda: cmd_stats(args),
+        "compactions": lambda: cmd_compactions(args),
+        "list": lambda: cmd_list_sessions(args),
+        "help": lambda: cmd_help(args),
+    }
+
+    if cmd in commands:
+        return commands[cmd]()
+
+    if interactive and cmd in ("quit", "exit", "q"):
+        return None
+
+    return c(f"Unknown command: {cmd}. Type 'help' for options.", Colors.YELLOW)
+
+
+def _cmd_read_with_repl(args: list[str], interactive: bool) -> str:
+    """Read with REPL toggles and range applied. Supports multiple UUIDs/paths."""
+    if not args:
+        return "Usage: read <uuid|path> [uuid2 ...] [--format F] [--platform P] [--type T] [--range R] [--interval SPEC] [--include-client-only] [--sort newest|oldest] [--show-private]"
+    include_client_only = "--include-client-only" in args
+    args = [a for a in args if a != "--include-client-only"]
+    fmt = _parse_flag(args, "--format") or "text"
+    platform = _parse_flag(args, "--platform")
+    type_filter = _parse_type_filter(_parse_flag(args, "--type", multi=True))
+    range_str = _parse_flag(args, "--range") or (_repl_range if interactive else None)
+    interval_spec = _parse_flag(args, "--interval")
+    sort_order = _parse_flag(args, "--sort")
+    show_private = "--show-private" in args
+    resolve = "--resolve" in args
+    queries = _strip_flags(args, ["--format", "--platform", "--range", "--interval", "--sort", "--show-private", "--resolve"], multi_flags=["--type"])
+
+    if not queries:
+        return "Usage: read <uuid|path> [uuid2 ...] [--format F] [--platform P] [--type T] [--range R] [--interval SPEC] [--include-client-only] [--sort newest|oldest] [--show-private] [--resolve]"
+
+    all_msgs = []
+    for query in queries:
+        path = find_jsonl(query)
+        if not path:
+            return c(f"Session not found: {query}", Colors.RED)
+        m = parse_session(path, platform=platform)
+        if resolve:
+            m = resolve_archived_stubs(m, path)
+        if include_client_only:
+            m = sorted(m + client_only_meta_messages(path), key=lambda x: x.source_line)
+        if interval_spec:
+            selected, err = _select_intervals(interval_spec, compaction_intervals(path))
+            if err:
+                return c(err, Colors.YELLOW)
+            m = _apply_interval_filter(m, selected)
+        all_msgs.extend(m)
+
+    # Apply --range FIRST, on the full chronological list, so turn-grouping (t-ranges)
+    # can see USER messages for boundaries. Filtering to e.g. response,thinking strips
+    # USER msgs, which collapses everything into ONE turn and makes t-N select the whole
+    # file. Range selects the window; type/private/sort then apply within it.
+    all_msgs, range_offset = _apply_range(all_msgs, range_str)
+    all_msgs = _apply_type_filter(all_msgs, type_filter)
+    all_msgs = _apply_private_filter(all_msgs, show_private=show_private)
+    if interactive:
+        all_msgs = _apply_toggles(all_msgs)
+    if sort_order:
+        all_msgs = _sort_messages_by_ts(all_msgs, sort_order)
+    return format_messages_from_schema(all_msgs, fmt, msg_num_offset=range_offset)
+
+
+def _cmd_read_file_with_repl(args: list[str], interactive: bool) -> str:
+    """Read-file with REPL toggles and range applied."""
+    include_client_only = "--include-client-only" in args
+    args = [a for a in args if a != "--include-client-only"]
+    fmt = _parse_flag(args, "--format") or "text"
+    platform = _parse_flag(args, "--platform")
+    type_filter = _parse_type_filter(_parse_flag(args, "--type", multi=True))
+    range_str = _parse_flag(args, "--range") or (_repl_range if interactive else None)
+    interval_spec = _parse_flag(args, "--interval")
+    sort_order = _parse_flag(args, "--sort")
+    show_private = "--show-private" in args
+    resolve = "--resolve" in args
+    paths = _strip_flags(args, ["--format", "--platform", "--range", "--interval", "--sort", "--show-private", "--resolve"], multi_flags=["--type"])
+
+    if not paths:
+        return "Usage: read-file <path> [path2 ...] [--format F] [--platform P] [--type T] [--range R] [--interval SPEC] [--include-client-only] [--sort newest|oldest] [--show-private] [--resolve]"
+
+    all_msgs = []
+    for p_str in paths:
+        p = Path(p_str)
+        if not p.exists():
+            return c(f"File not found: {p}", Colors.RED)
+        m = parse_session(p, platform=platform)
+        if resolve:
+            m = resolve_archived_stubs(m, p)
+        if include_client_only:
+            m = sorted(m + client_only_meta_messages(p), key=lambda x: x.source_line)
+        if interval_spec:
+            selected, err = _select_intervals(interval_spec, compaction_intervals(p))
+            if err:
+                return c(err, Colors.YELLOW)
+            m = _apply_interval_filter(m, selected)
+        all_msgs.extend(m)
+
+    # Apply --range FIRST, on the full chronological list, so turn-grouping (t-ranges)
+    # can see USER messages for boundaries. Filtering to e.g. response,thinking strips
+    # USER msgs, which collapses everything into ONE turn and makes t-N select the whole
+    # file. Range selects the window; type/private/sort then apply within it.
+    all_msgs, range_offset = _apply_range(all_msgs, range_str)
+    all_msgs = _apply_type_filter(all_msgs, type_filter)
+    all_msgs = _apply_private_filter(all_msgs, show_private=show_private)
+    if interactive:
+        all_msgs = _apply_toggles(all_msgs)
+    if sort_order:
+        all_msgs = _sort_messages_by_ts(all_msgs, sort_order)
+    return format_messages_from_schema(all_msgs, fmt, msg_num_offset=range_offset)
+
+
+def repl():
+    """Interactive REPL mode."""
+    from common_utils.lib_readline import setup_readline
+    setup_readline(history_file=READLINE_HISTORY, history_length=500)
+
+    print(c(f"read_jsonl v{VERSION}", Colors.BOLD) + " -- multi-platform CLI session reader")
+    print(c("Type 'help' for commands, 'quit' to exit.", Colors.DIM))
+    print(c("Default: tool_use and tool_result hidden. Use 'toggle' to change.", Colors.DIM) + "\n")
+
+    while True:
+        try:
+            if Colors.enabled():
+                prompt = f"\001{Colors.CYAN}\002jsonl>\001{Colors.RESET}\002 "
+            else:
+                prompt = "jsonl> "
+            line = input(prompt).strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\nExiting.")
+            break
+
+        if not line:
+            continue
+        if line.lower() in ("quit", "exit", "q"):
+            break
+
+        result = run_command(line, interactive=True)
+        if result:
+            print(result)
+
+
+# =============================================================================
+# CLI Interface
+# =============================================================================
+def main():
+    args = sys.argv[1:]
+
+    # --no-color is handled early by Colors.enabled() via sys.argv check.
+    # Strip it so downstream command parsing doesn't choke on it.
+    args = [a for a in args if a != "--no-color"]
+
+    # Handle --help-examples before anything else
+    if "--help-examples" in args:
+        Colors._enabled = None
+        print(_help_examples())
+        return 0
+
+    # --help or -h with no command → show overview help
+    if not args or args == ["--help"] or args == ["-h"]:
+        if not args:
+            repl()
+            return 0
+        Colors._enabled = None
+        print(cmd_help([]))
+        return 0
+
+    # --help after a command: read --help → help read
+    if "--help" in args or "-h" in args:
+        cmd_name = args[0].lower().lstrip("-")
+        cmd_name = COMMAND_ALIASES.get(cmd_name, cmd_name)
+        Colors._enabled = None
+        print(cmd_help([cmd_name]))
+        return 0
+
+    # If the first arg isn't a known command, treat it as a session identifier
+    # and prepend "read" — so `read_jsonl.py Cortex` means `read Cortex`
+    _KNOWN_CMDS = set(COMMAND_ALIASES.keys()) | set(COMMAND_ALIASES.values()) | {
+        "read", "read-file", "find", "summary", "stats", "compactions", "list", "help",
+        "toggle", "set", "grep",
+    }
+    if args and args[0].lower().lstrip("-") not in _KNOWN_CMDS:
+        args = ["read"] + args
+
+    command_line = " ".join(shlex.quote(a) for a in args)
+    result = run_command(command_line, interactive=False)
+    if result:
+        print(result)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main() or 0)
