@@ -48,7 +48,8 @@ def _resolve_source(spec: str) -> Path:
 
 def apply_rewrites(text: str, mcp_pkg: str | None) -> str:
     for pattern, repl in IMPORT_REWRITES:
-        text = re.sub(pattern, repl, text)
+        # MULTILINE so `^`-anchored `import X` rules match per-line, not just file start.
+        text = re.sub(pattern, repl, text, flags=re.MULTILINE)
     # mcp packages: `from tools import X` -> `from uai_toolkit.mcp.<pkg>.tools import X`
     if mcp_pkg:
         text = re.sub(r"\bfrom tools\b", f"from uai_toolkit.mcp.{mcp_pkg}.tools", text)
@@ -100,6 +101,7 @@ def process(entry: dict, apply: bool, show_diff: bool) -> dict:
             result["status"] = "SIDECAR"
             result["detail"] = f"-> {out.name} (manual merge vs curated {dest.name})"
             if apply:
+                out.parent.mkdir(parents=True, exist_ok=True)
                 out.write_text(new_text, encoding="utf-8")
         return result
 
@@ -215,6 +217,47 @@ def process_app_tree(entry: dict, apply: bool) -> dict:
     return result
 
 
+def expand_module_dirs():
+    """Expand each MODULE_DIRS dir-glob into concrete per-file MODULE entries.
+
+    Globs *.py (+ opaque data files) under a source dir, honoring exclude /
+    include_only, and applies per-file `kind` overrides. Keeps the engine's
+    per-file provenance model while letting the manifest declare whole packages.
+    """
+    try:
+        from manifest import MODULE_DIRS
+    except ImportError:
+        return []
+    expanded = []
+    for spec in MODULE_DIRS:
+        src_root = _resolve_source(spec["source"])
+        if not src_root.exists():
+            expanded.append({"dest": spec["dest"] + "/<MISSING>", "source": spec["source"],
+                             "kind": "forked", "_error": f"source missing: {src_root}"})
+            continue
+        exclude = set(spec.get("exclude", []))
+        include_only = spec.get("include_only")
+        overrides = spec.get("overrides", {})
+        default_kind = spec.get("kind", "clean")
+        mcp_pkg = spec.get("mcp_pkg")
+        for src in sorted(src_root.rglob("*.py")):
+            rel = src.relative_to(src_root)
+            relstr = str(rel)
+            parts = rel.parts
+            if any(p in exclude for p in parts) or relstr in exclude:
+                continue
+            if include_only and parts[0] not in include_only:
+                continue
+            if any(p in ("__pycache__", "archive", "_archive", "_backups", "_shelved") for p in parts):
+                continue
+            kind = overrides.get(relstr, overrides.get(rel.name, default_kind))
+            entry = {"dest": f"{spec['dest']}/{relstr}", "source": f"{spec['source'].split(':')[0]}:{src.relative_to(_resolve_root(spec['source'].split(':')[0]))}", "kind": kind}
+            if mcp_pkg:
+                entry["mcp_pkg"] = mcp_pkg
+            expanded.append(entry)
+    return expanded
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="Materialize uai_toolkit from source.")
     ap.add_argument("--apply", action="store_true", help="write changes (default: dry run)")
@@ -222,9 +265,13 @@ def main(argv=None) -> int:
     ap.add_argument("--diff", action="store_true", help="print full unified diffs (clean files)")
     ap.add_argument("--content", action="store_true", help="also materialize content trees (ai_context_files, ai_profiles)")
     ap.add_argument("--app", action="store_true", help="also materialize app source trees (uai_app)")
+    ap.add_argument("--dirs", action="store_true", help="also materialize MODULE_DIRS dir-globs (session_mgmt, messages, ...)")
     args = ap.parse_args(argv)
 
-    entries = [e for e in MODULES if e["dest"].startswith(args.only)]
+    all_modules = list(MODULES)
+    if args.dirs:
+        all_modules += expand_module_dirs()
+    entries = [e for e in all_modules if e["dest"].startswith(args.only)]
     results = [process(e, apply=args.apply, show_diff=args.diff) for e in entries]
     if args.content:
         results += [process_content(e, apply=args.apply)

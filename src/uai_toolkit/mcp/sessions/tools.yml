@@ -1,0 +1,1057 @@
+_meta:
+  description: Tool definitions for sessions MCP server
+  generated_from: existing tools() functions
+  note: Edit this file to rename tools. The server reloads dynamically.
+tools:
+- name: sched_task_add
+  description: 'Add a scheduled task (job) to an existing group and install it as a launchd agent immediately. SIDE EFFECT:
+    auto-installs — the new agent is bootstrapped and will start firing on its schedule. This is the sanctioned way to create
+    a scheduled task; do NOT hand-write launchd plists.'
+  handler: sched_task_add
+  module: sched_tasks
+  inputSchema:
+    type: object
+    properties:
+      group:
+        type: string
+        description: Task group name = one YAML file in data/scheduled_tasks/. Holds related jobs (e.g. 'sysmon', 'news_scan').
+          Must already exist (use sched_task_create first if not).
+      id:
+        type: string
+        description: Job id, unique within its group. A job is one scheduled task; it compiles to one launchd agent (com.shawnhillis.ai.<group>.<id>).
+      schedule:
+        type: string
+        description: 'Schedule: a 5-field cron expression (minute hour day-of-month month day-of-week) or ''@reboot''. Supported
+          subset: ''M H * * *'' (daily), ''M H * * D'' (weekly, D=0=Sun), ''*/N * * * *'' and ''M-59/N * * * *'' (every N
+          min), ''* * * * *'' (every min), ''@reboot''. Unsupported forms (hourly ''M * * * *'', comma lists, hour ranges,
+          day-of-month) are rejected — fail loud.'
+      command:
+        type: string
+        description: Shell command to run on schedule. Runs via /bin/bash -lc, so $AI_ROOT and other env vars expand. For
+          a long-running watcher use schedule '@reboot' (it becomes RunAtLoad+KeepAlive).
+      log:
+        type: string
+        description: 'Absolute path for the task''s stdout+stderr log. Convention: $AI_ROOT/ai_general/logs/<group>/<id>.log.
+          Optional but recommended.'
+      description:
+        type: string
+        description: Human-readable description of what this task does (optional).
+    required:
+    - group
+    - id
+    - schedule
+    - command
+- name: sched_task_create
+  description: Create a new, empty task group (a YAML file). Add jobs to it with sched_task_add. Use this when starting a
+    new category of scheduled work. No launchd change until a job is added and installed.
+  handler: sched_task_create
+  module: sched_tasks
+  inputSchema:
+    type: object
+    properties:
+      group:
+        type: string
+        description: New group name. Lowercase letters, digits, '_' and '-' only. Becomes <group>.yml and the launchd label
+          segment.
+      description:
+        type: string
+        description: Human-readable description of what this group of tasks is for (optional).
+    required:
+    - group
+- name: sched_task_delete
+  description: 'DESTRUCTIVE: delete a job (or the whole group if id is omitted) and bootout its launchd agent(s). Removes
+    the YAML entry and unloads the running agent. Not reversible except by re-creating the task.'
+  handler: sched_task_delete
+  module: sched_tasks
+  inputSchema:
+    type: object
+    properties:
+      group:
+        type: string
+        description: Task group name = one YAML file in data/scheduled_tasks/. Holds related jobs (e.g. 'sysmon', 'news_scan').
+      id:
+        type: string
+        description: Job id to delete. OMIT to delete the ENTIRE group and all its jobs.
+    required:
+    - group
+- name: sched_task_disable
+  description: 'Disable a task group and bootout its agents (they stop firing) without deleting the definitions. SIDE EFFECT:
+    unloads the group''s launchd agents; re-enable with sched_task_enable.'
+  handler: sched_task_disable
+  module: sched_tasks
+  inputSchema:
+    type: object
+    properties:
+      group:
+        type: string
+        description: Task group name = one YAML file in data/scheduled_tasks/. Holds related jobs (e.g. 'sysmon', 'news_scan').
+    required:
+    - group
+- name: sched_task_edit
+  description: 'Edit fields of an existing job, then auto-reinstall it. SIDE EFFECT: the job''s launchd agent is re-bootstrapped
+    (a ~1s restart). Only the fields you pass are changed; omitted fields are left as-is.'
+  handler: sched_task_edit
+  module: sched_tasks
+  inputSchema:
+    type: object
+    properties:
+      group:
+        type: string
+        description: Task group name = one YAML file in data/scheduled_tasks/. Holds related jobs (e.g. 'sysmon', 'news_scan').
+      id:
+        type: string
+        description: Job id, unique within its group. A job is one scheduled task; it compiles to one launchd agent (com.shawnhillis.ai.<group>.<id>).
+      schedule:
+        type: string
+        description: New schedule (same format as add). Omit to leave unchanged.
+      command:
+        type: string
+        description: New shell command. Omit to leave unchanged.
+      log:
+        type: string
+        description: New log path. Omit to leave unchanged.
+      description:
+        type: string
+        description: New description. Omit to leave unchanged.
+    required:
+    - group
+    - id
+- name: sched_task_enable
+  description: 'Enable a previously-disabled task group and reinstall its agents (they start firing again). SIDE EFFECT: bootstraps
+    the group''s agents.'
+  handler: sched_task_enable
+  module: sched_tasks
+  inputSchema:
+    type: object
+    properties:
+      group:
+        type: string
+        description: Task group name = one YAML file in data/scheduled_tasks/. Holds related jobs (e.g. 'sysmon', 'news_scan').
+    required:
+    - group
+- name: sched_task_import
+  description: Adopt a hand-installed launchd agent into a managed YAML task by reverse-engineering the YAML from its installed
+    plist (label→group/job, schedule keys→cron, ProgramArguments→command, env/log). Writes/merges the YAML but does NOT install
+    — review the result, then call sched_task_install to make it managed. Use this to fix 'drift' from an agent created outside
+    this system.
+  handler: sched_task_import
+  module: sched_tasks
+  inputSchema:
+    type: object
+    properties:
+      label:
+        type: string
+        description: Full launchd label of the installed agent, e.g. 'com.shawnhillis.ai.uai.build_watcher'. Get candidates
+          from sched_task_status (sync.extra) or 'launchctl list'.
+      dry_run:
+        type: boolean
+        default: false
+        description: If true, print the YAML it would write without writing it.
+    required:
+    - label
+- name: sched_task_install
+  description: 'Sync all launchd agents to the current YAML definitions. Idempotent and content-aware: only NEW or CHANGED
+    agents are re-bootstrapped; unchanged (incl. running KeepAlive) agents are left untouched. Removes managed agents whose
+    YAML was deleted. Normally not needed (add/edit/etc auto-install) — use it to reconcile drift or after editing YAML files
+    directly.'
+  handler: sched_task_install
+  module: sched_tasks
+  inputSchema:
+    type: object
+    properties:
+      dry_run:
+        type: boolean
+        default: false
+        description: If true, report what would be added/removed without changing anything.
+- name: sched_task_list
+  description: List all scheduled-task groups and the jobs in each. Read-only. Use this to discover what scheduled tasks exist
+    before editing or running one.
+  handler: sched_task_list
+  module: sched_tasks
+  inputSchema:
+    type: object
+    properties:
+      all:
+        type: boolean
+        default: false
+        description: 'If true, include disabled groups (default: only enabled).'
+- name: sched_task_logs
+  description: Return the tail of a job's log file (the path set in its YAML). Read-only.
+  handler: sched_task_logs
+  module: sched_tasks
+  inputSchema:
+    type: object
+    properties:
+      group:
+        type: string
+        description: Task group name = one YAML file in data/scheduled_tasks/. Holds related jobs (e.g. 'sysmon', 'news_scan').
+      id:
+        type: string
+        description: Job id, unique within its group. A job is one scheduled task; it compiles to one launchd agent (com.shawnhillis.ai.<group>.<id>).
+      lines:
+        type: integer
+        default: 30
+        description: Number of trailing log lines to return (default 30).
+    required:
+    - group
+    - id
+- name: sched_task_run
+  description: Run a job's command immediately, once, in the foreground and wait for it (synchronous). Does NOT affect the
+    schedule. Use to test a task or trigger an ad-hoc run. Output/exit status are returned.
+  handler: sched_task_run
+  module: sched_tasks
+  inputSchema:
+    type: object
+    properties:
+      group:
+        type: string
+        description: Task group name = one YAML file in data/scheduled_tasks/. Holds related jobs (e.g. 'sysmon', 'news_scan').
+      id:
+        type: string
+        description: Job id, unique within its group. A job is one scheduled task; it compiles to one launchd agent (com.shawnhillis.ai.<group>.<id>).
+    required:
+    - group
+    - id
+- name: sched_task_status
+  description: 'Structured JSON status of every scheduled task: per-job install state, last run (exit code + time), next fire
+    time, and overall sync/drift (whether installed launchd agents match the YAML definitions). Read-only. The primary tool
+    for ''are my scheduled tasks healthy / in sync?''.'
+  handler: sched_task_status
+  module: sched_tasks
+  inputSchema:
+    type: object
+    properties: {}
+- name: sched_task_view
+  description: Show one group's jobs in detail (ids, schedules, commands, log paths, env). Read-only.
+  handler: sched_task_view
+  module: sched_tasks
+  inputSchema:
+    type: object
+    properties:
+      group:
+        type: string
+        description: Task group name = one YAML file in data/scheduled_tasks/. Holds related jobs (e.g. 'sysmon', 'news_scan').
+    required:
+    - group
+- name: sessions_attach
+  description: Get command to attach to agent session (user must run manually)
+  handler: sessions_attach
+  module: sessions_cli_agent
+  inputSchema:
+    type: object
+    properties:
+      session_id:
+        type: string
+        description: Zellij session ID
+    required:
+    - session_id
+- name: sessions_get
+  description: '[DEPRECATED: use sessions_state_get]'
+  handler: sessions_get
+  module: sessions_session
+  inputSchema:
+    type: object
+    properties:
+      key:
+        type: string
+        description: 'Session state key. DEPRECATED: this tool just forwards to sessions_state_get; call sessions_state_get
+          directly. (For the list variant the key is ignored.)'
+      value:
+        type: string
+        description: 'Value for the state operation (used by the set/remove variants; ignored by get/list). DEPRECATED: forwards
+          to sessions_state_get; call sessions_state_get directly.'
+    required:
+    - key
+- name: sessions_get_ai_root
+  description: Resolve the current AI_ROOT path.
+  handler: sessions_get_ai_root
+  module: sessions_session
+  inputSchema:
+    type: object
+    properties: {}
+- name: sessions_get_ctx_used
+  description: Get context window usage from session state.
+  handler: sessions_get_ctx_used
+  module: sessions_session
+  inputSchema:
+    type: object
+    properties: {}
+- name: sessions_get_footer
+  description: Get the formatted session response footer.
+  handler: sessions_get_footer
+  module: sessions_session
+  inputSchema:
+    type: object
+    properties:
+      tags:
+        type: string
+        description: Comma-separated tags
+      mode:
+        type: string
+        enum:
+        - brief
+        - full
+        description: 'Footer verbosity: ''brief'' for a compact one-line footer, ''full'' for the expanded footer.'
+- name: sessions_get_result
+  description: Retrieve the result of an async reasoning request by request_id.
+  handler: sessions_get_result
+  module: sessions_local_llm
+  inputSchema:
+    type: object
+    properties:
+      request_id:
+        type: string
+        description: Request ID from async calls
+    required:
+    - request_id
+- name: sessions_get_status
+  description: Get detailed status of an agent session including recent output
+  handler: sessions_get_status
+  module: sessions_cli_agent
+  inputSchema:
+    type: object
+    properties:
+      session_id:
+        type: string
+        description: Zellij session ID
+      output_lines:
+        type: integer
+        default: 30
+        description: Lines of recent output to include
+    required:
+    - session_id
+- name: sessions_kill
+  description: Terminate a running agent session
+  handler: sessions_kill
+  module: sessions_cli_agent
+  inputSchema:
+    type: object
+    properties:
+      session_id:
+        type: string
+        description: Zellij session ID to kill
+    required:
+    - session_id
+- name: sessions_launch_agent
+  description: Launch a CLI agent with specified role and platform
+  handler: sessions_launch_agent
+  module: sessions_cli_agent
+  inputSchema:
+    type: object
+    properties:
+      platform:
+        type: string
+        enum: &id001
+        - claude_cli
+        - codex_cli
+        - gemini_cli
+        description: 'Target platform: claude_cli, codex_cli, gemini_cli'
+      role:
+        type: string
+        enum:
+        - librarian
+        - dev_lead
+        - custodian
+        - peer_review
+        - tester
+        - researcher
+        - validator
+        description: 'Agent role: librarian, dev_lead, custodian, peer_review, tester, researcher, validator'
+      task_id:
+        type: string
+        description: Task ID to execute (mutually exclusive with prompt)
+      prompt:
+        type: string
+        description: Direct prompt for agent (mutually exclusive with task_id)
+      context_files:
+        type: array
+        items:
+          type: string
+        description: Additional files to load (supplements role defaults)
+      use_devtree:
+        type: boolean
+        default: false
+        description: 'Run in isolated devTree workspace (AI_ROOT_{uuid8}). Default: use main repo.'
+    required:
+    - platform
+    - role
+- name: sessions_list
+  description: '[DEPRECATED: use sessions_state_list]'
+  handler: sessions_list
+  module: sessions_session
+  inputSchema:
+    type: object
+    properties:
+      key:
+        type: string
+        description: 'Session state key. DEPRECATED: this tool just forwards to sessions_state_list; call sessions_state_list
+          directly. (For the list variant the key is ignored.)'
+      value:
+        type: string
+        description: 'Value for the state operation (used by the set/remove variants; ignored by get/list). DEPRECATED: forwards
+          to sessions_state_list; call sessions_state_list directly.'
+    required:
+    - key
+- name: sessions_list_models
+  description: List all available models from the models registry.
+  handler: sessions_list_models
+  module: sessions_local_llm
+  inputSchema:
+    type: object
+    properties: {}
+- name: sessions_list_sessions
+  description: List all active CLI agent sessions
+  handler: sessions_list_sessions
+  module: sessions_cli_agent
+  inputSchema:
+    type: object
+    properties:
+      platform:
+        type: string
+        enum: *id001
+        description: Filter by platform
+- name: sessions_read_session
+  description: Read and parse terminal content from a CLI session. Returns structured messages (JSON), cleaned text, or raw
+    dump. Use status_only=true for fast polling (<100ms) to detect permission prompts and session state.
+  handler: sessions_read_session
+  module: sessions_cli_agent
+  inputSchema:
+    type: object
+    properties:
+      session_id:
+        type: string
+        description: Zellij session name
+      range:
+        type: string
+        default: all
+        description: 'Line range: ''all'', ''start:N'', ''M:N'', ''N:end'''
+      format:
+        type: string
+        enum:
+        - json
+        - text
+        - raw
+        default: json
+        description: Output format
+      page_size:
+        type: integer
+        default: 500
+        description: Messages per page (0 = no pagination)
+      page:
+        type: integer
+        default: 1
+        description: Page number
+      platform:
+        type: string
+        enum:
+        - auto
+        - claude
+        - gemini
+        - codex
+        default: auto
+        description: Platform override
+      status_only:
+        type: boolean
+        default: false
+        description: Return only session status, skip message parsing
+    required:
+    - session_id
+- name: sessions_reason_on_file
+  description: Read a file and send its contents to the local LLM. Blocks until response.
+  handler: sessions_reason_on_file
+  module: sessions_local_llm
+  inputSchema:
+    type: object
+    properties:
+      prompt:
+        type: string
+        description: System prompt / instruction
+      file_path:
+        type: string
+        description: Absolute path to file
+    required:
+    - prompt
+    - file_path
+- name: sessions_reason_on_file_async
+  description: Read a file and submit to the local LLM, returning immediately with a request_id.
+  handler: sessions_reason_on_file_async
+  module: sessions_local_llm
+  inputSchema:
+    type: object
+    properties:
+      prompt:
+        type: string
+        description: System prompt / instruction
+      file_path:
+        type: string
+        description: Absolute path to file
+      callback_uri:
+        type: string
+        description: Callback endpoint URI
+      callback: &id002
+        type: object
+        description: Optional callback for async result delivery.
+        properties:
+          type:
+            type: string
+            enum:
+            - none
+            - file
+            - prompt
+          output_path:
+            type: string
+          target:
+            type: string
+          session:
+            type: string
+          message_template:
+            type: string
+          submit:
+            type: boolean
+            default: true
+          force:
+            type: boolean
+            default: false
+        required:
+        - type
+    required:
+    - prompt
+    - file_path
+- name: sessions_reason_on_text
+  description: Send prompt + text to the currently loaded local LLM, return response.
+  handler: sessions_reason_on_text
+  module: sessions_local_llm
+  inputSchema:
+    type: object
+    properties:
+      prompt:
+        type: string
+        description: System prompt / instruction
+      input_text:
+        type: string
+        description: Text to reason about
+    required:
+    - prompt
+    - input_text
+- name: sessions_reason_on_text_async
+  description: Submit prompt + text and return immediately with a request_id.
+  handler: sessions_reason_on_text_async
+  module: sessions_local_llm
+  inputSchema:
+    type: object
+    properties:
+      prompt:
+        type: string
+        description: System prompt / instruction
+      input_text:
+        type: string
+        description: Text to reason about
+      callback_uri:
+        type: string
+        description: Callback endpoint URI
+      callback: *id002
+    required:
+    - prompt
+    - input_text
+- name: sessions_remove
+  description: '[DEPRECATED: use sessions_state_remove]'
+  handler: sessions_remove
+  module: sessions_session
+  inputSchema:
+    type: object
+    properties:
+      key:
+        type: string
+        description: 'Session state key. DEPRECATED: this tool just forwards to sessions_state_remove; call sessions_state_remove
+          directly. (For the list variant the key is ignored.)'
+      value:
+        type: string
+        description: 'Value for the state operation (used by the set/remove variants; ignored by get/list). DEPRECATED: forwards
+          to sessions_state_remove; call sessions_state_remove directly.'
+    required:
+    - key
+- name: sessions_send_keys
+  description: Send keystrokes to agent session
+  handler: sessions_send_keys
+  module: sessions_cli_agent
+  inputSchema:
+    type: object
+    properties:
+      session_id:
+        type: string
+        description: Zellij session ID
+      keys:
+        type: string
+        description: Keys to send
+      enter:
+        type: boolean
+        default: true
+        description: Press Enter after keys
+    required:
+    - session_id
+    - keys
+- name: sessions_server_start
+  description: Start the LLM server with a specific model.
+  handler: sessions_server_start
+  module: sessions_local_llm
+  inputSchema:
+    type: object
+    properties:
+      model:
+        type: string
+        description: Model key from models.yml
+    required:
+    - model
+- name: sessions_server_status
+  description: Get the current status of the LLM server.
+  handler: sessions_server_status
+  module: sessions_local_llm
+  inputSchema:
+    type: object
+    properties: {}
+- name: sessions_server_stop
+  description: Stop the running LLM server.
+  handler: sessions_server_stop
+  module: sessions_local_llm
+  inputSchema:
+    type: object
+    properties: {}
+- name: sessions_set
+  description: '[DEPRECATED: use sessions_state_set]'
+  handler: sessions_set
+  module: sessions_session
+  inputSchema:
+    type: object
+    properties:
+      key:
+        type: string
+        description: 'Session state key. DEPRECATED: this tool just forwards to sessions_state_set; call sessions_state_set
+          directly. (For the list variant the key is ignored.)'
+      value:
+        type: string
+        description: 'Value for the state operation (used by the set/remove variants; ignored by get/list). DEPRECATED: forwards
+          to sessions_state_set; call sessions_state_set directly.'
+    required:
+    - key
+- name: sessions_state_decrement
+  description: Subtract from a numeric session state key.
+  handler: sessions_state_decrement
+  module: sessions_session
+  inputSchema:
+    type: object
+    properties:
+      key:
+        type: string
+        description: Numeric key to decrement
+      amount:
+        type: number
+        description: 'Amount to subtract (default: 1)'
+    required:
+    - key
+- name: sessions_state_delete
+  description: Delete a key from session state.
+  handler: sessions_state_delete
+  module: sessions_session
+  inputSchema:
+    type: object
+    properties:
+      key:
+        type: string
+        description: State key to delete
+    required:
+    - key
+- name: sessions_state_get
+  description: Get a session state value by key.
+  handler: sessions_state_get
+  module: sessions_session
+  inputSchema:
+    type: object
+    properties:
+      key:
+        type: string
+        description: State key to retrieve
+    required:
+    - key
+- name: sessions_state_increment
+  description: Add to a numeric session state key.
+  handler: sessions_state_increment
+  module: sessions_session
+  inputSchema:
+    type: object
+    properties:
+      key:
+        type: string
+        description: Numeric key to increment
+      amount:
+        type: number
+        description: 'Amount to add (default: 1)'
+    required:
+    - key
+- name: sessions_state_keys
+  description: List reserved session state key names from the schema registry.
+  handler: sessions_state_keys
+  module: sessions_session
+  inputSchema:
+    type: object
+    properties:
+      namespace:
+        type: string
+        description: Filter by namespace (e.g. 'context', 'env')
+- name: sessions_state_list
+  description: List all session state key-value pairs. Optional prefix filter.
+  handler: sessions_state_list
+  module: sessions_session
+  inputSchema:
+    type: object
+    properties:
+      prefix:
+        type: string
+        description: Filter keys by prefix
+- name: sessions_state_load
+  description: Load previously persisted session state.
+  handler: sessions_state_load
+  module: sessions_session
+  inputSchema:
+    type: object
+    properties:
+      session_id:
+        type: string
+        description: Session ID to load (defaults to current)
+- name: sessions_state_persist
+  description: Save current session state to disk for later resume.
+  handler: sessions_state_persist
+  module: sessions_session
+  inputSchema:
+    type: object
+    properties: {}
+- name: sessions_state_remove
+  description: Remove values from a list key (role, features).
+  handler: sessions_state_remove
+  module: sessions_session
+  inputSchema:
+    type: object
+    properties:
+      key:
+        type: string
+        description: List key
+      value:
+        type: string
+        description: Comma-separated values to remove
+    required:
+    - key
+    - value
+- name: sessions_state_set
+  description: Set a session state value. List keys (role, features) accept comma-separated values and merge with existing.
+  handler: sessions_state_set
+  module: sessions_session
+  inputSchema:
+    type: object
+    properties:
+      key:
+        type: string
+        description: State key
+      value:
+        type: string
+        description: Value to set
+    required:
+    - key
+    - value
+- name: sessions_switch_model
+  description: Switch the LLM server to a different model.
+  handler: sessions_switch_model
+  module: sessions_local_llm
+  inputSchema:
+    type: object
+    properties:
+      model:
+        type: string
+        description: Model key from models.yml
+    required:
+    - model
+- name: sessions_test
+  description: Test sessions server connectivity and configuration (cli-agent, session, local-llm)
+  handler: sessions_test
+  module: sessions_cli_agent
+  inputSchema:
+    type: object
+    properties: {}
+- name: context_stats
+  description: 'Read-only context ledger for a session''s transcript: message/turn counts by type, tool usage, char/word/token
+    totals, and the full/stub (offloaded) split. Use this to see how big a context is and where the weight lives before offloading
+    or consolidating.'
+  handler: context_stats
+  module: context_ops
+  inputSchema:
+    type: object
+    properties:
+      session:
+        type: string
+        description: Session to act on. Accepts a direct .jsonl transcript path, a tracking id (YYYYMMDD_HHMMSS_uuid8_plat),
+          a uai:// URI, a display name, or a CLI session UUID (prefix OK). REQUIRED — the server will NOT default to its own
+          session (the MCP server env is not the calling agent's).
+      interval:
+        type: string
+        default: live
+        description: 'Compaction interval to scope stats to: ''live'' (default, current live context since last compaction),
+          ''last'', a number (0=prologue, 1..N), or a range like ''2-4''.'
+    required:
+    - session
+- name: context_offload
+  description: 'Lossless context paging: archive large tool-result / tool-input / attachment payloads out of the live transcript
+    into a sidecar archive, leaving resume-safe stubs (reversible via context_rehydrate). Shrinks the live context without
+    losing anything. SAFE DEFAULT: dry_run=true — a bare call previews what WOULD be paged out and mutates nothing.'
+  handler: context_offload
+  module: context_ops
+  inputSchema:
+    type: object
+    properties:
+      session:
+        type: string
+        description: Session to act on. Accepts a direct .jsonl transcript path, a tracking id (YYYYMMDD_HHMMSS_uuid8_plat),
+          a uai:// URI, a display name, or a CLI session UUID (prefix OK). REQUIRED — the server will NOT default to its own
+          session (the MCP server env is not the calling agent's).
+      dry_run:
+        type: boolean
+        default: true
+        description: If true (DEFAULT), report what would be paged out without writing. Set false to actually offload.
+      keep_last_turns:
+        type: integer
+        description: Human turns at the tail protected verbatim (never paged out). Script default is 5 if omitted.
+      min_bytes:
+        type: integer
+        description: Only page out content whose on-wire size is >= this many bytes. Script default is 512 if omitted.
+      stub_attachments:
+        type: boolean
+        default: true
+        description: Whether to also page out large attachment records (deferred-tool deltas etc). Default true; pass false
+          to send --no-stub-attachments and leave attachments in place.
+      bounce:
+        type: boolean
+        default: false
+        description: If true, after a successful (non-dry-run) offload, immediately self-bounce the session to REALIZE the
+          reduction (schedule a launchd --resume + /exit). One deliberate action = offload + realize, so the decision to
+          offload doesn't need a separate context_bounce step. Requires session to be a tracking_id (like context_bounce).
+          Ignored when dry_run.
+      bounce_in_min:
+        type: integer
+        default: 2
+        description: Minutes until the scheduled self-resume when bounce=true (default 2).
+    required:
+    - session
+- name: context_recall
+  description: 'Recall (read-only): render the full original text of an archived engram (a Summarized / paged-out turn-range) by
+    its engram id, without restoring it to the transcript. Use to ''remember'' offloaded content on demand.'
+  handler: context_recall
+  module: context_ops
+  inputSchema:
+    type: object
+    properties:
+      session:
+        type: string
+        description: Session to act on. Accepts a direct .jsonl transcript path, a tracking id (YYYYMMDD_HHMMSS_uuid8_plat),
+          a uai:// URI, a display name, or a CLI session UUID (prefix OK). REQUIRED — the server will NOT default to its own
+          session (the MCP server env is not the calling agent's).
+      engram_id:
+        type: string
+        description: Durable engram_id of the archived layer to render (from a stub's ENGRAM_META, or context_summarize_enact
+          output).
+      leaf:
+        type: string
+        description: Optional active-chain leaf UUID to disambiguate forks. Omit unless the transcript has diverged branches.
+    required:
+    - session
+    - engram_id
+- name: context_rehydrate
+  description: 'Restore (UNDO): restore previously offloaded/Summarized content back into the live transcript on disk. If engram_id
+    is given, undoes that one Summarization (memory_manager restore); otherwise restores ALL archived tool-result/attachment
+    stubs (offload --rehydrate). Mutating.'
+  handler: context_rehydrate
+  module: context_ops
+  inputSchema:
+    type: object
+    properties:
+      session:
+        type: string
+        description: Session to act on. Accepts a direct .jsonl transcript path, a tracking id (YYYYMMDD_HHMMSS_uuid8_plat),
+          a uai:// URI, a display name, or a CLI session UUID (prefix OK). REQUIRED — the server will NOT default to its own
+          session (the MCP server env is not the calling agent's).
+      engram_id:
+        type: string
+        description: Optional. If given, Restore just this Summarized engram. Omit to restore all offloaded tool-result/attachment
+          stubs.
+    required:
+    - session
+- name: context_slim
+  description: 'Shrink fat engram stubs: rewrite existing ENGRAM_META inline bodies[] from fat to slim form (manifest untouched,
+    recall stays byte-exact). Reclaims live-context bytes held by verbose stubs. SAFE DEFAULT: dry_run=true previews what
+    would be slimmed.'
+  handler: context_slim
+  module: context_ops
+  inputSchema:
+    type: object
+    properties:
+      session:
+        type: string
+        description: Session to act on. Accepts a direct .jsonl transcript path, a tracking id (YYYYMMDD_HHMMSS_uuid8_plat),
+          a uai:// URI, a display name, or a CLI session UUID (prefix OK). REQUIRED — the server will NOT default to its own
+          session (the MCP server env is not the calling agent's).
+      dry_run:
+        type: boolean
+        default: true
+        description: If true (DEFAULT), report what would be slimmed without writing. Set false to actually slim.
+    required:
+    - session
+- name: context_summarize_plan
+  description: 'Summarization plan (read-only): recommend which turn-range(s) to Summarize to free the requested token budget,
+    given current usage. Returns the plan (first_uuids to summarize) — no mutation. Feed the plan''s ranges into context_summarize_enact.'
+  handler: context_summarize_plan
+  module: context_ops
+  inputSchema:
+    type: object
+    properties:
+      session:
+        type: string
+        description: Session to act on. Accepts a direct .jsonl transcript path, a tracking id (YYYYMMDD_HHMMSS_uuid8_plat),
+          a uai:// URI, a display name, or a CLI session UUID (prefix OK). REQUIRED — the server will NOT default to its own
+          session (the MCP server env is not the calling agent's).
+      used_pct:
+        type: number
+        description: Current context usage as a percentage 0-100 (NOT 0-1).
+      need_tokens:
+        type: integer
+        description: Target number of tokens to free by Summarizing.
+      leaf:
+        type: string
+        description: Optional active-chain leaf UUID; REQUIRED on a forked transcript so Summarization follows the right branch.
+      keep_recent:
+        type: integer
+        description: 'Optional: number of recent turns to protect from Summarization.'
+    required:
+    - session
+    - used_pct
+    - need_tokens
+- name: context_summarize_enact
+  description: 'MUTATING: Summarize turn-range(s) into engram stubs using caller-supplied summaries. summaries_file is a
+    JSON file mapping {first_uuid: summary_text} (produced from context_summarize_plan''s ranges, one summary per range).
+    Reversible via context_rehydrate --engram-id (Restore). Skips the local-LLM shadow log.'
+  handler: context_summarize_enact
+  module: context_ops
+  inputSchema:
+    type: object
+    properties:
+      session:
+        type: string
+        description: Session to act on. Accepts a direct .jsonl transcript path, a tracking id (YYYYMMDD_HHMMSS_uuid8_plat),
+          a uai:// URI, a display name, or a CLI session UUID (prefix OK). REQUIRED — the server will NOT default to its own
+          session (the MCP server env is not the calling agent's).
+      summaries_file:
+        type: string
+        description: 'Path to a JSON file {first_uuid: summary} — one summary per range from context_summarize_plan (the
+          Claude-quality path).'
+      leaf:
+        type: string
+        description: Optional active-chain leaf UUID; REQUIRED on a forked transcript.
+      keep_recent:
+        type: integer
+        description: 'Optional: number of recent turns to protect from Summarization.'
+    required:
+    - session
+    - summaries_file
+- name: context_consolidate_plan
+  description: 'DEPRECATED alias of context_summarize_plan (kept for back-compat). Read-only: recommend which turn-range(s)
+    to Summarize to free the requested token budget. Prefer context_summarize_plan.'
+  handler: context_consolidate_plan
+  module: context_ops
+  inputSchema:
+    type: object
+    properties:
+      session:
+        type: string
+        description: Session to act on. Accepts a direct .jsonl transcript path, a tracking id (YYYYMMDD_HHMMSS_uuid8_plat),
+          a uai:// URI, a display name, or a CLI session UUID (prefix OK). REQUIRED — the server will NOT default to its own
+          session (the MCP server env is not the calling agent's).
+      used_pct:
+        type: number
+        description: Current context usage as a percentage 0-100 (NOT 0-1).
+      need_tokens:
+        type: integer
+        description: Target number of tokens to free by Summarizing.
+      leaf:
+        type: string
+        description: Optional active-chain leaf UUID; REQUIRED on a forked transcript so Summarization follows the right branch.
+      keep_recent:
+        type: integer
+        description: 'Optional: number of recent turns to protect from Summarization.'
+    required:
+    - session
+    - used_pct
+    - need_tokens
+- name: context_consolidate_enact
+  description: 'DEPRECATED alias of context_summarize_enact (kept for back-compat). MUTATING: Summarize turn-range(s) into
+    engram stubs using caller-supplied summaries. Prefer context_summarize_enact.'
+  handler: context_consolidate_enact
+  module: context_ops
+  inputSchema:
+    type: object
+    properties:
+      session:
+        type: string
+        description: Session to act on. Accepts a direct .jsonl transcript path, a tracking id (YYYYMMDD_HHMMSS_uuid8_plat),
+          a uai:// URI, a display name, or a CLI session UUID (prefix OK). REQUIRED — the server will NOT default to its own
+          session (the MCP server env is not the calling agent's).
+      summaries_file:
+        type: string
+        description: 'Path to a JSON file {first_uuid: summary} — one summary per range from context_summarize_plan (the
+          Claude-quality path).'
+      leaf:
+        type: string
+        description: Optional active-chain leaf UUID; REQUIRED on a forked transcript.
+      keep_recent:
+        type: integer
+        description: 'Optional: number of recent turns to protect from Summarization.'
+    required:
+    - session
+    - summaries_file
+- name: context_check_resume
+  description: 'Read-only PREFLIGHT: would this transcript survive `claude --resume`? Scans for the crash class where an offload
+    stub flattened a list-typed attachment field (deferred_tools_delta.addedNames, hook_additional_context.content, ...) into
+    a bare string — CC runs .map()/.join() over those on resume, so a flatten is fatal. Uses a verified field taxonomy PLUS
+    self-calibration (a field seen as a list elsewhere but a bare stub here is a flatten), and — when a co-located <name>.jsonl.bak
+    snapshot exists — the exact offload pre-write guard diffed against it. Returns {ok, standalone_violations, snapshot_diff}.
+    Run before trusting a context_bounce.'
+  handler: context_check_resume
+  module: context_ops
+  inputSchema:
+    type: object
+    properties:
+      session:
+        type: string
+        description: Session to act on. Accepts a direct .jsonl transcript path, a tracking id (YYYYMMDD_HHMMSS_uuid8_plat),
+          a uai:// URI, a display name, or a CLI session UUID (prefix OK). REQUIRED — the server will NOT default to its own
+          session (the MCP server env is not the calling agent's).
+    required:
+    - session
+- name: context_bounce
+  description: 'Realize a lighter context: schedule a launchd self-resume in N minutes then /exit, so the session restarts
+    and reloads its (now offloaded/consolidated) transcript fresh. This is the ''realize'' step after offload/consolidate.
+    SAFE DEFAULT: dry_run=true prints the plan WITHOUT scheduling or exiting. self_restart reads AI_TRACKING_ID from its environment;
+    this tool injects the session you pass as AI_TRACKING_ID for the child process.'
+  handler: context_bounce
+  module: context_ops
+  inputSchema:
+    type: object
+    properties:
+      session:
+        type: string
+        description: Tracking id of the session to bounce (injected as AI_TRACKING_ID for self_restart.py). REQUIRED — must
+          be a tracking id (YYYYMMDD_HHMMSS_uuid8_plat), not a path.
+      in_min:
+        type: integer
+        default: 2
+        description: Minutes until the scheduled self-resume (default 2).
+      dry_run:
+        type: boolean
+        default: true
+        description: If true (DEFAULT), print the plan and do NOT schedule or exit. Set false to actually schedule the bounce.
+    required:
+    - session

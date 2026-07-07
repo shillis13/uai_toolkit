@@ -71,6 +71,47 @@ IMPORT_REWRITES = [
     (r"\bimport search_lib\b", "from uai_toolkit.history import search_lib"),
     (r"\bfrom file_access_tracker\b", "from uai_toolkit.file_access.tracker"),
     (r"\bfrom shared\.", "from uai_toolkit.mcp.shared."),
+
+    # ---- Expansion (2026-07-07): substrate + coordination layer ----
+    # session_mgmt/*  (both `from X` and bare `import X` forms)
+    (r"\bfrom (session_store|store|lib_session|lib_uri|lib_session_substrate|lib_session_activity|lib_session_identity|lib_identity_display|session_ops|session_mgr|build_footer|send_slash_command|compact_auth|get_comms_id|discover_sessions|session_context_registry|tag_mgr)\b",
+     r"from uai_toolkit.session_mgmt.\1"),
+    (r"^(\s*)import (session_store|store|lib_session|lib_uri|lib_session_substrate|lib_session_activity|lib_session_identity|lib_identity_display|session_ops|session_mgr|build_footer|send_slash_command|compact_auth|get_comms_id|discover_sessions|session_context_registry|tag_mgr)\b",
+     r"\1from uai_toolkit.session_mgmt import \2"),
+    # callbacks
+    (r"\bfrom callback_lib\b", "from uai_toolkit.callbacks.callback_lib"),
+    (r"^(\s*)import callback_lib\b", r"\1from uai_toolkit.callbacks import callback_lib"),
+    # messages
+    (r"\bfrom (messaging_mgr|messaging|messages_lib|comms_index|broadcast|broadcast_mgr|prompt_blocks|lib_reply_rule|lib_identity_resolve|recipient_uris|notify_lib)\b",
+     r"from uai_toolkit.messages.\1"),
+    (r"^(\s*)import (messaging_mgr|messaging|messages_lib|comms_index|broadcast|broadcast_mgr|prompt_blocks|lib_reply_rule|lib_identity_resolve|recipient_uris|notify_lib)\b",
+     r"\1from uai_toolkit.messages import \2"),
+    # scheduling
+    (r"\bfrom (launchd_backend|scheduled_task_mgr)\b", r"from uai_toolkit.scheduling.\1"),
+    (r"^(\s*)import (launchd_backend|scheduled_task_mgr)\b", r"\1from uai_toolkit.scheduling import \2"),
+    # tasks
+    (r"\bfrom (task_coord_lib|task_coord_cli)\b", r"from uai_toolkit.tasks.\1"),
+    (r"^(\s*)import (task_coord_lib|task_coord_cli)\b", r"\1from uai_toolkit.tasks import \2"),
+    # context_files (authoring/index side; guidance_* stay in guidance/)
+    (r"\bfrom (context_mgr|trait_mgr|generate_frontmatter)\b", r"from uai_toolkit.context_files.\1"),
+    (r"^(\s*)import (context_mgr|trait_mgr|generate_frontmatter)\b", r"\1from uai_toolkit.context_files import \2"),
+    # cli/*
+    (r"\bfrom (lib_paths|lib_cli_common|lib_orchestrator|lib_cli_wrapper|lib_session_mgr|lib_agent_ops|lib_brief_loading|stage_context|fork_into_dir|find_jsonl_transcript|load_context)\b",
+     r"from uai_toolkit.cli.\1"),
+    (r"^(\s*)import (lib_paths|lib_cli_common|lib_orchestrator|lib_cli_wrapper|lib_session_mgr|lib_agent_ops|lib_brief_loading|stage_context|fork_into_dir|find_jsonl_transcript|load_context)\b",
+     r"\1from uai_toolkit.cli import \2"),
+    # utils leftovers + lib -> common_utils
+    (r"\bfrom (lib_clean_text|repl_base|colors)\b", r"from uai_toolkit.common_utils.\1"),
+    (r"^(\s*)import (lib_clean_text|repl_base)\b", r"\1from uai_toolkit.common_utils import \2"),
+    (r"\bfrom utils\.lib_clean_text\b", "from uai_toolkit.common_utils.lib_clean_text"),
+    # hooks common libs
+    (r"\bfrom (lib_hook_base|lib_stop_hooks|lib_context_load|lib_hook_scripts|lib_offload_metrics|dump_stdin)\b",
+     r"from uai_toolkit.hooks.common.\1"),
+    (r"^(\s*)import (lib_hook_base|lib_stop_hooks|lib_context_load|lib_hook_scripts|lib_offload_metrics|dump_stdin)\b",
+     r"\1from uai_toolkit.hooks.common import \2"),
+    # out-of-scope-but-required deps pulled in as siblings
+    (r"\bfrom audit\.lib_audit\b", "from uai_toolkit.audit.lib_audit"),
+    (r"\bfrom coordination\.(feed_lib|feed_identity)\b", r"from uai_toolkit.coordination.\1"),
 ]
 
 # Machine-specific absolutes to scrub (materialize warns if any survive in a
@@ -139,4 +180,55 @@ MODULES = [
     {"dest": "mcp/knowledge/server.py",               "source": "mcps:knowledge/server.py",                    "kind": "curated", "mcp_pkg": "knowledge"},
     {"dest": "mcp/workflow/tools/workflow_todo.py",   "source": "mcps:workflow/tools/workflow_todo.py",        "kind": "curated", "mcp_pkg": "workflow"},
     {"dest": "mcp/workflow/server.py",                "source": "mcps:workflow/server.py",                     "kind": "curated", "mcp_pkg": "workflow"},
+
+    # ---- Expansion per-file entries (2026-07-07) ----
+    # utils/lib leaves folded into common_utils
+    {"dest": "common_utils/repl_base.py",       "source": "ai:lib/repl_base.py",             "kind": "clean"},
+    {"dest": "common_utils/lib_clean_text.py",  "source": "ai:utils/lib_clean_text.py",      "kind": "clean"},
+    {"dest": "common_utils/colors.py",          "source": "ai:utils/colors.py",              "kind": "clean"},
+    # required-but-out-of-scope deps (session_ops + hooks import these) — pulled as siblings
+    {"dest": "audit/lib_audit.py",              "source": "ai:audit/lib_audit.py",           "kind": "clean"},
+    {"dest": "coordination/feed_lib.py",        "source": "ai:coordination/feed_lib.py",     "kind": "clean"},
+    {"dest": "coordination/feed_identity.py",   "source": "ai:coordination/feed_identity.py","kind": "clean"},
+    # mcp shared framework piece needed by comms+sessions servers
+    {"dest": "mcp/shared/handler_dispatch.py",  "source": "mcps:shared/handler_dispatch.py", "kind": "clean"},
+    # comms + sessions MCP servers (no server deferred) — servers curated (sys.path/AI_ROOT rewire), tools.yml data
+    {"dest": "mcp/comms/server.py",             "source": "mcps:comms/server.py",            "kind": "curated", "mcp_pkg": "comms"},
+    {"dest": "mcp/comms/tools.yml",             "source": "mcps:comms/tools.yml",            "kind": "clean"},
+    {"dest": "mcp/sessions/server.py",          "source": "mcps:sessions/server.py",         "kind": "curated", "mcp_pkg": "sessions"},
+    {"dest": "mcp/sessions/tools.yml",          "source": "mcps:sessions/tools.yml",         "kind": "clean"},
+    # hook system: live Python dispatcher + exclusions CLI + image-size checker
+    {"dest": "hooks/dispatch.py",               "source": "aigen:data/hooks/dispatch.py",    "kind": "curated"},
+    {"dest": "hooks/hook_exclusions.py",        "source": "ai:hooks/hook_exclusions.py",     "kind": "clean"},
+    {"dest": "hooks/check_image_dimensions.py", "source": "aigen:data/hooks/check_image_dimensions.py", "kind": "clean"},
+]
+
+# Whole-dir globs — materialized with `--dirs`. Each expands to per-file MODULE
+# entries (see materialize.expand_module_dirs): globs *.py under source, honors
+# exclude/include_only, applies per-file `kind` overrides. Symlinks in source are
+# excluded (their canonical targets are ported elsewhere).
+MODULE_DIRS = [
+    {"dest": "session_mgmt", "source": "ai:session_mgmt", "kind": "clean",
+     "exclude": ["trait_mgr.py", "session_traits.py"]},               # symlinks -> context_files / session_context_registry
+    {"dest": "callbacks",    "source": "ai:callbacks",    "kind": "clean"},
+    {"dest": "messages",     "source": "ai:messages",     "kind": "clean",
+     "exclude": ["messaging.py"]},                                    # symlink -> messaging_mgr.py
+    {"dest": "scheduling",   "source": "ai:scheduling",   "kind": "clean",
+     "exclude": ["install_scheduled_tasks.py", "meridian_reflection", "cadence_reflection.py"],
+     "overrides": {"launchd_backend.py": "curated", "scheduled_task_mgr.py": "curated"}},  # launchd -> cron/systemd
+    {"dest": "git_guardian", "source": "ai:git_guardian", "kind": "curated"},  # osascript notification
+    {"dest": "tasks",        "source": "ai:tasks",        "kind": "clean",
+     "exclude": ["create_topics_tasks.py"]},                          # hardcoded path, one-off
+    {"dest": "context_files", "source": "ai:context_files", "kind": "clean",
+     "exclude": ["guidance_cli.py", "guidance_lib.py", "scan_traits_registry.py", "test_registry.py"],
+     "overrides": {"trait_mgr.py": "curated"}},
+    {"dest": "cli",          "source": "ai:cli",          "kind": "clean",
+     "exclude": ["archive"],
+     "overrides": {"capture_uuid_playwright.py": "curated"}},          # heavy playwright dep -> optional
+    {"dest": "mcp/comms/tools",    "source": "mcps:comms/tools",    "kind": "clean", "mcp_pkg": "comms"},
+    {"dest": "mcp/sessions/tools", "source": "mcps:sessions/tools", "kind": "clean", "mcp_pkg": "sessions"},
+    {"dest": "hooks/common",       "source": "aigen:data/hooks/common", "kind": "clean"},
+    {"dest": "hooks/handlers",     "source": "aigen:data/hooks",    "kind": "clean",
+     "include_only": ["Notification", "PostCompact", "PostToolUse", "PreCompact", "PreToolUse",
+                      "SessionStart", "Stop", "UserPromptSubmit"]},
 ]

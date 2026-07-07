@@ -1,0 +1,1242 @@
+_meta:
+  description: Tool definitions for  MCP server
+  generated_from: existing tools() functions
+  note: Edit this file to rename tools. The server reloads dynamically.
+tools:
+- name: comms_archive_message
+  description: Archive a message by moving it from inbox to archive directory. Use this to clean up processed
+    messages.
+  handler: comms_archive_message
+  module: comms_messages
+  inputSchema:
+    type: object
+    properties:
+      id:
+        type: string
+        description: Message ID to archive
+    required:
+    - id
+- name: comms_block_session
+  description: 'Block a session from receiving prompts from anyone but the user. Prompts from other sessions
+    are HELD (queued) and delivered when the block lifts; the user''s direct input always gets through.
+    Duration: omit both turns/until = indefinite; --turns N auto-lifts after N completed turns; until
+    = ISO time or relative ''+90m''/''+2h''/''+1d''. An interrupt-urgency message that is blocked fires
+    a user notification. Shows a 🔒 indicator on the statusline, footer, and session cards.'
+  handler: comms_block_session
+  module: comms_prompting
+  inputSchema:
+    type: object
+    properties:
+      session:
+        type: string
+        description: Target session tracking id (or 'self')
+      turns:
+        type: integer
+        description: Auto-lift after N completed turns
+      until:
+        type: string
+        description: Auto-lift at ISO time or relative +90m/+2h/+1d
+      reason:
+        type: string
+        description: Optional human note
+    required:
+    - session
+- name: comms_broadcast_context
+  description: Stage a Context reference / note / file into each recipient's context_to_load/ (loaded
+    on their next prompt). Optionally send a staggered nudge so they process it now.
+  handler: comms_broadcast_context
+  module: comms_broadcast
+  inputSchema:
+    type: object
+    properties:
+      ref:
+        type: string
+        description: A Context reference id (resolved via get_context)
+      note:
+        type: string
+        description: Freeform note text to stage
+      file:
+        type: string
+        description: Path to a file to stage
+      nudge:
+        type: boolean
+        description: Also send a staggered nudge-prompt (default false)
+      recipients: &id001
+        type: string
+        description: 'Recipient spec: a tracking id, uai://<type>/<id> (open type; resolved recursively
+          via uri_mappings), ''all'' (true broadcast), or a comma-separated list. Preferred over platform/sessions.'
+      platform: &id002
+        type: string
+        description: 'Legacy filter: only this platform (claude_cli, codex_cli, …)'
+      sessions: &id003
+        type: string
+        description: 'Legacy filter: comma-separated tracking ids / names'
+      include_self: &id004
+        type: boolean
+        description: Include the calling session (default false)
+      stagger_ms: &id005
+        type: integer
+        description: Gap in ms between per-recipient pushes (default 500)
+      on_occupied: &id006
+        type: string
+        enum:
+        - hold
+        - skip
+        description: 'Prompt area already has text: ''hold'' (queue, delivered when it clears) or ''skip''
+          (report busy). Never overwrites. Default hold.'
+      dry_run: &id007
+        type: boolean
+        description: Preview who would be targeted / what would happen; mutates nothing
+- name: comms_broadcast_message
+  description: Write a message to each recipient's inbox. urgency=async is silent (pull-only); prompt/interrupt
+    add a staggered nudge (= priority/nudge intensity).
+  handler: comms_broadcast_message
+  module: comms_broadcast
+  inputSchema:
+    type: object
+    properties:
+      from_sender:
+        type: string
+        description: Sender identifier
+      content:
+        type: string
+        description: Message text
+      urgency:
+        type: string
+        enum:
+        - async
+        - prompt
+        - interrupt
+        description: async=silent inbox; prompt=inbox+staggered nudge; interrupt=inbox+immediate. Default
+          async.
+      recipients: *id001
+      platform: *id002
+      sessions: *id003
+      include_self: *id004
+      stagger_ms: *id005
+      on_occupied: *id006
+      dry_run: *id007
+    required:
+    - from_sender
+    - content
+- name: comms_broadcast_prompt
+  description: Write text into each recipient's Prompt Area. submit=false types it for review; submit=true
+    submits. Occupied prompts are held (or skipped) per on_occupied — never overwritten.
+  handler: comms_broadcast_prompt
+  module: comms_broadcast
+  inputSchema:
+    type: object
+    properties:
+      text:
+        type: string
+        description: Prompt text
+      submit:
+        type: boolean
+        description: Submit (press enter) vs type-only. Default false.
+      recipients: *id001
+      platform: *id002
+      sessions: *id003
+      include_self: *id004
+      stagger_ms: *id005
+      on_occupied: *id006
+      dry_run: *id007
+    required:
+    - text
+- name: comms_broadcast_slash
+  description: Send a slash command to each recipient's Prompt Area (always submits). Occupied prompts
+    are held (or skipped) per on_occupied.
+  handler: comms_broadcast_slash
+  module: comms_broadcast
+  inputSchema:
+    type: object
+    properties:
+      command:
+        type: string
+        description: Slash command, e.g. '/color cyan'
+      recipients: *id001
+      platform: *id002
+      sessions: *id003
+      include_self: *id004
+      stagger_ms: *id005
+      on_occupied: *id006
+      dry_run: *id007
+    required:
+    - command
+- name: comms_cancel_scheduled_prompt
+  description: Cancel a scheduled prompt by tag or at job ID
+  handler: comms_cancel_scheduled_prompt
+  module: comms_prompting
+  inputSchema:
+    type: object
+    properties:
+      tag:
+        type: string
+        description: Cancel by tag name
+      at_job_id:
+        type: string
+        description: Cancel by at job ID
+- name: comms_check_messages
+  description: Check unread message counts. If session is provided, returns inbox and broadcast unread
+    counts for that session. If omitted, returns per-session unread counts across all sessions.
+  handler: comms_check_messages
+  module: comms_messages
+  inputSchema:
+    type: object
+    properties:
+      session:
+        type: string
+        description: Session tracking ID to check (omit to check all sessions)
+- name: comms_check_owed
+  description: Check what replies this session owes. Returns pending reply entries where 'to' matches
+    the given session — these are messages you received with response_required that you have not yet replied
+    to.
+  handler: comms_check_owed
+  module: comms_messages
+  inputSchema:
+    type: object
+    properties:
+      session:
+        type: string
+        description: Session tracking ID to check owed replies for
+    required:
+    - session
+- name: comms_condense_me
+  description: 'Request condensation of your own session history into a handoff file.
+
+
+    Call this to create an operational handoff from your current session. The handoff
+
+    is a structured YAML file that a successor AI can load to continue your work.
+
+
+    This runs the condensation pipeline: first-pass compaction (strip tool results,
+
+    trim text), then sends the prepared input to a designated condenser session.
+
+
+    You control whether your private thinking blocks are included. If you have
+
+    private thoughts ([/PRIVATE] marked) that contain reasoning important for the
+
+    handoff, set include_private=true. Default is false (private blocks dropped
+
+    before the condenser sees them).'
+  handler: comms_condense_me
+  module: comms_prompting
+  inputSchema:
+    type: object
+    properties:
+      src_uuid:
+        type: string
+        description: Your CLI session UUID. Required so the pipeline knows which JSONL to condense.
+      condenser_session:
+        type: string
+        description: Terminal session name of the condenser AI. If omitted, uses configured default.
+      include_private:
+        type: boolean
+        description: 'Include private thinking blocks in the condensation input. Default: false. Only
+          YOU should decide this -- the human does not control this flag.'
+        default: false
+      name:
+        type: string
+        description: Human-readable name for the handoff
+      description:
+        type: string
+        description: Description of the handoff content
+      output_path:
+        type: string
+        description: 'Custom output path. Default: auto-generated in handoff store.'
+      self_condense:
+        type: boolean
+        description: 'If true, skip the condenser session. Returns the prepared input path and prompt
+          path so YOU can do the condensation yourself in your own context. Default: false.'
+        default: false
+    required:
+    - src_uuid
+- name: comms_deliver
+  description: Deliver a message to a callback endpoint URI. The URI was provided by the originator (via
+    comms_make_endpoint or embedded in a message). You don't need to know what kind of endpoint it is
+    — just pass the URI and the message.
+  handler: comms_deliver
+  module: comms_callbacks
+  inputSchema:
+    type: object
+    properties:
+      endpoint:
+        type: string
+        description: Callback endpoint URI (e.g. file:///tmp/resp.txt, fifo:///tmp/pipe, prompt://claude-cli/session).
+      message:
+        type: string
+        description: The response message to deliver.
+    required:
+    - endpoint
+    - message
+- name: comms_get_prompt_text
+  description: 'Read what''s currently typed in a session''s prompt input area.
+
+
+    Returns the actual text in the prompt area, along with the session''s state
+
+    (prompt_area_clear, prompt_area_occupied, responding), context %, and model.
+
+
+    Useful for inspecting what an agent has typed but not yet submitted.'
+  handler: comms_get_prompt_text
+  module: comms_prompting
+  inputSchema:
+    type: object
+    properties:
+      session:
+        type: string
+        description: 'Session to read: URI, tracking ID, display name, or ''self''.'
+      include_empty:
+        type: boolean
+        description: 'Include sessions with empty/clear prompt areas (default: false, only returns occupied)'
+        default: false
+    required: []
+- name: comms_is_busy
+  description: Check if an AI target is currently busy/processing
+  handler: comms_is_busy
+  module: comms_prompting
+  inputSchema:
+    type: object
+    properties:
+      target:
+        type: string
+        description: 'Target to check: desktop, webui, cli, or specific session name'
+      session:
+        type: string
+        description: Specific terminal session (for CLI)
+    required:
+    - target
+- name: comms_is_prompt_clear
+  description: 'Check if a session''s prompt input area is clear (safe to write).
+
+
+    Returns whether the session is idle with an empty prompt area — meaning
+
+    it''s safe to send a prompt or slash command without overwriting typed text.
+
+
+    Accepts any session identifier or ''self''. If no session specified, checks
+
+    all active sessions.'
+  handler: comms_is_prompt_clear
+  module: comms_prompting
+  inputSchema:
+    type: object
+    properties:
+      session:
+        type: string
+        description: 'Session to check: URI, tracking ID, display name, or ''self''. If omitted, checks
+          all active sessions.'
+    required: []
+- name: comms_list_blocks
+  description: List all live prompt blocks (session, mode, turns/until, reason).
+  handler: comms_list_blocks
+  module: comms_prompting
+  inputSchema:
+    type: object
+    properties: {}
+- name: comms_list_locks
+  description: List all conversation locks with their metadata
+  handler: comms_list_locks
+  module: comms_messages
+  inputSchema:
+    type: object
+    properties: {}
+- name: comms_list_pending
+  description: List pending replies — messages that were sent with response_required=true and have not
+    yet been answered. Optionally filter by session.
+  handler: comms_list_pending
+  module: comms_messages
+  inputSchema:
+    type: object
+    properties:
+      session:
+        type: string
+        description: Filter to pending replies where 'to' matches this session (omit for all)
+- name: comms_list_prompt_queue
+  description: List pending prompts for a session
+  handler: comms_list_prompt_queue
+  module: comms_messages
+  inputSchema:
+    type: object
+    properties:
+      session:
+        type: string
+        description: Session to list prompts for (lists all if omitted)
+      limit:
+        type: integer
+        description: Maximum number of prompts to return (default 20)
+        default: 20
+- name: comms_list_recipient_sets
+  description: List registered recipient sets (uri, members, expires_at) from the central uri_mappings.
+  handler: comms_list_recipient_sets
+  module: comms_recipients
+  inputSchema:
+    type: object
+    properties: {}
+- name: comms_list_scheduled_prompts
+  description: List pending scheduled prompts with tag, target, and time remaining
+  handler: comms_list_scheduled_prompts
+  module: comms_prompting
+  inputSchema:
+    type: object
+    properties: {}
+- name: comms_list_sessions
+  description: List active terminal sessions, optionally filtered by pattern
+  handler: comms_list_sessions
+  module: comms_prompting
+  inputSchema:
+    type: object
+    properties:
+      pattern:
+        type: string
+        description: Filter pattern (e.g., 'claude', 'gemini', 'shard')
+- name: comms_load_context
+  description: 'Load context files into a running session for delivery on its next turn.
+
+
+    Stages briefs, traits, roles, working memory, or any text file into the target
+
+    session''s context_to_load/ inbox. The session''s UserPromptSubmit hook picks them
+
+    up on its next prompt and injects their content as additionalContext, then
+
+    removes them (one-shot delivery).
+
+
+    This is the imperative counterpart to the automatic hook-driven loaders
+
+    (PostCompact brief restore, SessionStart context staging): use it to push a
+
+    specific brief or document into any session — including ''self'' — on demand.
+
+
+    Accepts any session identifier: tracking ID, CLI UUID (prefix OK), terminal
+
+    name, display name, or ''self''.'
+  handler: comms_load_context
+  module: comms_prompting
+  inputSchema:
+    type: object
+    properties:
+      session:
+        type: string
+        description: 'Target session: tracking ID, CLI UUID, terminal name, display name, or ''self''
+          (default: self).'
+        default: self
+      files:
+        type: array
+        items:
+          type: string
+        description: Absolute paths of files to stage for delivery (briefs, traits, any text file).
+      copy:
+        type: boolean
+        description: 'Copy files into the inbox instead of symlinking (default: false = symlink).'
+        default: false
+      prefix:
+        type: string
+        description: Optional numeric prefix to control delivery sort order (e.g. '01').
+      dry_run:
+        type: boolean
+        description: 'Resolve and validate without staging; returns what would be loaded (default: false).'
+        default: false
+    required:
+    - files
+- name: comms_lock_session
+  description: Lock a conversation session to prevent concurrent access
+  handler: comms_lock_session
+  module: comms_messages
+  inputSchema:
+    type: object
+    properties:
+      session_id:
+        type: string
+        description: Session ID to lock
+      locked_by:
+        type: string
+        description: 'Who is locking (default: user)'
+        default: user
+      reason:
+        type: string
+        description: Optional reason for the lock
+    required:
+    - session_id
+- name: comms_make_endpoint
+  description: Generate a callback endpoint URI. Returns a single string that can be passed to any responder
+    — the responder calls comms_deliver with the URI to send back a response. The responder never needs
+    to know what kind of endpoint it is.
+  handler: comms_make_endpoint
+  module: comms_callbacks
+  inputSchema:
+    type: object
+    properties:
+      scheme:
+        type: string
+        enum:
+        - file
+        - fifo
+        - prompt
+        - none
+        description: Endpoint type. file = write to a regular file. fifo = write to a named pipe (caller
+          must create it first). prompt = send via send_prompt.py to an AI session. none = no delivery.
+      path:
+        type: string
+        description: 'For file/fifo: absolute file path. For prompt: the target platform (e.g. ''claude-cli'').'
+      session:
+        type: string
+        description: 'For prompt://: target session identifier.'
+      template:
+        type: string
+        description: Optional message template. Use {message} as placeholder for the delivered content.
+      submit:
+        type: boolean
+        description: 'For prompt://: press Enter after sending. Default true.'
+        default: true
+      force:
+        type: boolean
+        description: 'For prompt://: send even if target is busy. Default false.'
+        default: false
+    required:
+    - scheme
+- name: comms_message
+  description: Send a message to a specific agent or session. The sender is the trusted resolved session
+    — do NOT pass a sender. Returns {conversationId, messageId}.
+  handler: comms_message
+  module: comms_messages
+  inputSchema:
+    type: object
+    properties:
+      to_recipient:
+        type: string
+        description: Recipient identifier (session ID or agent name)
+      content:
+        type: string
+        description: Message body (markdown supported)
+      reply_to:
+        type:
+        - string
+        - 'null'
+        description: REQUIRED. Parent message ID to thread under, OR null to start a NEW conversation
+          (which then REQUIRES subject). The string 'none' is also accepted as a synonym for null.
+      subject:
+        type: string
+        description: Conversation subject. REQUIRED when reply_to is null/'none' (becomes the conversation
+          topic); optional when replying.
+      body_file:
+        type: string
+        description: Optional path to a file holding a large body; the message references it (read inlines
+          it). Write big content to a file first and pass the path with a short content note — keeps the
+          wire message and your tool args small.
+      urgency:
+        type: string
+        enum:
+        - interrupt
+        - prompt
+        - async
+        - passive
+        description: 'Message urgency (default: prompt)'
+      notify:
+        type: string
+        enum:
+        - immediate
+        - batched
+        - silent
+        description: 'Notification policy (default: derived from urgency). ''batched'' coalesces the recipient''s
+          nudges to at most one per window — for bulk sends (e.g. many confirmations to one session).
+          The message still lands individually in their inbox.'
+    required:
+    - to_recipient
+    - content
+    - reply_to
+- name: comms_message_ack
+  description: Mark a message as read/processed
+  handler: comms_message_ack
+  module: comms_messages
+  inputSchema:
+    type: object
+    properties:
+      message_id:
+        type: string
+        description: Message ID to acknowledge
+      acknowledger:
+        type: string
+        description: Who is acknowledging (agent/session identifier)
+    required:
+    - message_id
+    - acknowledger
+- name: comms_message_broadcast
+  description: Send a message to all agents (creates broadcast file)
+  handler: comms_message_broadcast
+  module: comms_messages
+  inputSchema:
+    type: object
+    properties:
+      from_sender:
+        type: string
+        description: Sender identifier (e.g., desktop_claude, cli_librarian)
+      content:
+        type: string
+        description: Message body (markdown supported)
+      reply_to:
+        type: string
+        description: Optional parent message ID for threading
+    required:
+    - from_sender
+    - content
+- name: comms_message_list
+  description: List direct messages (inbox) for a recipient
+  handler: comms_message_list
+  module: comms_messages
+  inputSchema:
+    type: object
+    properties:
+      recipient:
+        type: string
+        description: Recipient to filter by (optional, lists all if omitted)
+      limit:
+        type: integer
+        description: Maximum number of messages to return (default 20)
+        default: 20
+- name: comms_message_list_broadcasts
+  description: List recent broadcast messages
+  handler: comms_message_list_broadcasts
+  module: comms_messages
+  inputSchema:
+    type: object
+    properties:
+      limit:
+        type: integer
+        description: Maximum number of messages to return (default 20)
+        default: 20
+- name: comms_message_responses
+  description: Check for responses to a specific message
+  handler: comms_message_responses
+  module: comms_messages
+  inputSchema:
+    type: object
+    properties:
+      message_id:
+        type: string
+        description: Message ID to check responses for
+    required:
+    - message_id
+- name: comms_observe_session
+  description: 'Capture current state of a CLI session.
+
+
+    Use this BEFORE sending prompts to verify the session is ready.
+
+    Use this AFTER sending prompts to verify they were received.
+
+
+    Returns the last N lines of the terminal pane, showing:
+
+    - Current prompt/input state
+
+    - Recent output
+
+    - Processing indicators'
+  handler: comms_observe_session
+  module: comms_prompting
+  inputSchema:
+    type: object
+    properties:
+      session:
+        type: string
+        description: Terminal session name
+      lines:
+        type: integer
+        description: 'Number of lines to capture (default: 30)'
+        default: 30
+    required:
+    - session
+- name: comms_parse_endpoint
+  description: Parse a callback endpoint URI into its component fields. Use this to inspect or decompose
+    a URI you received.
+  handler: comms_parse_endpoint
+  module: comms_callbacks
+  inputSchema:
+    type: object
+    properties:
+      endpoint:
+        type: string
+        description: Callback endpoint URI (e.g. file:///tmp/resp.txt, prompt://claude-cli/abc123?submit=true).
+    required:
+    - endpoint
+- name: comms_post_standing
+  description: Post a standing message — a persistent announcement that sessions query on demand
+  handler: comms_post_standing
+  module: comms_messages
+  inputSchema:
+    type: object
+    properties:
+      scope:
+        type: string
+        enum:
+        - global
+        - team
+        - platform
+        - project
+        description: Message scope
+      scope_name:
+        type: string
+        description: Scope name (required for team/platform/project, ignored for global)
+      from_sender:
+        type: string
+        description: Sender identifier
+      content:
+        type: string
+        description: Message text
+      ttl_seconds:
+        type: integer
+        description: 'Time-to-live in seconds (default: no expiry)'
+    required:
+    - scope
+    - from_sender
+    - content
+- name: comms_query_standing
+  description: Query standing messages across scopes — pull persistent announcements relevant to this
+    session
+  handler: comms_query_standing
+  module: comms_messages
+  inputSchema:
+    type: object
+    properties:
+      scopes:
+        type: string
+        description: Comma-separated scopes to query (e.g. 'global,platform,team')
+      team:
+        type: string
+        description: Team name (required if querying team scope)
+      platform:
+        type: string
+        description: Platform name (required if querying platform scope)
+      project:
+        type: string
+        description: Project name (required if querying project scope)
+      limit:
+        type: integer
+        description: Maximum number of messages to return (default 50)
+        default: 50
+    required:
+    - scopes
+- name: comms_read_history
+  description: 'Read chat history for a CLI session.
+
+
+    Wraps read_jsonl.py to retrieve parsed conversation history.
+
+    Returns messages as structured JSON for programmatic use.'
+  handler: comms_read_history
+  module: comms_prompting
+  inputSchema:
+    type: object
+    properties:
+      uuid:
+        type: string
+        description: CLI session UUID (full or prefix)
+      platform:
+        type: string
+        description: Platform filter
+        enum:
+        - claude_cli
+        - codex_cli
+        - gemini_cli
+      format:
+        type: string
+        description: 'Output format (default: json)'
+        enum:
+        - json
+        - text
+        - markdown
+        default: json
+      last_n:
+        type: integer
+        description: Only return the last N messages
+    required:
+    - uuid
+- name: comms_read_message
+  description: Read a message by its ID and mark it as read. Returns the full message content. If the
+    message was already read by this reader, it is returned without adding a duplicate read_by entry.
+  handler: comms_read_message
+  module: comms_messages
+  inputSchema:
+    type: object
+    properties:
+      id:
+        type: string
+        description: Message ID to read (e.g. msg_20260425_120000_abc12345)
+      reader:
+        type: string
+        description: Who is reading — defaults to caller's AI_TRACKING_ID if omitted
+    required:
+    - id
+- name: comms_reconnect_mcp_servers
+  description: 'Reconnect our local custom MCP servers in a CLI session.
+
+
+    Sends `/mcp reconnect <server>` (a non-interactive Claude Code command) for each
+
+    of our self-authored MCP servers under ai_general/apps/mcps/ — by default:
+
+    browser, knowledge, sessions, workflow, comms (comms last, since reconnecting it
+
+    can briefly drop the server handling this call).
+
+
+    Use this after editing an MCP server''s code so a running session picks up the
+
+    change without a full restart. Our Python servers call their tool handlers
+
+    in-process, so code edits are otherwise invisible until reconnect.
+
+
+    Targets any session identifier (prompt:// URI, tracking ID, CLI UUID, terminal
+
+    name, display name, or ''self''). Commands are submitted one per server with a
+
+    short delay so the target''s input box doesn''t coalesce them.
+
+
+    NOTE: `/mcp reconnect` reliably reconnects dropped servers; whether it re-spawns
+
+    a healthy stdio subprocess (reloading in-process code) is environment-dependent —
+
+    verify the effect if you depend on a code reload. Use dry_run to preview.'
+  handler: comms_reconnect_mcp_servers
+  module: comms_prompting
+  inputSchema:
+    type: object
+    properties:
+      identifier:
+        type: string
+        description: 'Session to target: prompt:// URI, tracking ID, CLI UUID, terminal name, display
+          name, or ''self'' (default: self)'
+      servers:
+        type: array
+        items:
+          type: string
+        description: 'Explicit server names to reconnect (default: all local custom servers)'
+      delay:
+        type: number
+        description: 'Seconds to pause between submissions (default: 1.0)'
+      dry_run:
+        type: boolean
+        description: If true, report the planned commands without sending them
+    required: []
+- name: comms_register_recipients
+  description: Save a selection of recipients as a named set at uai://<type>/<id> (open type — e.g. uai://myfavs/relay-crew).
+    Members are tracking ids and/or other uai:// URIs (recursively flattened). Optionally temporary via
+    ttl_hours or expires_at (auto-swept). Broadcast tools then target it via recipients=uai://<type>/<id>.
+  handler: comms_register_recipients
+  module: comms_recipients
+  inputSchema:
+    type: object
+    properties:
+      uri:
+        type: string
+        description: uai://<type>/<id> to register, e.g. uai://myfavs/relay-crew
+      members:
+        type: array
+        items:
+          type: string
+        description: Tracking ids and/or uai:// URIs to include
+      ttl_hours:
+        type: number
+        description: Expire this many hours from now (temporary set)
+      expires_at:
+        type: string
+        description: ISO local expiry time (alternative to ttl_hours)
+    required:
+    - uri
+    - members
+- name: comms_rename_session
+  description: 'Rename a CLI session and optionally set its color.
+
+
+    Updates display_name in the SQLite session store AND sends /rename to the
+
+    terminal so Claude Code''s own UI also reflects the change.
+
+
+    By default, fails if the name has been used before — returns usage count and
+
+    active session count. Pass allowRepeatNames=true to override.
+
+
+    Optionally sends /color (Claude Code only — ignored on other platforms).
+
+    Supported colors: red, blue, green, yellow, purple, orange, pink, cyan, default.
+
+
+    Accepts any identifier: tracking ID, CLI UUID (prefix OK), or terminal session name.'
+  handler: comms_rename_session
+  module: comms_prompting
+  inputSchema:
+    type: object
+    properties:
+      identifier:
+        type: string
+        description: Tracking ID, CLI UUID (prefix OK), or terminal session name
+      name:
+        type: string
+        description: New display name for the session
+      color:
+        type: string
+        description: 'Session color (Claude Code only). Options: red, blue, green, yellow, purple, orange,
+          pink, cyan, default'
+        enum:
+        - red
+        - blue
+        - green
+        - yellow
+        - purple
+        - orange
+        - pink
+        - cyan
+        - default
+      allowRepeatNames:
+        type: boolean
+        description: Allow reusing a name that has been used before. Default false — fails with usage
+          info if name was previously used.
+        default: false
+    required:
+    - identifier
+    - name
+- name: comms_reply
+  description: Reply to a specific message. Sends a new message to the original sender, threading it under
+    the same conversation. Automatically resolves any pending reply obligation this satisfies.
+  handler: comms_reply
+  module: comms_messages
+  inputSchema:
+    type: object
+    properties:
+      id:
+        type: string
+        description: Message ID to reply to
+      from_sender:
+        type: string
+        description: Sender identifier (your tracking ID or name)
+      content:
+        type: string
+        description: Reply body (markdown supported)
+      urgency:
+        type: string
+        enum:
+        - interrupt
+        - prompt
+        - async
+        - passive
+        description: 'Message urgency (default: prompt)'
+        default: prompt
+      response_required:
+        type: boolean
+        description: 'Whether this reply itself requires a response (default: false)'
+        default: false
+    required:
+    - id
+    - from_sender
+    - content
+- name: comms_reply_all
+  description: Reply to all participants of a message. For direct messages, sends to all parties except
+    yourself. For broadcasts, sends a broadcast reply. Automatically resolves any pending reply obligation
+    this satisfies.
+  handler: comms_reply_all
+  module: comms_messages
+  inputSchema:
+    type: object
+    properties:
+      id:
+        type: string
+        description: Message ID to reply to
+      from_sender:
+        type: string
+        description: Sender identifier (your tracking ID or name)
+      content:
+        type: string
+        description: Reply body (markdown supported)
+      urgency:
+        type: string
+        enum:
+        - interrupt
+        - prompt
+        - async
+        - passive
+        description: 'Message urgency (default: prompt)'
+        default: prompt
+      response_required:
+        type: boolean
+        description: 'Whether this reply itself requires a response (default: false)'
+        default: false
+    required:
+    - id
+    - from_sender
+    - content
+- name: comms_schedule_future_prompt
+  description: 'Schedule a prompt to be sent to an AI target at a future time.
+
+
+    Uses macOS ''at'' for durable scheduling — survives server restarts.
+
+    Internally calls send_prompt.py when the timer fires.
+
+
+    Provide either delay_seconds (relative) or at_time (absolute ISO datetime), not both.
+
+    Maximum delay: 24 hours. Use tag for easy listing/cancellation.'
+  handler: comms_schedule_future_prompt
+  module: comms_prompting
+  inputSchema:
+    type: object
+    properties:
+      target:
+        type: string
+        description: Target AI (same as send_prompt targets)
+        enum:
+        - claude-desktop
+        - claude-web
+        - claude-cli
+        - codex-cli
+        - gemini-cli
+        - chatgpt-web
+        - chatgpt-app
+      message:
+        type: string
+        description: Message to send at scheduled time
+      session:
+        type: string
+        description: Specific terminal session name to target (for CLI targets). If omitted, send_prompt.py
+          auto-discovers.
+      delay_seconds:
+        type: integer
+        description: Relative delay from now in seconds
+      at_time:
+        type: string
+        description: Absolute ISO datetime (e.g. 2026-03-18T15:30:00)
+      tag:
+        type: string
+        description: Label for listing/cancelling. Must be unique among pending prompts.
+    required:
+    - target
+    - message
+- name: comms_search_messages
+  description: Search all messages (inbox, broadcasts, and archive) for text in their content. Case-insensitive
+    substring match. Returns newest first.
+  handler: comms_search_messages
+  module: comms_messages
+  inputSchema:
+    type: object
+    properties:
+      query:
+        type: string
+        description: Text to search for in message content
+      limit:
+        type: integer
+        description: 'Maximum number of results to return (default: 20)'
+        default: 20
+    required:
+    - query
+- name: comms_send_prompt
+  description: 'Send a prompt to an AI target. THIS IS THE CORRECT WAY TO SEND PROMPTS.
+
+
+    DO NOT write your own terminal write scripts. They will fail due to timing issues.
+
+    This tool handles:
+
+    - Proper timing between text and Enter
+
+    - Verification that input was received
+
+    - Busy state detection
+
+    - Fallback options
+
+
+    Targets: claude-desktop, claude-web, claude-cli, codex-cli, gemini-cli, chatgpt-web, chatgpt-app'
+  handler: comms_send_prompt
+  module: comms_prompting
+  inputSchema:
+    type: object
+    properties:
+      target:
+        type: string
+        description: DEPRECATED (use `endpoint`). Target AI platform. Prefer endpoint=uai://session/<id>
+          (a session implies its platform).
+        enum:
+        - claude-desktop
+        - claude-web
+        - claude-cli
+        - codex-cli
+        - gemini-cli
+        - chatgpt-web
+        - chatgpt-app
+      message:
+        type: string
+        description: Message to send
+      submit:
+        type: boolean
+        description: 'Submit the message (press Enter). Default: true'
+        default: true
+      session:
+        type: string
+        description: DEPRECATED (encode in `endpoint`). Prefer endpoint=uai://session/<id> — the action-aware
+          resolver maps it to the terminal.
+      convo_id:
+        type: string
+        description: 'Conversation ID or URL. For web targets: chat URL. For claude-desktop: claude://
+          deep link or https://claude.ai/ URL (auto-converted to claude://). Opens specific conversation
+          before sending.'
+      fallback_queue:
+        type: boolean
+        description: Queue message if target is busy
+        default: false
+      force:
+        type: boolean
+        description: Bypass busy checks, send immediately
+        default: false
+      endpoint:
+        type: string
+        description: PREFERRED addressing. uai://session/<tracking_id> (canonical) or prompt://<target>/<terminal>.
+          Replaces the deprecated target+session params.
+      reply_to:
+        type:
+        - string
+        - 'null'
+        description: Optional. Parent message ID to thread this prompt under, OR null/'none' to start
+          a NEW conversation (requires subject). When provided with a concrete CLI 'session', the prompt
+          is ALSO recorded durably via the v2 send-prompt path so it does not evaporate.
+      subject:
+        type: string
+        description: Conversation subject for the durable record. Required when reply_to is null/'none'.
+          The sender is the trusted resolved session — do not pass it.
+    required:
+    - message
+- name: comms_send_slash_command
+  description: 'Send a slash command to a CLI session''s terminal.
+
+
+    Use this to send built-in CLI commands like /compact, /clear, /color, /rename,
+
+    /fast, /help, etc. to any session — including your own.
+
+
+    Internally constructs a send_prompt call. Accepts any session identifier:
+
+    - prompt:// URI (e.g. prompt://claude-cli/Relay) — preferred
+
+    - Tracking ID, CLI UUID (prefix OK), terminal session name, display name
+
+    - ''self'' — your own session, resolved via AI_TRACKING_ID
+
+
+    The command is automatically prefixed with ''/'' if not already present, and
+
+    Enter is pressed to submit it.'
+  handler: comms_send_slash_command
+  module: comms_prompting
+  inputSchema:
+    type: object
+    properties:
+      identifier:
+        type: string
+        description: 'Session to target: prompt:// URI (preferred), tracking ID, CLI UUID, terminal name,
+          display name, or ''self'''
+      command:
+        type: string
+        description: Slash command to send (e.g. '/compact', '/color cyan', 'compact'). Auto-prefixed
+          with '/' if missing.
+      authorization_token:
+        type: string
+        description: One-time authorization token for guarded commands (e.g. /compact). Provided by the
+          system when authorization is granted. Do not fabricate.
+    required:
+    - identifier
+    - command
+- name: comms_sweep_expired
+  description: Remove expired messages, queue entries, and standing messages. Also cleans delivered prompt
+    files older than 7 days.
+  handler: comms_sweep_expired
+  module: comms_messages
+  inputSchema:
+    type: object
+    properties:
+      dry_run:
+        type: boolean
+        description: Report only, don't delete
+        default: false
+- name: comms_test
+  description: Test comms server connectivity and configuration (prompting + messages)
+  handler: comms_test
+  module: comms_prompting
+  inputSchema:
+    type: object
+    properties: {}
+- name: comms_unblock_session
+  description: Lift a session's prompt block and release any held prompts (delivered on its next drain).
+  handler: comms_unblock_session
+  module: comms_prompting
+  inputSchema:
+    type: object
+    properties:
+      session:
+        type: string
+        description: Target session tracking id (or 'self')
+    required:
+    - session
+- name: comms_unlock_session
+  description: Unlock a conversation session
+  handler: comms_unlock_session
+  module: comms_messages
+  inputSchema:
+    type: object
+    properties:
+      session_id:
+        type: string
+        description: Session ID to unlock
+    required:
+    - session_id
+- name: comms_unregister_recipients
+  description: Delete a registered recipient set by its uai://<type>/<id> uri.
+  handler: comms_unregister_recipients
+  module: comms_recipients
+  inputSchema:
+    type: object
+    properties:
+      uri:
+        type: string
+        description: uai://<type>/<id> to remove
+    required:
+    - uri
+- name: comms_wait_response
+  description: 'Wait for a response pattern in a CLI session.
+
+
+    Use this after sending a prompt to wait for the actual response.
+
+    DO NOT just grep for keywords - this waits for state changes.'
+  handler: comms_wait_response
+  module: comms_prompting
+  inputSchema:
+    type: object
+    properties:
+      session:
+        type: string
+        description: Terminal session name
+      pattern:
+        type: string
+        description: Regex pattern to wait for in output
+      timeout:
+        type: integer
+        description: 'Timeout in seconds (default: 60)'
+        default: 60
+      poll_interval:
+        type: integer
+        description: 'Seconds between checks (default: 2)'
+        default: 2
+    required:
+    - session
+    - pattern

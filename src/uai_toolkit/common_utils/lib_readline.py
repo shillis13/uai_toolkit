@@ -117,7 +117,7 @@ def make_session_completer(limit: int = 50) -> Callable:
             sm_path = str(Path.home() / "Documents/AI/ai_root/ai_general/scripts/session_mgmt")
             if sm_path not in sys.path:
                 sys.path.insert(0, sm_path)
-            from session_store import SessionStore
+            from uai_toolkit.session_mgmt.session_store import SessionStore
             _store = SessionStore()
         except Exception:
             pass
