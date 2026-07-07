@@ -1,0 +1,107 @@
+metadata:
+  name: condensation-pipeline
+  version: 1.0.0
+  created: 2026-04-16
+  status: active
+  description: 'Orchestrate the full chat history condensation pipeline: check for
+    new exports, preprocess, condense via LLM, review quarantined items, and commit
+    results. Covers both single-file and batch condensation.
+
+    '
+trigger:
+  description: 'Use when processing new chat exports through the condensation pipeline,
+    when reviewing quarantined items, or when running batch condensation across multiple
+    conversations.
+
+    '
+  patterns:
+  - run the condensation pipeline
+  - condense chat histories
+  - process new exports
+  - review quarantine
+  - batch condensation
+  - pipeline check or maintenance
+context_files:
+  processes:
+  - ai_context_files/instructions/how_tos/playbooks/playbook_research_orchestration
+tools:
+  chat_pipeline:
+    description: Chat history processing stages
+    mcp_server: chat-pipeline
+    operations:
+    - pipeline_status: Check overall pipeline health and counts
+    - normalize: Preprocess raw exports into standard format
+    - chunk_file: Split large conversations into processable chunks
+    - prepare_for_condensation: Stage chunks for LLM condensation
+    - condense_history: Run LLM condensation on prepared chunks
+    - review_quarantine: List and assess quarantined items
+    - retry_quarantine: Re-attempt quarantined items
+    - get_pipeline_config: View pipeline configuration
+    - test: Verify MCP server connectivity
+workflow:
+  overview: 'The pipeline processes conversations from raw export through to condensed
+    semantic summaries. Stages: export → normalize → chunk → condense → review. Target:
+    70-90% token reduction while preserving key decisions, artifacts, and context.
+
+    '
+  decision_tree:
+  - question: Is this a routine pipeline check (daily/scheduled)?
+    true: Use the full pipeline run pattern
+    false: Identify which stage needs attention
+  - question: Are there quarantined items that need review?
+    true: Use the quarantine review pattern first
+    false: Proceed with normal pipeline run
+  - question: Is this a large batch (50+ conversations)?
+    true: Consider dispatching parallel workers via ai-comms skill
+    false: Run in-session
+  patterns:
+    full_pipeline_run:
+      name: Full Pipeline Run
+      description: Check for new exports and process them end-to-end
+      steps:
+      - '1. Status: chat-pipeline:pipeline_status to see what needs processing'
+      - '2. Normalize: chat-pipeline:normalize for any raw exports'
+      - '3. Chunk: chat-pipeline:chunk_file for any large conversations'
+      - '4. Prepare: chat-pipeline:prepare_for_condensation to stage chunks'
+      - '5. Condense: chat-pipeline:condense_history to run LLM condensation'
+      - '6. Review: Check results — verify quality, flag issues'
+      - '7. Commit: git add and commit processed files'
+    quarantine_review:
+      name: Quarantine Review
+      description: Assess and retry quarantined items
+      steps:
+      - '1. List: chat-pipeline:review_quarantine to see what''s stuck'
+      - '2. Assess: Read each quarantined item to understand why it failed'
+      - '3. Fix: Address the issue (malformed input, encoding, etc.)'
+      - '4. Retry: chat-pipeline:retry_quarantine for fixed items'
+      - '5. Escalate: Flag items that can''t be automatically fixed'
+    batch_condensation:
+      name: Batch Condensation
+      description: Process a large batch across multiple workers
+      steps:
+      - '1. Count: chat-pipeline:pipeline_status to determine batch size'
+      - '2. Partition: Divide work into chunks of 20-35 files per worker'
+      - '3. Dispatch: Use ai-comms skill to launch worker agents'
+      - '4. Monitor: Check each worker''s progress'
+      - '5. Collect: Verify all workers completed successfully'
+      - '6. Reconcile: Check for gaps or duplicates'
+      - '7. Commit: Bulk commit results'
+  guidelines:
+  - Always check pipeline_status first — know what needs work before acting
+  - Target 70-90% token reduction — anything less may need manual review
+  - 'Preserve: key decisions, code artifacts, action items, relationship context'
+  - 'Strip: tool call boilerplate, repeated greetings, verbose explanations'
+  - Quarantine items usually fail for encoding or format issues — check the raw file
+  - For batch work, Gemini workers are effective condensers (large context window)
+  anti_patterns:
+  - Don't condense without checking pipeline_status first
+  - Don't skip quarantine review — those items represent data loss if ignored
+  - Don't run single-threaded condensation on 100+ files — use batch workers
+  - Don't commit without spot-checking condensation quality
+_registry:
+  id: condensation_pipeline
+  name: condensation-pipeline
+  status: active
+  version: 1.0.0
+  created: '2026-04-16'
+  updated: '2026-04-16'

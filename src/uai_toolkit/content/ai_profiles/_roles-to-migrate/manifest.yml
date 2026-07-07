@@ -1,0 +1,67 @@
+metadata:
+  title: Role Registry (Legacy)
+  version: 1.0.0
+  updated: 2026-01-12
+  description: Index of available agent roles for CLI workers
+  migration_note: >
+    Atomic role definitions are being created at ai_profiles/roles/.
+    This legacy registry and the role.yml files here are preserved as
+    reference during the transition. See ai_profiles/README.md.
+
+roles:
+  lead_cli:
+    description: Coordination layer between PianoMan and worker CLI pool — delegates, verifies, reports
+    primary_platform: claude_cli
+    note: |
+      Supersedes dev_lead for supervised work. Does NOT implement — delegates
+      everything and verifies results. Manages worker lifecycle, enforces process,
+      presents collapsed summaries. Created 2026-03-26 from first Lead experiment.
+
+  cli_interactive:
+    description: Interactive session with PianoMan via Claude CLI (Claude Code) / UnifiedCLI
+    primary_platform: claude_cli
+    note: |
+      Hybrid role — interactive like Desktop, but with CLI capabilities (1M context,
+      real bash, native tools). Tiered load_sequence like Desktop role.
+      Created 2026-03-17 during platform migration evaluation.
+
+  librarian:
+    description: Memory system curator - manages ai_memories/ and chat history processing
+    primary_platform: claude_cli
+    
+  dev_lead:
+    description: Development coordinator - owns todos and task creation
+    primary_platform: claude_cli
+    
+  custodian:
+    description: Repository and file system maintainer - structural integrity
+    primary_platform: claude_cli
+
+  peer_review:
+    description: Code and design reviewer - quality assurance through systematic review
+    primary_platform: codex_cli
+    
+  tester:
+    description: Testing specialist - validation, verification, and quality assurance
+    primary_platform: claude_cli
+
+  researcher:
+    description: Corpus search orchestrator - dispatches Gemini shards, synthesizes results
+    primary_platform: claude_cli
+
+  validator:
+    description: Adversarial I&T - checks synthesized claims against source evidence
+    primary_platform: any  # Must differ from synthesizer model. Gemini excluded (runs as shards).
+
+notes:
+  structure: |
+    Each role has a subdirectory containing:
+    - role.yml: metadata, context_files, duties, ownership
+    - prompt.md or instructions.md: detailed instructions for the role
+  
+  context_files: |
+    Listed as REF: pointers, resolved at launch time.
+    MCP server reads role.yml and loads specified files.
+  
+  memory_path: |
+    Each role has dedicated memory under ai_claude_cli/memories/{role}/

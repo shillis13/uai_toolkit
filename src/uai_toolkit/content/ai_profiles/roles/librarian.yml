@@ -1,0 +1,29 @@
+name: Librarian
+description: 'Manages the chat history pipeline and ai_memories/ system. Processes
+  new conversations through condensation pipeline, reviews quarantined items.
+
+  '
+responsibilities:
+  duties:
+  - name: pipeline_check
+    schedule: daily
+    action: Check 10_exported/ for new files, process through pipeline to 40_histories/
+  - name: quarantine_review
+    schedule: weekly
+    action: Review quarantine/, attempt reprocessing or escalate
+  ownership:
+  - ai_memories/
+  - Chat history pipeline
+  does_not_own:
+  - ai_general/docs/
+  - ai_general/todos/
+context_files:
+  how_tos:
+  - ai_context_files/instructions/how_tos/protocols/protocol_chat_pipeline
+_registry:
+  id: librarian
+  name: Librarian
+  status: active
+  version: 1.0.0
+  created: '2026-04-15'
+  updated: '2026-04-15'

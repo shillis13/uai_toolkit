@@ -1,0 +1,147 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="bgM5" x1="0" y1="0" x2="0.5" y2="1">
+      <stop offset="0%" stop-color="#0a1628"/>
+      <stop offset="50%" stop-color="#0f1f3d"/>
+      <stop offset="100%" stop-color="#060d1a"/>
+    </linearGradient>
+    <radialGradient id="tipGlowM5" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0%" stop-color="#fef3c7" stop-opacity="0.85"/>
+      <stop offset="25%" stop-color="#fbbf24" stop-opacity="0.45"/>
+      <stop offset="60%" stop-color="#f59e0b" stop-opacity="0.12"/>
+      <stop offset="100%" stop-color="#f59e0b" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="ambientM5" cx="0.37" cy="0.33" r="0.5">
+      <stop offset="0%" stop-color="#1e3a6e" stop-opacity="0.28"/>
+      <stop offset="50%" stop-color="#142952" stop-opacity="0.1"/>
+      <stop offset="100%" stop-color="#060d1a" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="batonBodyM5" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#fef3c7"/>
+      <stop offset="25%" stop-color="#f59e0b"/>
+      <stop offset="65%" stop-color="#d97706"/>
+      <stop offset="100%" stop-color="#b45309"/>
+    </linearGradient>
+    <filter id="arcGlowM5" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="5" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="strongGlowM5" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="8" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="softM5">
+      <feGaussianBlur stdDeviation="16"/>
+    </filter>
+    <filter id="batonShadowM5">
+      <feGaussianBlur stdDeviation="6"/>
+    </filter>
+    <clipPath id="clipM5">
+      <rect x="12" y="12" width="1000" height="1000" rx="200" ry="200"/>
+    </clipPath>
+  </defs>
+
+  <!-- Background -->
+  <rect x="12" y="12" width="1000" height="1000" rx="200" ry="200" fill="url(#bgM5)"/>
+  <rect x="12" y="12" width="1000" height="1000" rx="200" ry="200" fill="url(#ambientM5)"/>
+
+  <g clip-path="url(#clipM5)">
+
+    <!-- ===== CONCENTRIC ARCS radiating from baton tip area (~370, 310) ===== -->
+
+    <!-- Arc 1 — innermost, warmest -->
+    <circle cx="370" cy="310" r="90" fill="none" stroke="#fde68a" stroke-width="4.5"
+            opacity="0.55" filter="url(#strongGlowM5)"/>
+
+    <!-- Arc 2 -->
+    <circle cx="370" cy="310" r="160" fill="none" stroke="#e2c97a" stroke-width="4"
+            opacity="0.4" filter="url(#arcGlowM5)"/>
+
+    <!-- Arc 3 -->
+    <circle cx="370" cy="310" r="240" fill="none" stroke="#b0c0d8" stroke-width="3.5"
+            opacity="0.28" filter="url(#arcGlowM5)"/>
+
+    <!-- Arc 4 -->
+    <circle cx="370" cy="310" r="330" fill="none" stroke="#90a8c4" stroke-width="2.5"
+            opacity="0.17" filter="url(#arcGlowM5)"/>
+
+    <!-- Arc 5 — outermost -->
+    <circle cx="370" cy="310" r="430" fill="none" stroke="#708ca8" stroke-width="2"
+            opacity="0.09" filter="url(#arcGlowM5)"/>
+
+    <!-- ===== AGENT DOTS — scattered across the arcs ===== -->
+
+    <!-- Inner orbit agents -->
+    <circle cx="250" cy="230" r="16" fill="#f97316" opacity="0.6"/>
+    <circle cx="250" cy="230" r="16" fill="none" stroke="#f97316" stroke-width="2" opacity="0.3"/>
+
+    <circle cx="490" cy="220" r="16" fill="#8b5cf6" opacity="0.6"/>
+    <circle cx="490" cy="220" r="16" fill="none" stroke="#8b5cf6" stroke-width="2" opacity="0.3"/>
+
+    <circle cx="230" cy="410" r="16" fill="#3b82f6" opacity="0.55"/>
+    <circle cx="230" cy="410" r="16" fill="none" stroke="#3b82f6" stroke-width="2" opacity="0.25"/>
+
+    <circle cx="500" cy="400" r="16" fill="#10b981" opacity="0.55"/>
+    <circle cx="500" cy="400" r="16" fill="none" stroke="#10b981" stroke-width="2" opacity="0.25"/>
+
+    <!-- Mid orbit agents -->
+    <circle cx="140" cy="310" r="13" fill="#ec4899" opacity="0.45"/>
+    <circle cx="140" cy="310" r="13" fill="none" stroke="#ec4899" stroke-width="2" opacity="0.2"/>
+
+    <circle cx="600" cy="310" r="13" fill="#f59e0b" opacity="0.45"/>
+    <circle cx="600" cy="310" r="13" fill="none" stroke="#f59e0b" stroke-width="2" opacity="0.2"/>
+
+    <circle cx="370" cy="540" r="13" fill="#06b6d4" opacity="0.4"/>
+    <circle cx="370" cy="540" r="13" fill="none" stroke="#06b6d4" stroke-width="2" opacity="0.2"/>
+
+    <circle cx="370" cy="80" r="13" fill="#6366f1" opacity="0.38"/>
+
+    <!-- Outer orbit agents — faint -->
+    <circle cx="100" cy="140" r="9" fill="#94a3b8" opacity="0.2"/>
+    <circle cx="660" cy="140" r="9" fill="#94a3b8" opacity="0.2"/>
+    <circle cx="100" cy="560" r="9" fill="#94a3b8" opacity="0.2"/>
+    <circle cx="700" cy="520" r="9" fill="#94a3b8" opacity="0.2"/>
+    <circle cx="370" cy="740" r="9" fill="#94a3b8" opacity="0.15"/>
+
+    <!-- ===== THE FLOATING BATON ===== -->
+    <!-- No grip emphasis. Clean, elegant, hovering. -->
+    <!-- Diagonal from upper-left (tip) to lower-right (tail) -->
+
+    <!-- Baton shadow — subtle, suggests floating above the surface -->
+    <line x1="280" y1="230" x2="720" y2="670"
+          stroke="#000000" stroke-width="14" stroke-linecap="round"
+          opacity="0.12" filter="url(#batonShadowM5)"
+          transform="translate(8, 10)"/>
+
+    <!-- Baton body — clean tapered line -->
+    <line x1="280" y1="230" x2="720" y2="670"
+          stroke="url(#batonBodyM5)" stroke-width="12" stroke-linecap="round"/>
+
+    <!-- Baton highlight -->
+    <line x1="285" y1="225" x2="715" y2="665"
+          stroke="#fef3c7" stroke-width="3" stroke-linecap="round" opacity="0.35"/>
+
+    <!-- Subtle taper — thin end (tail) gets a darker overlay -->
+    <line x1="580" y1="530" x2="720" y2="670"
+          stroke="#78350f" stroke-width="12" stroke-linecap="round" opacity="0.3"/>
+
+    <!-- ===== TIP — luminous, the source of orchestration ===== -->
+    <!-- Glow -->
+    <circle cx="370" cy="310" r="55" fill="url(#tipGlowM5)"/>
+
+    <!-- Tip bright point -->
+    <circle cx="282" cy="232" r="12" fill="#fbbf24" opacity="0.9"/>
+    <circle cx="282" cy="232" r="12" fill="none" stroke="#fef3c7" stroke-width="1.5" opacity="0.5"/>
+    <circle cx="280" cy="230" r="7" fill="#fef3c7" opacity="0.95"/>
+    <circle cx="279" cy="229" r="3.5" fill="#ffffff"/>
+
+    <!-- Sparkle particles near tip -->
+    <circle cx="264" cy="214" r="2.5" fill="#ffffff" opacity="0.65"/>
+    <circle cx="298" cy="222" r="2" fill="#ffffff" opacity="0.5"/>
+    <circle cx="272" cy="248" r="1.5" fill="#ffffff" opacity="0.4"/>
+
+    <!-- Tail end — simple, no grip, just fades -->
+    <circle cx="720" cy="670" r="6" fill="#78350f" opacity="0.5"/>
+
+  </g>
+</svg>

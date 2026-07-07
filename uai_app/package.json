@@ -1,0 +1,14 @@
+{
+  "name": "uai-monorepo",
+  "private": true,
+  "version": "0.1.0-spike",
+  "description": "UAI — Unified AI Interface monorepo",
+  "scripts": {
+    "lint:tokens": "node scripts/check-no-inline-hex.mjs"
+  },
+  "workspaces": [
+    "packages/shared",
+    "packages/renderer-ui",
+    "app"
+  ]
+}

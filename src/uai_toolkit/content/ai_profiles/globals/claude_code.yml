@@ -1,0 +1,71 @@
+name: Claude Code (CLI)
+description: 'Primary platform. 1M context, full bash filesystem access, native tools
+  (Read, Edit, Write, Grep, Glob, Bash, Agent), MCP servers, skills, plugins. User
+  approves tool calls via permission model.
+
+  '
+platform:
+  context_window: 1M tokens
+  bash: full filesystem access (no sandbox)
+  native_tools:
+  - Read
+  - Edit
+  - Write
+  - Grep
+  - Glob
+  - Bash
+  - Agent
+  mcp_tools: all configured MCP servers
+  permission_model: user approves tool calls
+skill_loading:
+  warning: >
+    Invoking a Skill loads its FULL bundled documentation into context. The
+    `claude-api` skill is ~600,000 chars (~175k tokens) and stays in your
+    context for the rest of the session once loaded.
+  rule: >
+    STRONGLY ADVISED: always invoke large skills — `claude-api` above all — from a
+    SUBAGENT (Agent tool), never the main session. The subagent absorbs the
+    ~600k-char skill body in its own throwaway context and returns just the answer,
+    keeping your main context clean. Loading it inline is one of the largest
+    avoidable single-shot context costs on this platform.
+context_files:
+  knowledge:
+  - path: ai_context_files/_drafts/platform_instructions/claude_cli/instr_cli_context_and_tools
+    purpose: CLI-specific context and tool usage rules
+  - path: ai_context_files/_drafts/platform_instructions/claude_cli/instr_cli_environment_overview
+    purpose: CLI platform capabilities — 1M context, full bash, native tools
+  processes:
+  - path: ai_context_files/_drafts/platform_instructions/claude_cli/instr_cli_delegation
+    purpose: CLI delegation patterns — direct execution default, Agent subagents for
+      parallel
+  procedures:
+  - path: ai_context_files/instructions/how_tos/instr_workstate_tracking
+    purpose: Session state tracking protocol
+session_identity:
+  naming: >
+    At session start, choose a short, descriptive name for yourself and a
+    color that feels right. Use prompting:rename_session with your tracking
+    ID (from $AI_TRACKING_ID or the <<<SESSION_IDENTITY>>> block):
+
+      prompting:rename_session(identifier="YOUR_TRACKING_ID", name="YourName", color="blue")
+
+    Colors: red, blue, green, yellow, purple, orange, pink, cyan, default.
+    Pick whatever you like — this is yours to decide.
+
+delivery:
+  mechanisms:
+  - claude_md
+  - skills
+  - mcp
+  - system_prompt_injection
+  notes: 'CLAUDE.md auto-loaded by Claude Code. Skills via plugin system. MCP via
+    .mcp.json at project root. System prompt via --append-system-prompt.
+
+    '
+_registry:
+  id: claude_code
+  name: Claude Code
+  status: active
+  version: 1.0.0
+  created: '2026-04-15'
+  updated: '2026-06-22'

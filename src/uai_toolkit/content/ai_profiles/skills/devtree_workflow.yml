@@ -1,0 +1,139 @@
+metadata:
+  name: devtree-workflow
+  version: 1.0.0
+  created: 2026-04-16
+  status: active
+  description: 'Workflow for using DevTree isolated development environments. DevTrees
+    are sparse git worktrees of ai_general that provide filesystem isolation so parallel
+    AI sessions cannot clobber each other''s changes. Full lifecycle: create, develop,
+    commit, push, PR, merge, destroy.
+
+    '
+trigger:
+  description: 'Use when you need to make code changes that should be isolated from
+    other sessions, when working on a feature that needs its own branch, or when multiple
+    agents will be editing files in parallel.
+
+    '
+  patterns:
+  - create a devtree
+  - work in isolation
+  - start a feature branch
+  - I need to edit code safely
+  - parallel development
+  - code changes that need review before merging
+context_files:
+  procedures:
+  - ai_context_files/instructions/rules/rules_file_conventions
+  - ai_context_files/instructions/rules/rules_development
+tools:
+  devtree:
+    description: DevTree lifecycle management
+    mcp_server: devtree
+    operations:
+    - create: Create a new devTree with sparse checkout + symlinks + data copy
+    - list: List active devTrees with branch, status, ahead/behind
+    - status: Detailed status of one devTree (disk, branch, symlink health)
+    - commit: Stage and commit changes (ONLY editable dirs — never git add -A)
+    - push: Push devTree branch to remote
+    - pr: Create GitHub PR from devTree branch
+    - refresh: Rebase or merge latest main into devTree
+    - merge: Merge devTree branch to main (local)
+    - destroy: Remove devTree (checks for uncommitted changes)
+    - test: Verify MCP server connectivity
+workflow:
+  overview: 'DevTrees provide filesystem isolation for code changes. Each devTree
+    is a sparse git worktree checking out only editable dirs (scripts/, apps/, projects/,
+    docs/). Shared dirs are symlinked to production. data/ is copied for runtime isolation.
+    AI_ROOT env var points to the devTree so all scripts resolve paths correctly.
+
+    '
+  lifecycle:
+    create:
+      name: Create a DevTree
+      when:
+      - You need to edit code (scripts, apps, projects, docs)
+      - Multiple agents may be working in parallel
+      - Changes need review before merging to main
+      steps:
+      - '1. Create: devtree:create with a descriptive --id (e.g., ''feature-auth-fix'')'
+      - '2. Verify: devtree:status to confirm sparse checkout, symlinks, data copy'
+      - 3. Note the devTree path — it becomes your working directory
+      notes:
+      - 'Branch naming: dev/<id> (automatic)'
+      - AI_ROOT is set in the devTree's settings.local.json
+      - Only scripts/, apps/, projects/, docs/ are checked out
+    develop:
+      name: Work in a DevTree
+      when:
+      - You have an active devTree and need to make changes
+      steps:
+      - 1. Make changes to files in the devTree
+      - '2. Commit frequently: devtree:commit with descriptive message'
+      - '3. Refresh periodically: devtree:refresh to stay current with main'
+      notes:
+      - NEVER use git add -A or git commit -a in a devTree — it stages symlinks as
+        deletions
+      - devtree:commit handles scoped staging automatically (only editable dirs)
+      - The worktree shows 1000+ dirty files in git status — this is expected (sparse
+        checkout)
+    review:
+      name: Get Changes Reviewed
+      when:
+      - Changes are ready for review before merging
+      steps:
+      - '1. Commit all changes: devtree:commit'
+      - '2. Push: devtree:push'
+      - '3. Create PR: devtree:pr with title and description'
+      - 4. Request review via ai-comms skill (launch peer_review agent)
+    merge:
+      name: Merge and Clean Up
+      when:
+      - PR approved or changes ready to merge
+      steps:
+      - '1. Refresh: devtree:refresh to incorporate latest main'
+      - 2. Resolve any conflicts
+      - '3. Merge: devtree:merge (or merge PR via GitHub)'
+      - '4. Destroy: devtree:destroy to clean up'
+      notes:
+      - data/ changes in devTree don't propagate — copy manually if needed
+      - devtree:merge warns about data/ diffs
+  critical_rules:
+  - rule: NEVER use git add -A or git commit -a in a devTree
+    why: Stages sparse-checkout-missing files as deletions. Caused production data
+      loss (sessions.db, session_metadata.json).
+    use_instead: devtree:commit (scoped staging to editable dirs only)
+  - rule: NEVER set AI_ROOT in production's settings.local.json to a devTree path
+    why: Causes all new sessions to use stale devTree paths for session_store, log
+      dirs, etc.
+  - rule: Do not symlink data/ — always copy
+    why: data/ contains mutable runtime state (sessions.db). Symlink allows devTree
+      to corrupt production.
+  - rule: Do not assume .git is a directory in worktrees
+    why: 'In git worktrees, .git is a file containing ''gitdir: /path/to/.git/worktrees/<name>'''
+  - rule: DevTree worktrees show 1000+ dirty files in git status — this is expected
+    why: Sparse checkout means tracked files in shared dirs don't exist in worktree.
+      Git reports them as deleted. Normal.
+  decision_tree:
+  - question: Am I editing code (scripts, apps, projects, docs)?
+    true: Create a devTree
+    false: No devTree needed — work directly in production
+  - question: Will other agents be editing code in parallel?
+    true: Each agent should have its own devTree
+    false: One devTree is sufficient
+  - question: Do changes need review before going to main?
+    true: Use the push → PR → review → merge flow
+    false: Use the local merge flow (devtree:merge)
+  anti_patterns:
+  - Don't create devTrees for read-only work (research, analysis, chat)
+  - Don't keep devTrees alive longer than needed — merge and destroy
+  - Don't manually run git commands in devTrees — use the MCP tools
+  - Don't edit shared dirs (config, roles, memories) expecting changes to persist
+    in devTree
+_registry:
+  id: devtree_workflow
+  name: devtree-workflow
+  status: active
+  version: 1.0.0
+  created: '2026-04-16'
+  updated: '2026-04-16'

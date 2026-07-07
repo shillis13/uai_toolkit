@@ -1,0 +1,44 @@
+# instr_writing_v1.0.condensed.yml
+metadata:
+  source: instr_writing_v1.0.md
+  version: "1.0"
+  condensed_by: librarian
+
+purpose: standards for documentation readability in plain text/monospace
+
+tables:
+  principle: markdown pipe tables render poorly in terminals; use ASCII box-drawing
+  when_ascii:
+    - terminal/text editor viewing
+    - task files for CLI agents
+    - files without markdown rendering
+    - log files and reports
+
+  bad_example: |
+    | Task | Command | Notes |
+    | --- | --- | --- |
+    | Item1 | value1 | note1 |
+    | Item2 | value2 | note2 |
+
+  good_example: |
+    +---------+---------+-------+
+    | Task    | Command | Notes |
+    +---------+---------+-------+
+    | Item1   | value1  | note1 |
+    +---------+---------+-------+
+    | Item2   | value2  | note2 |
+    +---------+---------+-------+
+
+  compact_variant: omit row separators except header
+
+  tools:
+    - vim TableMode plugin (:TableModeToggle)
+    - column -t -s'|' for quick alignment
+    - $HOME/bin/python/src/text_utils/md_table_reformat.py
+
+future_sections:
+  - heading hierarchy
+  - code block formatting
+  - list formatting
+  - line length limits
+  - file naming conventions

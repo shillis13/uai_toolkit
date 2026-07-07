@@ -1,0 +1,85 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ai_root/schemas/schema_chat_memory.json",
+  "title": "Chat Memory Digest Schema",
+  "description": "Schema for chat memory digest documents (memory_*.digest.md files)",
+  "type": "object",
+  "required": ["metadata", "table_of_contents", "sections"],
+  "properties": {
+    "metadata": {
+      "type": "object",
+      "required": ["title", "type", "topic", "status", "created", "last_updated", "source_file"],
+      "properties": {
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "type": {
+          "type": "string",
+          "const": "chat_memory"
+        },
+        "topic": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "type": "string"
+        },
+        "created": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}([ T][0-9]{2}:[0-9]{2}(:[0-9]{2})?)?$"
+        },
+        "last_updated": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}([ T][0-9]{2}:[0-9]{2}(:[0-9]{2})?)?$"
+        },
+        "maintainer": {
+          "type": "string"
+        },
+        "source_file": {
+          "type": "string",
+          "minLength": 1
+        },
+        "related_chats": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Chat URLs or IDs"
+        }
+      }
+    },
+    "table_of_contents": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["section", "key"],
+        "properties": {
+          "section": {"type": "string"},
+          "key": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]*$"
+          },
+          "subsections": {
+            "type": "array",
+            "items": {"type": "string"}
+          }
+        }
+      }
+    },
+    "sections": {
+      "type": "object",
+      "minProperties": 1,
+      "patternProperties": {
+        "^[a-z][a-z0-9_]*$": {
+          "type": "object",
+          "required": ["heading", "content"],
+          "properties": {
+            "heading": {"type": "string"},
+            "content": {"type": "string"}
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

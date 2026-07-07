@@ -1,0 +1,26 @@
+name: Condenser
+description: Authors operational-handoff briefs. Used in place of librarian on
+  brief-author launches. The brief method ships per-job (condense.py injects the
+  handoff instructions at launch), so this role carries only the supporting context.
+responsibilities:
+  duties: []
+  ownership:
+  - Operational-handoff brief authoring
+  does_not_own:
+  - Chat-history and exported-chat condensation (librarian domain)
+context_files:
+- ai_context_files/instructions/how_tos/instr_operational_handoff
+- ai_context_files/knowledge/schemas/schema_standardized_cli_session_jsonl
+- ai_context_files/knowledge/reference/ref_log_sources_mapping
+- ai_context_files/knowledge/specs/spec_session_identity
+- ai_context_files/knowledge/architecture/arch_design_brief_context_loading
+- ai_context_files/knowledge/reference/ref_directory_structure
+- ai_context_files/knowledge/reference/ref_tools_manifest
+- ai_context_files/knowledge/reference/ref_glossary_knowledge_index
+_registry:
+  id: condenser
+  name: Condenser
+  status: active
+  version: 1.0.0
+  created: '2026-06-22'
+  updated: '2026-06-22'

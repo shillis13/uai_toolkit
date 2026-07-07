@@ -1,0 +1,148 @@
+metadata:
+  title: Playbook Schema Definition
+  version: 1.0.0
+  created: 2026-01-12
+  maintainer: PianoMan
+  status: active
+  description: Schema for multi-phase orchestration playbooks
+schema:
+  name:
+    type: string
+    required: true
+    description: Unique playbook identifier (snake_case)
+    example: mid_dev
+  description:
+    type: string
+    required: true
+    description: Human-readable purpose
+  version:
+    type: string
+    required: true
+    description: Semver version
+    example: 1.0.0
+  platforms:
+    type: array
+    required: true
+    description: Compatible AI platforms
+    items:
+    - claude_cli
+    - gemini_cli
+    - codex_cli
+    - claude_desktop
+  inputs:
+    type: object
+    required: true
+    description: Required and optional parameters
+    structure:
+      <param_name>:
+        type: string|path|enum|array
+        required: boolean
+        description: string
+        default: any (optional)
+        options: array (for enum type)
+  defaults:
+    type: object
+    required: false
+    description: Default values for optional inputs
+  phases:
+    type: array
+    required: true
+    description: Ordered execution phases
+    items:
+      name:
+        type: string
+        required: true
+        description: Phase identifier
+      description:
+        type: string
+        required: true
+      role:
+        type: string
+        required: true
+        description: Agent role for this phase
+        options:
+        - dev-lead
+        - devops
+        - custodian
+        - librarian
+        - default
+      requires:
+        type: array
+        required: false
+        description: Phase names that must complete first
+      gate:
+        type: object
+        required: false
+        description: Approval gate configuration
+        structure:
+          type:
+          - peer_review
+          - user_approval
+          - auto
+          reviewers: array (platforms or roles)
+      template:
+        type: string
+        required: true
+        description: Task template filename
+      outputs:
+        type: array
+        required: false
+        description: Expected output artifacts
+  completion:
+    type: object
+    required: false
+    description: Final actions after all phases
+    structure:
+      notify: array (platforms to notify)
+      artifacts: array (final deliverables)
+      cleanup: boolean
+example:
+  name: mid_dev
+  description: Mid-sized development with design, implementation, and review cycles
+  version: 1.0.0
+  platforms:
+  - claude_cli
+  - gemini_cli
+  - codex_cli
+  inputs:
+    target:
+      type: string
+      required: true
+      description: What to build
+    scope:
+      type: enum
+      required: false
+      options:
+      - api
+      - ui
+      - integration
+      - full
+      default: full
+  phases:
+  - name: planning
+    description: Create orchestration plan
+    role: dev-lead
+    template: planning.template.md
+    gate:
+      type: user_approval
+    outputs:
+    - orchestration_plan.md
+  - name: design
+    description: Architecture and UX design
+    role: dev-lead
+    requires:
+    - planning
+    template: design.template.md
+    gate:
+      type: peer_review
+      reviewers:
+      - codex_cli
+    outputs:
+    - design_doc.md
+_registry:
+  id: schema_playbook
+  name: Playbook Schema Definition
+  status: active
+  version: 1.0.0
+  created: '2026-01-12'
+  updated: '2026-04-15'

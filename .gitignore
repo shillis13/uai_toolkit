@@ -46,3 +46,13 @@ config.toml
 # Materialize sidecars — transient source snapshots of curated files for manual
 # diff/merge review (tools/materialize.py). Not shipped, not committed.
 *.materialized
+
+# Vendored UAI app (uai_app/) — source is committed; deps + build outputs are
+# restored on the target via `npm ci` + build, never committed.
+uai_app/node_modules/
+uai_app/**/node_modules/
+uai_app/**/.vite/
+uai_app/**/dist/
+uai_app/**/out/
+uai_app/**/UAI.app/
+uai_app/**/*.tsbuildinfo

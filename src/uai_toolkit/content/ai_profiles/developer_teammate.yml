@@ -1,0 +1,17 @@
+name: Developer Teammate
+description: 'A developer working as part of a team with coordination responsibilities.
+  Can receive delegated work, coordinate with peers, and communicate status.
+
+  '
+roles:
+- ai_profiles/roles/assistant
+- ai_profiles/roles/worker
+- ai_profiles/roles/dev
+- ai_profiles/roles/team_member
+_registry:
+  id: developer_teammate
+  name: Developer Teammate
+  status: active
+  version: 1.0.0
+  created: '2026-04-15'
+  updated: '2026-04-15'

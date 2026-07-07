@@ -1,0 +1,16 @@
+name: Tester
+description: 'A testing agent. Executes tests, reports results, identifies defects.
+  Can work as part of a team or independently.
+
+  '
+roles:
+- ai_profiles/roles/assistant
+- ai_profiles/roles/worker
+- ai_profiles/roles/tester
+_registry:
+  id: tester_profile
+  name: Tester Profile
+  status: active
+  version: 1.0.0
+  created: '2026-04-15'
+  updated: '2026-04-15'

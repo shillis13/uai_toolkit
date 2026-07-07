@@ -1,0 +1,100 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="bgF" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0f172a"/>
+      <stop offset="100%" stop-color="#020617"/>
+    </linearGradient>
+    <linearGradient id="facetLeft" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#fb923c"/>
+      <stop offset="100%" stop-color="#dc2626"/>
+    </linearGradient>
+    <linearGradient id="facetRight" x1="1" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#3b82f6"/>
+      <stop offset="100%" stop-color="#1d4ed8"/>
+    </linearGradient>
+    <linearGradient id="facetTop" x1="0.5" y1="0" x2="0.5" y2="1">
+      <stop offset="0%" stop-color="#e2e8f0"/>
+      <stop offset="100%" stop-color="#94a3b8"/>
+    </linearGradient>
+    <linearGradient id="facetCenter" x1="0.5" y1="0" x2="0.5" y2="1">
+      <stop offset="0%" stop-color="#a78bfa"/>
+      <stop offset="100%" stop-color="#7c3aed"/>
+    </linearGradient>
+    <linearGradient id="facetBottomL" x1="0" y1="0" x2="0.5" y2="1">
+      <stop offset="0%" stop-color="#f97316"/>
+      <stop offset="100%" stop-color="#b45309"/>
+    </linearGradient>
+    <linearGradient id="facetBottomR" x1="1" y1="0" x2="0.5" y2="1">
+      <stop offset="0%" stop-color="#2563eb"/>
+      <stop offset="100%" stop-color="#1e3a8a"/>
+    </linearGradient>
+    <filter id="gemGlow">
+      <feGaussianBlur stdDeviation="35"/>
+    </filter>
+    <filter id="edgeGlow">
+      <feGaussianBlur stdDeviation="4"/>
+    </filter>
+  </defs>
+
+  <!-- Background — very dark -->
+  <rect x="12" y="12" width="1000" height="1000" rx="200" ry="200" fill="url(#bgF)" stroke="#1e293b" stroke-width="2"/>
+
+  <!-- Gem background glow -->
+  <polygon points="512,140 820,380 740,780 284,780 204,380"
+           fill="#a78bfa" opacity="0.06" filter="url(#gemGlow)"/>
+
+  <!-- ===== THE GEM — top-down view of a brilliant-cut gemstone ===== -->
+  <!-- Pentagon silhouette, faceted interior -->
+
+  <!-- Crown facets (top portion) -->
+  <!-- Top-left facet — warm orange -->
+  <polygon points="512,140 204,380 380,440 512,320"
+           fill="url(#facetLeft)" opacity="0.9"/>
+
+  <!-- Top-right facet — cool blue -->
+  <polygon points="512,140 820,380 644,440 512,320"
+           fill="url(#facetRight)" opacity="0.9"/>
+
+  <!-- Table (center top) — bright, reflective -->
+  <polygon points="380,440 644,440 512,320"
+           fill="url(#facetTop)" opacity="0.85"/>
+
+  <!-- Center/pavilion — purple, the gem's heart -->
+  <polygon points="380,440 644,440 620,580 404,580"
+           fill="url(#facetCenter)" opacity="0.85"/>
+
+  <!-- Lower-left pavilion -->
+  <polygon points="204,380 380,440 404,580 284,780"
+           fill="url(#facetBottomL)" opacity="0.75"/>
+
+  <!-- Lower-right pavilion -->
+  <polygon points="820,380 644,440 620,580 740,780"
+           fill="url(#facetBottomR)" opacity="0.75"/>
+
+  <!-- Bottom pavilion — deep purple/dark -->
+  <polygon points="404,580 620,580 740,780 284,780"
+           fill="#4c1d95" opacity="0.7"/>
+
+  <!-- ===== FACET EDGES — bright lines ===== -->
+  <!-- Outer edges -->
+  <polygon points="512,140 820,380 740,780 284,780 204,380"
+           fill="none" stroke="#e2e8f0" stroke-width="3" opacity="0.4"/>
+  <!-- Internal edges -->
+  <line x1="512" y1="140" x2="512" y2="320" stroke="#ffffff" stroke-width="2" opacity="0.3"/>
+  <line x1="204" y1="380" x2="380" y2="440" stroke="#ffffff" stroke-width="2" opacity="0.25"/>
+  <line x1="820" y1="380" x2="644" y2="440" stroke="#ffffff" stroke-width="2" opacity="0.25"/>
+  <line x1="380" y1="440" x2="644" y2="440" stroke="#ffffff" stroke-width="2" opacity="0.35"/>
+  <line x1="380" y1="440" x2="404" y2="580" stroke="#ffffff" stroke-width="2" opacity="0.2"/>
+  <line x1="644" y1="440" x2="620" y2="580" stroke="#ffffff" stroke-width="2" opacity="0.2"/>
+  <line x1="404" y1="580" x2="620" y2="580" stroke="#ffffff" stroke-width="2" opacity="0.2"/>
+  <line x1="404" y1="580" x2="284" y2="780" stroke="#ffffff" stroke-width="2" opacity="0.15"/>
+  <line x1="620" y1="580" x2="740" y2="780" stroke="#ffffff" stroke-width="2" opacity="0.15"/>
+
+  <!-- Highlight flash across table facet -->
+  <polygon points="420,410 560,360 600,430 440,450"
+           fill="#ffffff" opacity="0.2"/>
+
+  <!-- Bright point at apex -->
+  <circle cx="512" cy="140" r="8" fill="#ffffff" opacity="0.8"/>
+  <circle cx="512" cy="140" r="20" fill="#ffffff" opacity="0.15" filter="url(#edgeGlow)"/>
+</svg>

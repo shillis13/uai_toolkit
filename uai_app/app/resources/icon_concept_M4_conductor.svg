@@ -1,0 +1,142 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="bgM4" x1="0" y1="0" x2="0.5" y2="1">
+      <stop offset="0%" stop-color="#0a1628"/>
+      <stop offset="50%" stop-color="#0f1f3d"/>
+      <stop offset="100%" stop-color="#060d1a"/>
+    </linearGradient>
+    <radialGradient id="tipGlowM4" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0%" stop-color="#fef3c7" stop-opacity="0.85"/>
+      <stop offset="30%" stop-color="#fbbf24" stop-opacity="0.4"/>
+      <stop offset="70%" stop-color="#f59e0b" stop-opacity="0.1"/>
+      <stop offset="100%" stop-color="#f59e0b" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="ambientM4" cx="0.38" cy="0.28" r="0.45">
+      <stop offset="0%" stop-color="#1e3a6e" stop-opacity="0.25"/>
+      <stop offset="50%" stop-color="#142952" stop-opacity="0.08"/>
+      <stop offset="100%" stop-color="#060d1a" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="shaftM4" x1="0.5" y1="0" x2="0.5" y2="1">
+      <stop offset="0%" stop-color="#92400e"/>
+      <stop offset="30%" stop-color="#d97706"/>
+      <stop offset="70%" stop-color="#f59e0b"/>
+      <stop offset="100%" stop-color="#fef3c7"/>
+    </linearGradient>
+    <filter id="arcGlowM4" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="5" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="strongGlowM4" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="7" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="softM4">
+      <feGaussianBlur stdDeviation="18"/>
+    </filter>
+    <clipPath id="clipM4">
+      <rect x="12" y="12" width="1000" height="1000" rx="200" ry="200"/>
+    </clipPath>
+  </defs>
+
+  <!-- Background -->
+  <rect x="12" y="12" width="1000" height="1000" rx="200" ry="200" fill="url(#bgM4)"/>
+  <rect x="12" y="12" width="1000" height="1000" rx="200" ry="200" fill="url(#ambientM4)"/>
+
+  <g clip-path="url(#clipM4)">
+
+    <!-- ===== CONCENTRIC ARCS from the tip (far point, upper-left area) ===== -->
+    <!-- Tip is at roughly (340, 280) — arcs radiate from there -->
+
+    <!-- Arc 1 — innermost, warmest -->
+    <circle cx="340" cy="280" r="80" fill="none" stroke="#fde68a" stroke-width="4"
+            opacity="0.6" filter="url(#strongGlowM4)"/>
+
+    <!-- Arc 2 -->
+    <circle cx="340" cy="280" r="145" fill="none" stroke="#e2c97a" stroke-width="3.5"
+            opacity="0.45" filter="url(#arcGlowM4)"/>
+
+    <!-- Arc 3 -->
+    <circle cx="340" cy="280" r="220" fill="none" stroke="#b0c0d8" stroke-width="3"
+            opacity="0.3" filter="url(#arcGlowM4)"/>
+
+    <!-- Arc 4 -->
+    <circle cx="340" cy="280" r="310" fill="none" stroke="#90a8c4" stroke-width="2.5"
+            opacity="0.18" filter="url(#arcGlowM4)"/>
+
+    <!-- Arc 5 — outermost -->
+    <circle cx="340" cy="280" r="410" fill="none" stroke="#708ca8" stroke-width="2"
+            opacity="0.1" filter="url(#arcGlowM4)"/>
+
+    <!-- ===== AGENT DOTS — scattered around the tip, in the field of influence ===== -->
+
+    <!-- Near agents — on inner arcs, larger -->
+    <circle cx="220" cy="210" r="15" fill="#f97316" opacity="0.6"/>
+    <circle cx="220" cy="210" r="15" fill="none" stroke="#f97316" stroke-width="2" opacity="0.3"/>
+
+    <circle cx="460" cy="190" r="15" fill="#8b5cf6" opacity="0.6"/>
+    <circle cx="460" cy="190" r="15" fill="none" stroke="#8b5cf6" stroke-width="2" opacity="0.3"/>
+
+    <circle cx="200" cy="380" r="15" fill="#3b82f6" opacity="0.55"/>
+    <circle cx="200" cy="380" r="15" fill="none" stroke="#3b82f6" stroke-width="2" opacity="0.3"/>
+
+    <circle cx="460" cy="370" r="15" fill="#10b981" opacity="0.55"/>
+    <circle cx="460" cy="370" r="15" fill="none" stroke="#10b981" stroke-width="2" opacity="0.3"/>
+
+    <!-- Mid agents — on arc 3-4 -->
+    <circle cx="120" cy="280" r="12" fill="#ec4899" opacity="0.45"/>
+    <circle cx="120" cy="280" r="12" fill="none" stroke="#ec4899" stroke-width="2" opacity="0.2"/>
+
+    <circle cx="560" cy="280" r="12" fill="#f59e0b" opacity="0.45"/>
+    <circle cx="560" cy="280" r="12" fill="none" stroke="#f59e0b" stroke-width="2" opacity="0.2"/>
+
+    <circle cx="340" cy="500" r="12" fill="#06b6d4" opacity="0.4"/>
+    <circle cx="340" cy="500" r="12" fill="none" stroke="#06b6d4" stroke-width="2" opacity="0.2"/>
+
+    <circle cx="340" cy="60" r="12" fill="#6366f1" opacity="0.4"/>
+
+    <!-- Far agents — on outer arcs, smallest -->
+    <circle cx="100" cy="120" r="8" fill="#a3a3a3" opacity="0.2"/>
+    <circle cx="620" cy="120" r="8" fill="#a3a3a3" opacity="0.2"/>
+    <circle cx="80" cy="520" r="8" fill="#a3a3a3" opacity="0.2"/>
+    <circle cx="640" cy="480" r="8" fill="#a3a3a3" opacity="0.2"/>
+
+    <!-- ===== THE BATON — grip close (large, bottom-right), tip far (small, upper-left) ===== -->
+
+    <!-- Shaft shadow -->
+    <polygon points="345,285 700,780 712,770 355,275"
+             fill="#000000" opacity="0.15" filter="url(#softM4)"/>
+
+    <!-- Shaft body — wide at grip (bottom), narrow at tip (top) -->
+    <polygon points="338,276 348,268 714,774 700,784"
+             fill="url(#shaftM4)"/>
+
+    <!-- Shaft highlight edge -->
+    <line x1="342" y1="272" x2="708" y2="778"
+          stroke="#fef3c7" stroke-width="2.5" opacity="0.3"/>
+
+    <!-- ===== GRIP — large, close to viewer (bottom-right) ===== -->
+    <circle cx="707" cy="779" r="22" fill="#92400e"/>
+    <circle cx="707" cy="779" r="18" fill="#b45309" opacity="0.7"/>
+    <circle cx="707" cy="779" r="22" fill="none" stroke="#d97706" stroke-width="3"/>
+    <!-- Grip detail ring -->
+    <circle cx="707" cy="779" r="12" fill="none" stroke="#78350f" stroke-width="2" opacity="0.5"/>
+
+    <!-- ===== TIP — small, bright, far away (upper-left) ===== -->
+    <!-- Glow -->
+    <circle cx="340" cy="280" r="50" fill="url(#tipGlowM4)"/>
+
+    <!-- Tip body -->
+    <circle cx="340" cy="278" r="14" fill="#fbbf24" opacity="0.9"/>
+    <circle cx="340" cy="278" r="14" fill="none" stroke="#fef3c7" stroke-width="1.5" opacity="0.5"/>
+
+    <!-- Bright center -->
+    <circle cx="338" cy="276" r="7" fill="#fef3c7" opacity="0.95"/>
+    <circle cx="337" cy="275" r="3.5" fill="#ffffff"/>
+
+    <!-- Sparkle particles near tip -->
+    <circle cx="322" cy="262" r="2.5" fill="#ffffff" opacity="0.6"/>
+    <circle cx="358" cy="268" r="2" fill="#ffffff" opacity="0.5"/>
+    <circle cx="332" cy="298" r="1.5" fill="#ffffff" opacity="0.4"/>
+
+  </g>
+</svg>

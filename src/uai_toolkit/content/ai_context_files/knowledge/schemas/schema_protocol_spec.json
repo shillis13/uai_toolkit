@@ -1,0 +1,102 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ai_root/schemas/schema_protocol_spec.json",
+  "title": "Protocol/Specification Schema",
+  "description": "Schema for protocol and specification documents (protocol_*.md, spec_*.md files)",
+  "type": "object",
+  "required": ["metadata", "table_of_contents", "sections"],
+  "properties": {
+    "metadata": {
+      "type": "object",
+      "required": ["title", "type", "status", "created", "last_updated", "source_file"],
+      "properties": {
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "type": {
+          "type": "string",
+          "enum": ["protocol", "spec"]
+        },
+        "version": {
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+          "description": "Version number (often present in protocols)"
+        },
+        "status": {
+          "type": "string",
+          "description": "e.g., draft, active, deprecated"
+        },
+        "created": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}([ T][0-9]{2}:[0-9]{2}(:[0-9]{2})?)?$"
+        },
+        "last_updated": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}([ T][0-9]{2}:[0-9]{2}(:[0-9]{2})?)?$"
+        },
+        "primary_location": {
+          "type": "string",
+          "description": "Primary file location for this protocol/spec"
+        },
+        "maintainer": {
+          "type": "string"
+        },
+        "source_file": {
+          "type": "string",
+          "minLength": 1
+        },
+        "migration_notes": {
+          "type": "string",
+          "description": "Notes about migration from previous versions"
+        }
+      }
+    },
+    "table_of_contents": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["section", "key"],
+        "properties": {
+          "section": {"type": "string"},
+          "key": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]*$"
+          },
+          "subsections": {
+            "type": "array",
+            "items": {"type": "string"}
+          }
+        }
+      }
+    },
+    "sections": {
+      "type": "object",
+      "minProperties": 1,
+      "patternProperties": {
+        "^[a-z][a-z0-9_]*$": {
+          "type": "object",
+          "required": ["heading", "content"],
+          "properties": {
+            "heading": {"type": "string"},
+            "content": {"type": "string"}
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "revision_history": {
+      "type": "array",
+      "description": "Version history (common in protocols)",
+      "items": {
+        "type": "object",
+        "properties": {
+          "version": {"type": "string"},
+          "date": {"type": "string"},
+          "changes": {"type": "string"}
+        }
+      }
+    }
+  }
+}

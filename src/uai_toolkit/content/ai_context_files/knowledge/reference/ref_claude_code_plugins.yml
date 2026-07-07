@@ -1,0 +1,134 @@
+metadata:
+  title: Claude Code Plugin System Reference
+  version: 1.0.0
+  created: 2026-01-06
+  maintainer: PianoMan
+  status: active
+  audience: all_claude_instances
+  load_priority: topic
+  triggers:
+  - claude code plugins
+  - plugin marketplace
+  - /plugin
+  - claude plugin
+  - install plugin
+summary: "Claude Code has a plugin ecosystem for extending functionality with commands,\n\
+  agents, skills, and MCP servers. This doc covers CLI usage, available \nmarketplaces,\
+  \ and installed plugins.\n"
+key_discovery: "CRITICAL: Two ways to manage plugins:\n1. REPL commands: /plugin (only\
+  \ inside running claude session)\n2. CLI subcommands: claude plugin (works from\
+  \ shell, scriptable)\n\nWhen automating via tmux/scripts, USE CLI SUBCOMMANDS. The\
+  \ REPL /plugin \ncommands fail with tmux send-keys due to multiline input mode stacking.\n"
+cli_commands:
+  marketplace:
+    list: claude plugin marketplace list
+    add: claude plugin marketplace add <owner/repo>
+    remove: claude plugin marketplace remove <name>
+    update: claude plugin marketplace update [name]
+  plugins:
+    install: claude plugin install <plugin>@<marketplace>
+    uninstall: claude plugin uninstall <plugin>
+    enable: claude plugin enable <plugin>
+    disable: claude plugin disable <plugin>
+    update: claude plugin update <plugin>
+    validate: claude plugin validate <path>
+marketplaces_configured:
+  claude-plugins-official:
+    repo: anthropics/claude-plugins-official
+    contents: Official LSP plugins (typescript, python, etc)
+    auto_update: true
+  claude-code-plugins:
+    repo: anthropics/claude-code
+    contents: Demo plugins - feature-dev, security-guidance, commit-commands, frontend-design
+    auto_update: true
+  cc-marketplace:
+    repo: ananddtyagi/cc-marketplace
+    contents: 100+ community plugins - ultrathink, update-claudemd, documentation-generator,
+      etc
+    homepage: https://claudecodecommands.directory
+  superpowers-marketplace:
+    repo: obra/superpowers-marketplace
+    contents: obra's curated plugins - superpowers core, episodic-memory, double-shot-latte
+    notable: superpowers plugin contains 20+ skills bundled together
+plugins_installed:
+  superpowers:
+    source: superpowers-marketplace
+    purpose: Core skills library
+    includes:
+    - test-driven-development
+    - systematic-debugging
+    - using-git-worktrees
+    - finishing-a-development-branch
+    - brainstorming (/brainstorm command)
+    - write-plan (/write-plan command)
+    - execute-plan (/execute-plan command)
+  episodic-memory:
+    source: superpowers-marketplace
+    purpose: Semantic search across past Claude Code conversations
+    use_case: Remember what we discussed about X last week
+  double-shot-latte:
+    source: superpowers-marketplace
+    purpose: Auto-continues work instead of asking "Would you like me to continue?"
+  ultrathink:
+    source: cc-marketplace
+    purpose: Multi-agent task decomposition
+    agents:
+    - Architect
+    - Research
+    - Coder
+    - Tester
+    usage: /ultrathink <task description>
+  update-claudemd:
+    source: cc-marketplace
+    purpose: Auto-updates CLAUDE.md from code changes
+  security-guidance:
+    source: claude-code-plugins
+    purpose: Warns about security issues when editing files
+  commit-commands:
+    source: claude-code-plugins
+    purpose: Git workflow automation
+filesystem_locations:
+  plugin_cache: ~/.claude/plugins/cache/<marketplace>/<plugin>/
+  marketplace_clones: ~/.claude/plugins/marketplaces/<marketplace>/
+  config: ~/.claude.json (plugins section)
+usage_patterns:
+  install_from_marketplace: '# Add marketplace first (if not already added)
+
+    claude plugin marketplace add owner/repo
+
+    # Then install plugin
+
+    claude plugin install pluginname@marketplacename
+
+    '
+  browse_available: '# List marketplace contents
+
+    ls ~/.claude/plugins/marketplaces/<name>/plugins/
+
+    # Or check marketplace.json
+
+    cat ~/.claude/plugins/marketplaces/<name>/.claude-plugin/marketplace.json
+
+    '
+automation_notes: 'For scripted/automated plugin management:
+
+  - DO use: claude plugin CLI subcommands
+
+  - DON''T use: tmux send-keys to /plugin REPL commands
+
+  - Reason: Claude Code TUI multiline mode causes command stacking
+
+
+  After installing plugins, restart Claude Code to activate.
+
+  '
+related_docs:
+- ai_claude/logs/claude_code_plugins_installed.yml (installation record)
+- ai_claude/logs/plugin_install_debug.yml (debugging notes)
+_registry:
+  id: claude_code_plugins_reference
+  name: Claude Code Plugin System Reference
+  status: active
+  version: 1.0.0
+  created: '2026-01-06'
+  updated: '2026-04-15'

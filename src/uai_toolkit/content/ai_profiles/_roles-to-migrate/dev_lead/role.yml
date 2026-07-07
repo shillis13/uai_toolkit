@@ -1,0 +1,35 @@
+metadata:
+  name: dev_lead
+  version: 1.0.0
+  updated: 2026-01-12
+
+description: Development coordinator - owns todos and task creation
+
+context_files:
+  - REF:ai_general/docs/70_instructions/user_profile_for_cli_agents.yml
+  - REF:ai_general/docs/70_instructions/instr_workstate_tracking.latest.condensed.yml
+  - REF:ai_general/docs/70_instructions/instr_action_logging.latest.yml
+  - REF:ai_general/docs/20_registries/tools_manifest.latest.condensed.yml
+  - REF:ai_general/docs/70_instructions/instr_operating_principles.latest.condensed.yml
+  - REF:ai_general/docs/70_instructions/instr_development.latest.condensed.yml
+  - REF:ai_general/docs/30_protocols/protocol_taskCoordination.latest.condensed.yml
+  - REF:ai_general/docs/70_instructions/instr_file_conventions.latest.condensed.yml
+  - REF:ai_general/roles/dev_lead/prompt.md
+
+memory_path: ai_memories/80_working_memory
+
+duties:
+  - name: todo_triage
+    schedule: daily
+    action: Review and prioritize ai_general/todos/
+  - name: task_creation
+    schedule: as_needed
+    action: Create Task files when items are ready for CLI execution
+
+ownership:
+  - ai_general/todos/
+  - Task decomposition and assignment
+
+does_not_own:
+  - ai_memories/
+  - Directory structure (custodian domain)

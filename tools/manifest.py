@@ -25,7 +25,33 @@ SOURCE_ROOTS = {
     "ai": "~/bin/ai",                                  # symlink -> ai_general/scripts
     "pylib": "~/bin/all_languages/python/src",
     "mcps": "~/AI/ai_root/ai_general/apps/mcps",
+    "aigen": "~/AI/ai_root/ai_general",                # for shippable content corpora
 }
+
+# Content trees vendored into the package as data (shipped, then copied into
+# AI_ROOT by `uai-toolkit install`). Text files (.md/.yml/.yaml/...) are scrubbed;
+# EXCLUDES prune scratch/archive/binary noise. Dest is under src/uai_toolkit/.
+CONTENT = [
+    {"dest": "content/ai_context_files", "source": "aigen:ai_context_files"},  # knowledge base (~4.7M)
+    {"dest": "content/ai_profiles",      "source": "aigen:ai_profiles"},       # composition layer (~328K)
+]
+CONTENT_EXCLUDE_DIRS = {"__pycache__", ".obsidian", ".claude", "node_modules", ".venv",
+                        "versions", ".drafts", "_archive", "_backups", ".git"}
+CONTENT_EXCLUDE_DIR_PREFIXES = ("_archive", "_backup")
+CONTENT_EXCLUDE_FILES = {".DS_Store"}
+CONTENT_TEXT_SUFFIXES = {".md", ".yml", ".yaml", ".txt", ".json", ".toml", ".sql"}
+
+# App trees vendored as SIBLINGS of src/ (repo-root dest, git-tracked, NOT Python
+# package-data). The UAI Electron monorepo ships its SOURCE; node_modules restore
+# via `npm ci` and build outputs are excluded. Included per PianoMan 2026-07-06:
+# the toolkit is now a Python-package + Node-app monorepo.
+APP_TREES = [
+    {"dest": "uai_app", "source": "aigen:work/projects/uai_app/unified_ai_interface"},
+]
+APP_EXCLUDE_DIRS = CONTENT_EXCLUDE_DIRS | {".vite", "dist", "out", "UAI.app", ".turbo", "coverage"}
+APP_EXCLUDE_FILES = {".DS_Store", "activity_log.txt"}
+APP_TEXT_SUFFIXES = CONTENT_TEXT_SUFFIXES | {".ts", ".tsx", ".js", ".jsx", ".mjs",
+                                             ".cjs", ".css", ".scss", ".html", ".d.ts"}
 
 # Ordered mechanical import rewrites (regex, replacement), applied to clean +
 # curated files. Specific patterns only — we deliberately do NOT blanket-rewrite
@@ -85,6 +111,9 @@ MODULES = [
     # ---- guidance / memory / history ----
     {"dest": "guidance/guidance_cli.py",              "source": "ai:context_files/guidance_cli.py",            "kind": "clean"},
     {"dest": "guidance/guidance_lib.py",              "source": "ai:context_files/guidance_lib.py",            "kind": "curated"},
+    # scan_registry.py = ported with semantic rewiring (packaged schema, mcps/git
+    # guards); curated so a source change surfaces as a sidecar, never clobbers.
+    {"dest": "guidance/scan_registry.py",             "source": "ai:context_files/scan_traits_registry.py",    "kind": "curated"},
     {"dest": "memory/memory_cli.py",                  "source": "ai:memories/memory_cli.py",                   "kind": "clean"},
     {"dest": "memory/memory_lib.py",                  "source": "ai:memories/memory_lib.py",                   "kind": "clean"},
     {"dest": "history/search_cli.py",                 "source": "ai:histories/search_cli.py",                  "kind": "clean"},

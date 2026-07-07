@@ -1,0 +1,105 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="bgGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0e1225"/>
+      <stop offset="100%" stop-color="#080b16"/>
+    </linearGradient>
+    <radialGradient id="centerGlow" cx="0.5" cy="0.48" r="0.25">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.15"/>
+      <stop offset="60%" stop-color="#7aa2f7" stop-opacity="0.06"/>
+      <stop offset="100%" stop-color="#080b16" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="streamGlow">
+      <feGaussianBlur stdDeviation="12" result="blur"/>
+      <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+    </filter>
+    <filter id="sparkleGlow">
+      <feGaussianBlur stdDeviation="10"/>
+    </filter>
+    <filter id="coreGlow">
+      <feGaussianBlur stdDeviation="25"/>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect x="12" y="12" width="1000" height="1000" rx="200" ry="200" fill="url(#bgGrad)" stroke="#1a2040" stroke-width="3"/>
+
+  <!-- Subtle center radial glow -->
+  <rect x="12" y="12" width="1000" height="1000" rx="200" ry="200" fill="url(#centerGlow)"/>
+
+  <!-- ===== THREE CONVERGING STREAMS ===== -->
+  <!-- Each stream starts wide at the edge and tapers to a point at center -->
+
+  <!-- Claude Orange — from upper-left -->
+  <!-- Outer glow -->
+  <path d="M 140 180 C 260 280, 360 360, 490 465"
+        stroke="#e07a4a" stroke-width="52" stroke-linecap="round" fill="none"
+        opacity="0.12"/>
+  <!-- Main stream -->
+  <path d="M 140 180 C 260 280, 360 360, 490 465"
+        stroke="#e07a4a" stroke-width="28" stroke-linecap="round" fill="none"
+        opacity="0.85" filter="url(#streamGlow)"/>
+  <!-- Bright core -->
+  <path d="M 200 230 C 300 310, 380 380, 495 468"
+        stroke="#ff9966" stroke-width="8" stroke-linecap="round" fill="none"
+        opacity="0.6"/>
+
+  <!-- Codex Purple — from top-center -->
+  <!-- Outer glow -->
+  <path d="M 512 100 C 514 220, 513 340, 512 460"
+        stroke="#8b5cf6" stroke-width="52" stroke-linecap="round" fill="none"
+        opacity="0.12"/>
+  <!-- Main stream -->
+  <path d="M 512 100 C 514 220, 513 340, 512 460"
+        stroke="#8b5cf6" stroke-width="28" stroke-linecap="round" fill="none"
+        opacity="0.85" filter="url(#streamGlow)"/>
+  <!-- Bright core -->
+  <path d="M 512 160 C 513 260, 513 360, 512 463"
+        stroke="#a78bfa" stroke-width="8" stroke-linecap="round" fill="none"
+        opacity="0.6"/>
+
+  <!-- Gemini Blue — from upper-right -->
+  <!-- Outer glow -->
+  <path d="M 884 180 C 764 280, 664 360, 534 465"
+        stroke="#4285f4" stroke-width="52" stroke-linecap="round" fill="none"
+        opacity="0.12"/>
+  <!-- Main stream -->
+  <path d="M 884 180 C 764 280, 664 360, 534 465"
+        stroke="#4285f4" stroke-width="28" stroke-linecap="round" fill="none"
+        opacity="0.85" filter="url(#streamGlow)"/>
+  <!-- Bright core -->
+  <path d="M 824 230 C 724 310, 644 380, 529 468"
+        stroke="#6ea8ff" stroke-width="8" stroke-linecap="round" fill="none"
+        opacity="0.6"/>
+
+  <!-- ===== UNIFIED OUTPUT — downward flow ===== -->
+  <!-- A single white/silver stream flowing down from center -->
+  <path d="M 512 520 C 512 580, 510 660, 512 800"
+        stroke="#c0caf5" stroke-width="36" stroke-linecap="round" fill="none"
+        opacity="0.08"/>
+  <path d="M 512 520 C 512 580, 510 660, 512 800"
+        stroke="#c0caf5" stroke-width="16" stroke-linecap="round" fill="none"
+        opacity="0.25" filter="url(#streamGlow)"/>
+  <path d="M 512 530 C 512 590, 511 660, 512 790"
+        stroke="#e0e6ff" stroke-width="4" stroke-linecap="round" fill="none"
+        opacity="0.4"/>
+
+  <!-- ===== CENTRAL CONVERGENCE POINT ===== -->
+  <!-- Core glow -->
+  <circle cx="512" cy="490" r="60" fill="#ffffff" opacity="0.06" filter="url(#coreGlow)"/>
+  <circle cx="512" cy="490" r="30" fill="#ffffff" opacity="0.08" filter="url(#coreGlow)"/>
+
+  <!-- Primary sparkle — large, at convergence -->
+  <path d="M512 420 L528 472 L580 490 L528 508 L512 560 L496 508 L444 490 L496 472 Z"
+        fill="#fffbe6" opacity="0.95"/>
+  <path d="M512 420 L528 472 L580 490 L528 508 L512 560 L496 508 L444 490 L496 472 Z"
+        fill="#ffffff" opacity="0.3" filter="url(#sparkleGlow)"/>
+
+  <!-- Secondary sparkle — smaller, offset -->
+  <path d="M600 350 L606 370 L626 376 L606 382 L600 402 L594 382 L574 376 L594 370 Z"
+        fill="#ffffff" opacity="0.25"/>
+
+  <!-- Tiny sparkle -->
+  <path d="M410 370 L414 382 L426 386 L414 390 L410 402 L406 390 L394 386 L406 382 Z"
+        fill="#ffffff" opacity="0.15"/>
+</svg>

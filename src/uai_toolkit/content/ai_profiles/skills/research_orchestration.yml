@@ -1,0 +1,117 @@
+metadata:
+  name: research-orchestration
+  version: 1.0.0
+  created: 2026-04-16
+  status: active
+  description: 'Orchestrate research across the AI conversation archive (~50MB, ~14M
+    tokens, 4+ years). Formulate queries, dispatch to Gemini search shards, collect
+    results, synthesize findings, and optionally validate claims.
+
+    '
+trigger:
+  description: 'Use when searching the conversation archive for past decisions, context,
+    patterns, or when answering questions that require historical knowledge across
+    multiple conversations.
+
+    '
+  patterns:
+  - search the archive for
+  - what did we decide about
+  - find past conversations about
+  - research {topic} across history
+  - historical context lookup
+  - cross-conversation synthesis
+context_files:
+  processes:
+  - ai_context_files/instructions/how_tos/playbooks/playbook_research_orchestration
+  methods:
+  - ai_context_files/instructions/how_tos/instr_search_agent
+tools:
+  knowledge_search:
+    description: Search the conversation archive
+    mcp_server: knowledge-search
+    operations:
+    - search: Semantic search with query, optional filters (platform, date range)
+    - grep_search: Exact text search across archive
+    - stats: Archive statistics (conversation count, date range, platforms)
+  cli_agent:
+    description: Launch Gemini shards for parallel search
+    mcp_server: cli-agent
+    operations:
+    - launch_agent: Launch Gemini CLI with search agent prompt
+    - list_sessions: Check running shards
+    - read_session: Collect shard results
+  prompting:
+    description: Monitor and collect from shards
+    mcp_server: prompting
+    operations:
+    - observe_session: See shard progress
+    - wait_response: Wait for shard completion
+    - is_busy: Check if shard is still working
+workflow:
+  overview: 'Research follows a query → search → collect → synthesize → validate pipeline.
+    For simple lookups, use knowledge-search directly. For complex topics requiring
+    cross-conversation synthesis, dispatch multiple Gemini shards in parallel.
+
+    '
+  decision_tree:
+  - question: Is this a simple factual lookup (specific decision, date, file)?
+    true: Use knowledge-search:search directly — no orchestration needed
+    false: Full research orchestration
+  - question: Does the topic span multiple conversations or time periods?
+    true: Dispatch parallel Gemini shards with different date ranges or query angles
+    false: Single search query may suffice — try that first
+  - question: Do the findings need to be validated against evidence?
+    true: Add a validation step — launch a validator agent
+    false: Synthesis is the final output
+  patterns:
+    simple_search:
+      name: Direct Search
+      description: Quick lookup — single query, no orchestration
+      steps:
+      - '1. Query: knowledge-search:search with clear, specific query'
+      - 2. Review results for relevance
+      - '3. If insufficient: refine query terms and retry'
+      - 4. Present findings with match IDs as evidence
+    orchestrated_research:
+      name: Full Research Orchestration
+      description: Multi-shard parallel search with synthesis
+      steps:
+      - '1. Formulate: Break the research question into 2-4 search angles'
+      - '2. Dispatch: Launch Gemini shards (cli-agent:launch_agent, platform=gemini)
+        with search_agent prompt'
+      - '3. Monitor: prompting:is_busy for each shard'
+      - '4. Collect: prompting:read_history or cli-agent:read_session for each'
+      - '5. Synthesize: Combine findings, resolve contradictions, identify gaps'
+      - '6. Validate (optional): Launch validator agent to check claims against evidence'
+      - '7. Report: Present findings with evidence citations'
+    validated_research:
+      name: Research with Validation
+      description: Full research plus claim-by-claim evidence checking
+      steps:
+      - 1-5. Follow orchestrated_research steps
+      - 6. Write findings to a file
+      - 7. Launch validator agent (cli-agent:launch_validator) with findings file
+      - 8. Collect validation results
+      - 9. Revise findings based on validation (grounded/unsupported/partial)
+      - 10. Present validated findings
+  guidelines:
+  - Start with the simplest search approach — escalate to orchestration only if needed
+  - When dispatching shards, give each a focused angle rather than the same broad
+    query
+  - Gemini shards work best with the search_agent prompt — don't improvise shard instructions
+  - Always cite match IDs from search results as evidence
+  - Contradictions between sources should be flagged, not silently resolved
+  - Memory slots may contain relevant recent context — check before dispatching searches
+  anti_patterns:
+  - Don't dispatch 10 shards when 2 would cover the topic
+  - Don't skip the synthesis step — raw shard results are not a research output
+  - Don't present findings without evidence citations
+  - Don't assume the archive is complete — some conversations may not have been ingested
+_registry:
+  id: research_orchestration
+  name: research-orchestration
+  status: active
+  version: 1.0.0
+  created: '2026-04-16'
+  updated: '2026-04-16'

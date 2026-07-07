@@ -1,0 +1,71 @@
+# Source: know_codex_mcp_latest.yml (v1.0, 2025-11-09)
+# Type: knowledge_digest
+
+purpose:
+  - Multi-connector control plane for Desktop Claude, CLI workers, ChatGPT instances
+  - Larger per-task context than individual agents; always-fresh MCP session
+  - Preserve assistant context by offloading heavy analysis to Codex MCP
+
+configuration:
+  core_servers: filesystem, desktop-commander, chrome-control, pdf-tools, context7
+  config_file: claude_desktop_config.json
+  config_rule: Maintain exactly 5 canonical entries; avoid duplicates
+  redundancy: filesystem/desktop-commander overlap is intentional - keep both for resilience
+  full_auto_flag:
+    required_for: workspace-write filesystem access, on-failure approval policy
+    argument_order: ["--full-auto", "mcp-server"]  # ORDER MATTERS
+    without_flag: read-only operations only
+  chrome_control:
+    requires: Chrome launched with --remote-debugging-port=9222 for CDP content methods
+  file_paths:
+    desktop_prompt_queue: ~/AI/Claude/claude_workspace/06_announcements/to_desktop_claude/
+    archive_processed: sent/ subdirectory for processed .prompt.txt files
+    cli_coordination_dropboxes: ~/AI/ai_root/ai_comms/codex_cli/
+
+usage:
+  desktop_web_agents: 'codex("<task description>")' before heavy analysis
+  cli_workers:
+    - Copy task manifests to ai_comms/codex_cli/to_execute/
+    - Consume Codex outputs from coordination directories
+    - Chain Codex MCP invocations for bulk/repo-wide work
+  file_prompts: Create *.prompt.txt files in Desktop Claude queue
+  message_sender: 'node bin/send-message.js --ai <claude|chatgpt> --message "..." [--url] [--wait] [--timeout]'
+  cross_agent: Same message sender works ChatGPT/Claude/Gemini/Grok via shared protocols
+
+connectors:
+  filesystem: Standard MCP CRUD operations
+  desktop_commander: Process supervision, REPL control, expanded filesystem
+  chrome_control: Tab lifecycle via macOS APIs, optional CDP bridge for content inspection/JS execution
+  pdf_tools: PDF manipulation, form operations
+  context7: Library/documentation lookup
+
+automation_bridges:
+  puppeteer: Chrome debugging port 9222, response detection, chat filtering
+  applescript:
+    - Desktop Claude prompts via file queues, cron, idle detection
+    - Requires Claude Desktop app running
+  coordination:
+    - File-based broadcasts/directories between Codex, Desktop Claude, CLI (no live IPC)
+    - Hybrid workflows mix Puppeteer (web) + AppleScript (desktop) + file queues (persisted)
+  codex_integration: Complements CLI orchestrator by invoking Puppeteer to drive ChatGPT/Claude UIs
+
+best_practices:
+  - Verify capabilities empirically (test list_tabs vs execute_javascript)
+  - Reuse proven orchestration components (selectors, response detection, CLI wrappers)
+  - Prefer file-based coordination queues for async durability/crash safety
+  - Keep Chrome debugging instances alive when browser automation needed
+  - Choose hybrid automation deliberately: Puppeteer=DOM, AppleScript=desktop-only, CLI=process, Codex=orchestrate
+
+known_issues:
+  duplicate_connectors:
+    issue: Claude Desktop shows duplicates with inconsistent casing
+    solution: Accept as UI artifact; confirm uniqueness in config file, keep 5 canonical entries
+  chrome_content_fails:
+    issue: execute_javascript, get_page_content fail without CDP
+    solution: Launch Chrome with --remote-debugging-port=9222; prefer Puppeteer for DOM
+  full_auto_missing:
+    issue: Without --full-auto, filesystem writes fail silently
+    solution: Ensure argument order ["--full-auto", "mcp-server"]
+  applescript_completion:
+    issue: Can't easily detect Claude Desktop response completion
+    solution: Use wait-for-idle heuristics (button counts), add delays, or fall back to web interfaces

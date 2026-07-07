@@ -1,0 +1,30 @@
+name: Codex CLI
+description: 'Secondary platform. Shell commands, full filesystem access, MCP servers
+  available. System prompt injection via codex_cli.py wrapper.
+
+  '
+platform:
+  context_window: model-dependent
+  bash: full filesystem access
+  mcp_tools: available (configured via codex mcp add)
+  config_file: AGENTS.md
+context_files:
+  knowledge: []
+  processes: []
+  procedures: []
+delivery:
+  mechanisms:
+  - agents_md
+  - mcp
+  - system_prompt_injection
+  notes: 'AGENTS.md auto-loaded. MCP servers registered via codex mcp add. System
+    prompt via codex_cli.py --append-system-prompt.
+
+    '
+_registry:
+  id: codex
+  name: Codex
+  status: active
+  version: 1.0.0
+  created: '2026-04-15'
+  updated: '2026-04-16'

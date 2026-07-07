@@ -1,0 +1,94 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="bgO" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#181220"/>
+      <stop offset="100%" stop-color="#0a0810"/>
+    </linearGradient>
+    <radialGradient id="stageGlow" cx="0.5" cy="0.85" r="0.5">
+      <stop offset="0%" stop-color="#fbbf24" stop-opacity="0.08"/>
+      <stop offset="100%" stop-color="#fbbf24" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="glowO">
+      <feGaussianBlur stdDeviation="8" result="blur"/>
+      <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+    </filter>
+    <filter id="softO">
+      <feGaussianBlur stdDeviation="16"/>
+    </filter>
+    <clipPath id="clipO">
+      <rect x="12" y="12" width="1000" height="1000" rx="200" ry="200"/>
+    </clipPath>
+  </defs>
+
+  <!-- Background — rich dark, concert hall -->
+  <rect x="12" y="12" width="1000" height="1000" rx="200" ry="200" fill="url(#bgO)" stroke="#2a2030" stroke-width="2"/>
+
+  <g clip-path="url(#clipO)">
+    <!-- Stage warm glow from below -->
+    <rect x="12" y="12" width="1000" height="1000" rx="200" ry="200" fill="url(#stageGlow)"/>
+
+    <!-- ===== SOUND WAVES — concentric arcs radiating upward from the orchestra ===== -->
+    <!-- These represent the unified output — many players, one sound -->
+    <path d="M 300 700 C 300 550, 400 420, 512 420 C 624 420, 724 550, 724 700"
+          fill="none" stroke="#fbbf24" stroke-width="3" opacity="0.12"/>
+    <path d="M 240 700 C 240 500, 360 340, 512 340 C 664 340, 784 500, 784 700"
+          fill="none" stroke="#fbbf24" stroke-width="2.5" opacity="0.09"/>
+    <path d="M 180 700 C 180 450, 320 260, 512 260 C 704 260, 844 450, 844 700"
+          fill="none" stroke="#fbbf24" stroke-width="2" opacity="0.06"/>
+    <path d="M 120 700 C 120 400, 280 180, 512 180 C 744 180, 904 400, 904 700"
+          fill="none" stroke="#fbbf24" stroke-width="1.5" opacity="0.04"/>
+
+    <!-- ===== ORCHESTRA SECTION — semicircle of performers ===== -->
+    <!-- Arranged in a concert arc around the conductor position -->
+
+    <!-- Strings section — left -->
+    <circle cx="220" cy="740" r="18" fill="#f59e0b" opacity="0.7"/>
+    <circle cx="270" cy="710" r="16" fill="#f59e0b" opacity="0.65"/>
+    <circle cx="320" cy="690" r="16" fill="#f59e0b" opacity="0.6"/>
+    <circle cx="365" cy="678" r="15" fill="#f59e0b" opacity="0.55"/>
+
+    <!-- Woodwinds — center-left -->
+    <circle cx="410" cy="672" r="16" fill="#a78bfa" opacity="0.7"/>
+    <circle cx="460" cy="668" r="17" fill="#a78bfa" opacity="0.65"/>
+
+    <!-- Brass — center -->
+    <circle cx="512" cy="666" r="18" fill="#38bdf8" opacity="0.75"/>
+
+    <!-- Woodwinds — center-right -->
+    <circle cx="564" cy="668" r="17" fill="#34d399" opacity="0.65"/>
+    <circle cx="614" cy="672" r="16" fill="#34d399" opacity="0.7"/>
+
+    <!-- Percussion — right -->
+    <circle cx="659" cy="678" r="15" fill="#fb7185" opacity="0.55"/>
+    <circle cx="704" cy="690" r="16" fill="#fb7185" opacity="0.6"/>
+    <circle cx="754" cy="710" r="16" fill="#fb7185" opacity="0.65"/>
+    <circle cx="804" cy="740" r="18" fill="#fb7185" opacity="0.7"/>
+
+    <!-- Subtle glow beneath orchestra -->
+    <ellipse cx="512" cy="720" rx="320" ry="40" fill="#fbbf24" opacity="0.04" filter="url(#softO)"/>
+
+    <!-- ===== THE CONDUCTOR — front and center, facing the orchestra ===== -->
+    <!-- Silhouette figure — abstract, minimal -->
+
+    <!-- Body — simple triangle/trapezoid suggesting shoulders and torso -->
+    <path d="M 480 600 L 512 530 L 544 600 Z" fill="#e2e8f0" opacity="0.85"/>
+
+    <!-- Head -->
+    <circle cx="512" cy="515" r="22" fill="#e2e8f0" opacity="0.85"/>
+
+    <!-- Raised arm with baton — the gesture of command -->
+    <line x1="540" y1="560" x2="620" y2="470"
+          stroke="#e2e8f0" stroke-width="6" stroke-linecap="round" opacity="0.8"/>
+
+    <!-- Baton -->
+    <line x1="620" y1="470" x2="680" y2="400"
+          stroke="#fde68a" stroke-width="5" stroke-linecap="round" opacity="0.9"/>
+
+    <!-- Baton tip glow -->
+    <circle cx="680" cy="400" r="6" fill="#fef3c7" opacity="0.95"/>
+    <circle cx="680" cy="400" r="16" fill="#fbbf24" opacity="0.2" filter="url(#softO)"/>
+
+    <!-- Podium — the conductor's platform -->
+    <rect x="475" y="604" width="74" height="12" rx="3" fill="#64748b" opacity="0.4"/>
+  </g>
+</svg>

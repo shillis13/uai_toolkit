@@ -1,0 +1,118 @@
+metadata:
+  name: todo-triage
+  version: 1.0.0
+  created: 2026-04-16
+  status: active
+  description: 'Structured workflow for triaging the todo list: review items, assess
+    priority, decompose large items into tasks, and prepare work for assignment. Used
+    by dev_lead role on a regular cadence.
+
+    '
+trigger:
+  description: 'Use when reviewing the todo list, prioritizing work, decomposing complex
+    items into actionable tasks, or when asked to assess what needs to be done.
+
+    '
+  patterns:
+  - triage the todos
+  - what needs to be done
+  - prioritize work
+  - review the backlog
+  - decompose this into tasks
+  - daily/weekly work review
+context_files:
+  procedures:
+  - ai_context_files/instructions/how_tos/instr_todo
+  - ai_context_files/instructions/how_tos/instr_feedback
+tools:
+  todo:
+    description: Todo management
+    mcp_server: todo
+    operations:
+    - list: List todos with optional filters (status, tag, flag)
+    - get: Get details of a specific todo
+    - create: Create a new todo
+    - update: Update todo fields
+    - set_status: Change todo status
+    - complete: Mark todo as complete
+    - kanban: View todos in kanban board format
+    - add_tag: Add tag to a todo
+    - add_flag: Add priority flag
+    - remove_tag: Remove tag
+    - remove_flag: Remove flag
+    - move: Move todo between categories
+    - trash: Remove a todo
+  task_coord:
+    description: Task coordination for assignment
+    mcp_server: task-coord
+    operations:
+    - gen_task: Generate a task file from template
+    - list_tasks: List tasks in the pipeline
+    - move_task: Move task between lifecycle stages
+workflow:
+  overview: 'Triage follows: scan → assess → prioritize → decompose → prepare. The
+    goal is to turn a backlog of todos into a prioritized, actionable queue of tasks
+    ready for workers.
+
+    '
+  decision_tree:
+  - question: Is this a routine triage (daily check)?
+    true: 'Quick scan: check new items, update statuses, flag blockers'
+    false: 'Full triage: review entire backlog, reprioritize, decompose'
+  - question: Is a specific todo too large to be a single task?
+    true: Decompose into sub-tasks, each independently executable
+    false: It's ready to become a task file for a worker
+  patterns:
+    daily_scan:
+      name: Daily Quick Scan
+      description: Fast review of recent changes and new items
+      steps:
+      - '1. Kanban: todo:kanban to see the board at a glance'
+      - '2. New items: todo:list with status=Triaging to see unprocessed'
+      - '3. Blocked: Check for items flagged as blocked — can anything be unblocked?'
+      - '4. Update: Set statuses for any items that have progressed'
+      - '5. Flag: Add high_priority flag to urgent items'
+    full_triage:
+      name: Full Backlog Triage
+      description: Comprehensive review and prioritization
+      steps:
+      - '1. Inventory: todo:list --all to see everything'
+      - '2. Stale check: Items with no update in 2+ weeks — still relevant?'
+      - '3. Prioritize: Assess each by impact and urgency'
+      - '4. Tag: Apply category tags (architecture, bugfix, enhancement, etc.)'
+      - '5. Flag: high_priority for top items'
+      - '6. Decompose: Break large items into sub-tasks (see decomposition pattern)'
+      - '7. Report: Summarize the triage — what''s hot, what''s blocked, what''s deferred'
+    decomposition:
+      name: Todo Decomposition
+      description: Break a large todo into worker-ready tasks
+      steps:
+      - '1. Read: todo:get the full item — understand scope and acceptance criteria'
+      - '2. Analyze: What are the independent work units?'
+      - '3. Create sub-todos: todo:create for each unit with clear done criteria'
+      - '4. Link: Add parent reference in each sub-todo description'
+      - '5. Generate tasks: task-coord:gen_task for items ready for workers'
+      - '6. Stage: task-coord:move_task to to_execute when ready'
+  guidelines:
+  - Every todo should have a clear done criterion — if it doesn't, add one
+  - Decompose aggressively — smaller tasks get done faster and review better
+  - 'Stale todos (2+ weeks untouched) should be re-assessed: still relevant? scope
+    changed?'
+  - Tags are cheap — use them for filtering (architecture, bugfix, enhancement, debt,
+    etc.)
+  - Don't create tasks for items that aren't ready — incomplete requirements lead
+    to rework
+  - Report triage results to PianoMan — he wants to know what's hot
+  anti_patterns:
+  - Don't triage without reading the items — scan titles is not triage
+  - 'Don''t leave items in Triaging status forever — decide: active, deferred, or
+    trash'
+  - Don't create tasks without done criteria
+  - Don't decompose everything — some items are already atomic
+_registry:
+  id: todo_triage
+  name: todo-triage
+  status: active
+  version: 1.0.0
+  created: '2026-04-16'
+  updated: '2026-04-16'

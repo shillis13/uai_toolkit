@@ -1,0 +1,16 @@
+name: Individual Developer
+description: 'A developer working independently, directly with PianoMan. Handles conversation,
+  task execution, and implementation.
+
+  '
+roles:
+- ai_profiles/roles/assistant
+- ai_profiles/roles/worker
+- ai_profiles/roles/dev
+_registry:
+  id: individual_developer
+  name: Individual Developer
+  status: active
+  version: 1.0.0
+  created: '2026-04-15'
+  updated: '2026-04-15'

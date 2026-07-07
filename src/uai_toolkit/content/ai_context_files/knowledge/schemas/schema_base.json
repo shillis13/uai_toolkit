@@ -1,0 +1,103 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ai_root/schemas/schema_base.json",
+  "title": "Base Document Schema",
+  "description": "Common structure for all converted YAML documents",
+  "type": "object",
+  "required": ["metadata", "table_of_contents", "sections"],
+  "properties": {
+    "metadata": {
+      "type": "object",
+      "required": ["title", "type", "status", "created", "last_updated", "source_file"],
+      "properties": {
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Document title"
+        },
+        "type": {
+          "type": "string",
+          "enum": ["knowledge_digest", "chat_memory", "protocol", "spec", "task_notes"],
+          "description": "Document type"
+        },
+        "version": {
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+          "description": "Semantic version (optional, for versioned documents)"
+        },
+        "status": {
+          "type": "string",
+          "description": "Document status (e.g., draft, active, archived)"
+        },
+        "created": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+          "description": "Creation date in YYYY-MM-DD format"
+        },
+        "last_updated": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+          "description": "Last update date in YYYY-MM-DD format"
+        },
+        "maintainer": {
+          "type": "string",
+          "description": "Document maintainer (optional)"
+        },
+        "source_file": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Original Markdown filename for provenance tracking"
+        }
+      }
+    },
+    "table_of_contents": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Document structure overview",
+      "items": {
+        "type": "object",
+        "required": ["section", "key"],
+        "properties": {
+          "section": {
+            "type": "string",
+            "description": "Display heading text"
+          },
+          "key": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]*$",
+            "description": "Semantic key for section lookup"
+          },
+          "subsections": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Optional list of subsection titles"
+          }
+        }
+      }
+    },
+    "sections": {
+      "type": "object",
+      "minProperties": 1,
+      "description": "Document content organized by semantic keys",
+      "patternProperties": {
+        "^[a-z][a-z0-9_]*$": {
+          "type": "object",
+          "required": ["heading", "content"],
+          "properties": {
+            "heading": {
+              "type": "string",
+              "description": "Section display heading"
+            },
+            "content": {
+              "type": "string",
+              "description": "Section content (may be multi-line)"
+            }
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

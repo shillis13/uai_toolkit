@@ -10,6 +10,9 @@ requires-python = ">=3.10"
 dependencies = [
     # read_jsonl core is stdlib-only. tomli only needed for config on <3.11.
     "tomli; python_version < '3.11'",
+    # guidance_cli/guidance_lib parse YAML content after install; fresh-box
+    # role/trait lookup must work without requiring the optional MCP extra.
+    "pyyaml>=6",
 ]
 
 [project.optional-dependencies]
@@ -17,7 +20,7 @@ dependencies = [
 full = ["psutil>=5.9"]
 dev = ["pytest>=7"]
 # MCP servers (knowledge, ...) — the skill surface. Opt-in: pip install uai-toolkit[mcp]
-mcp = ["mcp>=1.0", "pyyaml>=6", "jsonschema>=4"]
+mcp = ["mcp>=1.0", "jsonschema>=4"]
 
 [project.scripts]
 uai-toolkit = "uai_toolkit.install:main"
@@ -40,4 +43,10 @@ ai-fa-check-write = "uai_toolkit.file_access.hooks:check_before_write"
 where = ["src"]
 
 [tool.setuptools.package-data]
-"uai_toolkit" = ["py.typed"]
+# The knowledge base (ai_context_files) + composition layer (ai_profiles) ship
+# as package data; `uai-toolkit install` copies them into AI_ROOT and builds the
+# guidance registry from them on a fresh box.
+"uai_toolkit" = ["py.typed", "content/**/*"]
+# Registry schema ships with the package so a fresh AI_ROOT (no
+# scripts/context_files/schema.sql) can still build its guidance registry.
+"uai_toolkit.guidance" = ["schema.sql"]

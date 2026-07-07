@@ -1,0 +1,112 @@
+metadata:
+  name: documentation-audit
+  version: 1.0.0
+  created: 2026-04-16
+  status: active
+  description: 'Structured workflow for auditing documentation freshness and accuracy.
+    Scan for stale docs, verify symlinks, check cross-references, assess content accuracy,
+    and remediate or flag issues.
+
+    '
+trigger:
+  description: 'Use when auditing documentation health, when symlinks may be broken,
+    when cross-references need verification, or during periodic maintenance sweeps.
+
+    '
+  patterns:
+  - audit the docs
+  - check for stale documentation
+  - verify symlinks
+  - documentation maintenance
+  - periodic docs sweep
+context_files:
+  procedures:
+  - ai_context_files/instructions/rules/rules_file_conventions
+  - ai_context_files/instructions/rules/rules_writing
+  templates:
+  - ai_context_files/instructions/templates/doc_audit_scan_template
+  - ai_context_files/instructions/templates/doc_audit_remediate_template
+tools:
+  native:
+    description: Built-in tools for file operations
+    mcp_server: none
+    operations:
+    - Glob: Find files by pattern (*.latest.*, broken symlinks)
+    - Grep: Search file content for stale references
+    - Read: Read file content for accuracy assessment
+    - Bash: Run find/ls for symlink verification
+workflow:
+  overview: 'Audit follows: scan → assess → prioritize → remediate → verify. Focus
+    on files that are actively referenced by other artifacts (role.yml context_files,
+    catalog.yml, globals/base.yml) — stale referenced docs are higher priority than
+    stale unreferenced docs.
+
+    '
+  decision_tree:
+  - question: Is this a targeted audit (specific directory or concern)?
+    true: Scope the scan to the affected area
+    false: Full sweep across ai_context_files/
+  - question: Are there known broken symlinks or references?
+    true: Start with symlink/reference verification
+    false: Start with staleness scan
+  patterns:
+    symlink_audit:
+      name: Symlink Verification
+      description: Find and fix broken symlinks
+      steps:
+      - '1. Scan: find ai_traits -type l — list all symlinks'
+      - '2. Test: For each, check if target exists'
+      - '3. Categorize: broken (target missing), stale (target outdated), orphaned
+        (no consumers)'
+      - '4. Fix: Repoint broken symlinks, remove orphaned ones'
+      - '5. Verify: Re-scan to confirm zero broken'
+      - '6. Commit: git add fixed symlinks'
+    staleness_scan:
+      name: Content Staleness Scan
+      description: Identify docs that may be outdated
+      steps:
+      - '1. List: All .latest.* files with git log dates'
+      - '2. Flag: Files not updated in 90+ days'
+      - '3. Cross-ref: Check if flagged files are referenced by active roles/profiles'
+      - '4. Assess: Read flagged+referenced files — is content still accurate?'
+      - '5. Categorize: accurate (just old), needs-update, needs-retirement'
+      - '6. Report: List findings with severity'
+    reference_integrity:
+      name: Cross-Reference Integrity
+      description: Verify all references in composition files resolve
+      steps:
+      - '1. Read: ai_profiles/globals/base.yml — extract all trait paths'
+      - '2. Read: Each ai_profiles/roles/*.yml — extract trait paths'
+      - '3. Read: ai_context_files/catalog.yml — extract all listed paths'
+      - '4. Verify: Does each referenced path exist?'
+      - '5. Report: List broken references with source and target'
+      - '6. Fix: Update references to correct paths'
+    full_audit:
+      name: Full Documentation Audit
+      description: Comprehensive sweep
+      steps:
+      - 1. Run symlink_audit pattern
+      - 2. Run staleness_scan pattern
+      - 3. Run reference_integrity pattern
+      - 4. Consolidate findings into audit report
+      - 5. Prioritize fixes by impact (referenced > unreferenced)
+      - 6. Remediate or create todos for each finding
+      - 7. Commit all fixes
+  guidelines:
+  - Referenced docs are higher priority than unreferenced ones
+  - Don't update content you don't understand — flag for human review
+  - Symlink fixes are safe to make immediately — content changes need more care
+  - Use the doc_audit_scan_template for structured reporting
+  - After remediation, verify by re-running the same scan
+  anti_patterns:
+  - Don't rewrite docs during an audit — audit and remediate are separate steps
+  - Don't delete files that seem stale without checking consumers
+  - Don't ignore broken symlinks — they cause silent failures downstream
+  - Don't audit without committing fixes — uncommitted changes get lost
+_registry:
+  id: documentation_audit
+  name: documentation-audit
+  status: active
+  version: 1.0.0
+  created: '2026-04-16'
+  updated: '2026-04-16'

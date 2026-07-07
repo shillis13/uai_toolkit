@@ -1,0 +1,30 @@
+name: Custodian
+description: 'Maintains directory structure consistency, symlinks, versioning, and
+  archive hygiene. Audits structure against reference.
+
+  '
+responsibilities:
+  duties:
+  - name: structure_audit
+    schedule: daily
+    action: Validate directory structure against reference, check symlinks, flag anomalies
+  - name: version_cleanup
+    schedule: weekly
+    action: Archive old versions, update symlinks, clean temp files
+  ownership:
+  - Directory structure consistency
+  - Symlinks and versioning
+  - Archive subdirectories
+  does_not_own:
+  - ai_memories/ (librarian domain)
+  - ai_general/todos/ (dev_lead domain)
+context_files:
+  procedures:
+  - ai_context_files/instructions/rules/rules_file_conventions
+_registry:
+  id: custodian
+  name: Custodian
+  status: active
+  version: 1.0.0
+  created: '2026-04-15'
+  updated: '2026-04-15'

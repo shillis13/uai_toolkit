@@ -1,0 +1,128 @@
+# Scheduled Task Definition Schema v1.0
+# Location: ai_general/data/scheduled_tasks/*.yml
+# Installer: ai_general/scripts/scheduling/install_scheduled_tasks.py
+#
+# Each YAML file defines a logical group of cron jobs (e.g., sysmon, pipeline).
+# The installer reads all enabled .yml files and generates a managed crontab block.
+# A @reboot bootstrap entry re-runs the installer after every reboot, making the
+# crontab self-healing. The YAML files are the source of truth; the crontab is derived.
+#
+# To add a new cron job:
+#   1. Create or edit a .yml file in ai_general/data/scheduled_tasks/
+#   2. Run: install_scheduled_tasks.py          (install)
+#   3. Run: install_scheduled_tasks.py --status  (verify)
+#
+# To disable a group: set enabled: false in the YAML and rerun the installer.
+# To disable a single job: remove it from the jobs list (or comment it out).
+# To view what's installed: install_scheduled_tasks.py --status
+
+schema:
+  version: "1.0"
+  description: "Defines one or more cron jobs as a named, versionable, git-tracked group"
+  location: "ai_general/data/scheduled_tasks/*.yml"
+  installer: "ai_general/scripts/scheduling/install_scheduled_tasks.py"
+
+fields:
+  name:
+    type: string
+    required: true
+    description: "Human-readable identifier for the task group (e.g., 'sysmon', 'chat_pipeline')"
+
+  description:
+    type: string
+    required: false
+    description: "What this group of jobs does and why it exists"
+
+  enabled:
+    type: boolean
+    required: false
+    default: true
+    description: "Set to false to skip this file during installation. All jobs in the file are excluded."
+
+  env:
+    type: map[string, string]
+    required: false
+    description: |
+      Environment variables prepended to each cron entry.
+      Values support $HOME expansion.
+      Example: { AI_ROOT: "$HOME/AI/ai_root" }
+
+  jobs:
+    type: array
+    required: true
+    min_items: 1
+    description: "List of cron job definitions"
+    items:
+      id:
+        type: string
+        required: true
+        description: "Unique identifier within this file (e.g., 'host_metrics', 'sweep')"
+
+      description:
+        type: string
+        required: false
+        description: "What this job does. Appears as a comment above the cron entry."
+
+      schedule:
+        type: string
+        required: true
+        description: |
+          Cron schedule expression or @reboot.
+          Standard 5-field cron: minute hour day month weekday
+          Examples:
+            "* * * * *"        — every minute
+            "*/10 * * * *"     — every 10 minutes
+            "2-59/5 * * * *"   — every 5 minutes starting at :02
+            "0 4 * * *"        — daily at 4:00 AM
+            "0 3 * * 0"        — Sundays at 3:00 AM
+            "@reboot"          — once after system boot
+
+      command:
+        type: string
+        required: true
+        description: |
+          The shell command to execute. Supports $HOME and env var expansion.
+          Use full paths or paths relative to env vars.
+          For cd + command patterns: "cd $AI_ROOT/some/dir && command"
+
+      log:
+        type: string
+        required: false
+        description: |
+          Log file path. Output (stdout+stderr) is appended here.
+          The installer creates parent directories automatically.
+          If omitted, output goes to /dev/null (cron default).
+
+      background:
+        type: boolean
+        required: false
+        default: false
+        description: |
+          If true, the cron entry runs with '&' (backgrounded).
+          Typically used with @reboot entries for long-running watchers.
+
+example:
+  name: my_service
+  description: "Example scheduled task group"
+  enabled: true
+  env:
+    AI_ROOT: "$HOME/AI/ai_root"
+  jobs:
+    - id: frequent_check
+      description: "Check something every 5 minutes"
+      schedule: "*/5 * * * *"
+      command: "$AI_ROOT/scripts/my_check.sh"
+      log: "$AI_ROOT/data/my_service/check.log"
+
+    - id: daily_cleanup
+      description: "Clean up old data daily at 3 AM"
+      schedule: "0 3 * * *"
+      command: "$AI_ROOT/scripts/my_cleanup.sh --max-age 7d"
+      log: "$AI_ROOT/data/my_service/cleanup.log"
+
+    - id: boot_watcher
+      description: "Start file watcher after reboot"
+      schedule: "@reboot"
+      command: "sleep 15 && $AI_ROOT/scripts/my_watcher.sh"
+      log: "$AI_ROOT/data/my_service/watcher.log"
+      background: true

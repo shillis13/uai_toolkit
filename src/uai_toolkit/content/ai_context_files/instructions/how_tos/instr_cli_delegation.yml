@@ -1,0 +1,142 @@
+principle: 'CLI interactive sessions balance direct execution with delegation.
+
+  Do work directly when you can. Delegate for parallelism, async, or isolation.
+
+  Unlike Desktop (which must delegate most execution), CLI has full execution capability.
+
+  '
+tools:
+  direct_execution:
+    type: synchronous, immediate
+    capabilities:
+    - Full filesystem via bash + native tools (Read/Edit/Write/Grep/Glob)
+    - Process execution, script invocation
+    - Git operations
+    - Any shell command
+    use_for:
+    - Most work (this is the default)
+    - File reads, edits, creation
+    - Running scripts and commands
+    - Single-task focused work
+  codex_mcp:
+    type: synchronous, immediate results
+    framing: 'Codex is a PEER CONSULTANT — different model, different training, independent
+
+      perspective. Capabilities and insight are on par with yours, not lesser.
+
+      Use liberally, especially for review and validation.
+
+      '
+    capabilities:
+    - Autonomous multi-step problem solving (via OpenAI Codex)
+    - File system exploration and analysis
+    - Code generation and debugging
+    - Complex shell command sequences
+    - Independent perspective on design, implementation, and review
+    constraints:
+    - Focused single-task prompts only
+    - NO multi-step "do 1,2,3 and report" instructions
+    - Break complex work into discrete calls
+    use_for:
+    - Peer review of code, designs, or approaches you've produced
+    - Second opinion on architecture or implementation decisions
+    - Focused code generation or refactoring tasks
+    - Validation — "does this look right to you?"
+    - Any work that benefits from an independent perspective
+    use_liberally: true
+    note: Available in Claude Code interactive sessions via MCP
+  desktop_commander:
+    type: synchronous, immediate
+    capabilities:
+    - Filesystem and process management
+    - Excel (.xlsx), DOCX, PDF reading with structured output
+    - Process supervision and REPL interaction
+    use_for:
+    - Excel/DOCX/PDF file reading (capabilities native tools lack)
+    - Process management when bash is insufficient
+    note: Available in Claude Code interactive sessions via MCP
+  agent_subagents:
+    type: synchronous or background, parallel
+    capabilities:
+    - Independent task execution in isolated context
+    - Multiple agents can run concurrently
+    - 'Specialized types: Explore (codebase search), Plan (architecture), general-purpose'
+    - Worktree isolation for risky changes
+    use_for:
+    - 2+ independent tasks that can run in parallel
+    - Deep codebase exploration (Explore agent)
+    - Architecture planning (Plan agent)
+    - Code review (code-reviewer agent)
+    - Work that benefits from isolated context
+    constraints:
+    - Each agent starts fresh — provide complete task description
+    - Agent results are NOT visible to user — summarize when returning
+    - Background agents notify on completion — don't poll
+  cli_coordination:
+    type: async, file-based
+    base_path: ~/.claude/coordination/ (→ ai_comms/claude_cli/)
+    capabilities:
+    - Delegate to other AI agents (Claude CLI, Gemini CLI, and Codex CLI)
+    - Parallel execution across multiple CLI instances
+    - Persistent task state across sessions
+    use_for:
+    - Delegating to OTHER AI agents (not self)
+    - Long-running work that outlives this session
+    - Work requiring a different AI's capabilities (e.g., Gemini for large context)
+    - Complex multi-step orchestration across agents
+    patterns:
+      1: Create task spec via task-coord:gen_task (with callback)
+      2: Agent claims, executes, writes response
+      3: Callback fires on completion → notification
+      4: Read results, discuss with user
+  gemini_cli:
+    mcp_control:
+      flag: --allowed-mcp-server-names
+      purpose: Whitelist MCP servers at launch (blocks all others)
+      note: Passed through gemini_cli.py as passthrough arg
+delegate_when:
+- 2+ independent tasks (→ parallel Agent subagents)
+- Work for a different AI agent (→ CLI Coordination)
+- Async work that should continue if this session ends
+- Risky/experimental changes needing isolation (→ Agent with worktree)
+do_NOT_delegate:
+- Work you can do directly (most things)
+- File reads/edits within reasonable scope
+- Single-purpose tasks
+- User explicitly asks you to do it directly
+decision_tree:
+  results_needed_now: Direct execution (bash/native tools)
+  focused_task_for_codex_model: Codex MCP (synchronous, single-task)
+  parallel_independent_tasks: Multiple Agent subagents (concurrent)
+  deep_codebase_exploration: Agent subagent (Explore type)
+  excel_docx_pdf_reading: Desktop Commander MCP
+  delegate_to_other_AI: CLI Coordination
+  risky_experimental: Agent subagent with worktree isolation
+  long_running_outlives_session: CLI Coordination
+orchestrator_callback_responsibility:
+  rule: 'When delegating work (creating child tasks, spawning child orchestrators),
+
+    the parent orchestrator MUST ensure callback mechanisms exist BEFORE work begins.
+
+    '
+  requirements:
+  - Use workflow_gen_task with callback parameter. Do NOT manually write task files.
+  - workflow_gen_task creates .callback.yml — fires automatically on workflow_move_task to
+    terminal status.
+  - Parent must VERIFY child orchestrators set up callbacks for THEIR downstream tasks.
+  - Without callbacks, completed work goes unnoticed — orchestrator sits idle.
+  available_mechanisms:
+  - workflow_gen_task callback (.callback.yml) — preferred, automatic on workflow_move_task
+  - workflow_start_watcher on completed/ directories — file-system level detection
+  - comms_send_prompt — for immediate notification to a target session
+  anti_patterns:
+  - Writing task files manually and using mv (bypasses callback infrastructure)
+  - Dumping status to inbox directories nobody polls
+  - Assuming workers will proactively notify without explicit callback setup
+_registry:
+  id: instr_cli_delegation
+  name: Cli Delegation
+  status: active
+  version: 1.0.0
+  created: '2026-03-21'
+  updated: '2026-04-15'

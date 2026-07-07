@@ -1,0 +1,32 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "baseUrl": ".",
+    "composite": false,
+    "declaration": false,
+    "declarationMap": false,
+    "paths": {
+      "@uai/shared": ["../packages/shared/src/index.ts"],
+      "@uai/shared/*": ["../packages/shared/src/*"],
+      "@uai/renderer-ui": ["../packages/renderer-ui/src/components/index.ts"],
+      "@uai/renderer-ui/*": ["../packages/renderer-ui/src/*"],
+      "@contracts/*": ["../architecture/contracts/*"]
+    }
+  },
+  "include": [
+    "main/**/*.ts",
+    "renderer/**/*.ts",
+    "renderer/**/*.tsx",
+    "tests/**/*.ts",
+    "tests/**/*.d.ts",
+    "../packages/shared/src/**/*.ts",
+    "../packages/renderer-ui/src/**/*.ts",
+    "../packages/renderer-ui/src/**/*.tsx",
+    "../architecture/contracts/**/*.ts"
+  ],
+  "exclude": [
+    "../packages/renderer-ui/src/**/*.stories.tsx",
+    "../packages/renderer-ui/src/**/*.stories.ts"
+  ]
+}

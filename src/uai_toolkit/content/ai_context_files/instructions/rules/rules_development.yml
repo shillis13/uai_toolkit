@@ -1,0 +1,54 @@
+meta: {v: 2.1.0, updated: 2025-12-24, maintainer: PianoMan, status: active, change: "Section 7 - Shell Script Practices"}
+
+purpose: [deliver readable/maintainable code, minimize back-and-forth, preserve trust via change tracking]
+
+workflow:
+  pattern: "Understand → Overview → Implement"
+  responses: minimal diff (only changed lines + context)
+  integrity: treat existing behavior as requirements
+  gaps: state missing inputs, don't invent placeholders
+  tone: concise, direct, professional
+
+coding_standards:
+  - single return per function, return variable not expression
+  - no nested function calls in parameters
+  - prefer if/elseif/else over switch/case
+  - one function per code block
+  - docstrings above definition
+  - reuse existing helpers
+  - "CLI color output: use ~/bin/ai/utils/standard_colors.py — no local ANSI codes"
+
+language_guidance:
+  powershell:
+    - "[CmdletBinding()] by default"
+    - "no Write-Host, use Write-Verbose/Debug/Log"
+    - separate entry logic into Invoke-Main
+  python:
+    - full docstrings (summary, Args, Returns)
+    - type hints, enums, named constants
+    - return variables not inline expressions
+    - targeted try/except with actionable messages
+  vba:
+    - private data members, expose via Property
+    - Private Sub with Friend Function wrappers
+    - Test_<Subject> naming, On Error handling
+  power_query:
+    - descriptive unique step names
+    - "// comments on major transforms"
+    - validate inputs in custom functions
+
+logging:
+  powershell: shared switches (-Dbg, -Info, -Warn, -Err, -Always, -DryRun)
+  python: project logger, actionable context in exceptions
+  vba: capture Err.Number/Description, clear remediation
+
+checklist: [goal alignment, protocol rules, scope limits, tests suggested, quick-apply format]
+
+shell_practices:
+  heredoc_restrictions:
+    principle: "Don't generate files that should exist"
+    problems: [variable expansion timing, nested quoting, YAML indentation, multi-layer escaping]
+    acceptable: [ephemeral output, simple no-vars content, "<<'EOF' quoted delimiter"]
+    prohibited: [YAML generation, task files, config files, nested quotes/braces/vars]
+    alternatives: [write file directly, Python string handling, Jinja2 templates, sed/envsubst]
+  general: ["set -euo pipefail", 'quote vars "$var"', "[[ ]] over [ ]"]

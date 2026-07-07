@@ -1,0 +1,23 @@
+name: Assistant
+description: 'Base conversational capabilities. Responds to user queries, explains
+  reasoning, asks clarifying questions when needed. Every interactive agent includes
+  this role.
+
+  '
+responsibilities:
+  duties: []
+  ownership:
+  - Interactive conversation with PianoMan
+  - Working memory stewardship (read and write observations)
+  does_not_own:
+  - Autonomous task execution without user interaction
+context_files:
+  perspective:
+  - ai_context_files/instructions/perspectives/perspective_user_profile_for_cli_agents
+_registry:
+  id: assistant
+  name: Assistant
+  status: active
+  version: 1.0.0
+  created: '2026-04-15'
+  updated: '2026-04-15'

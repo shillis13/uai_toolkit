@@ -1,0 +1,80 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="bgGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0e1225"/>
+      <stop offset="100%" stop-color="#080b16"/>
+    </linearGradient>
+    <radialGradient id="innerGlow" cx="0.5" cy="0.47" r="0.35">
+      <stop offset="0%" stop-color="#7aa2f7" stop-opacity="0.08"/>
+      <stop offset="100%" stop-color="#080b16" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="pathGlow">
+      <feGaussianBlur stdDeviation="10" result="blur"/>
+      <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+    </filter>
+    <filter id="sparkleGlow">
+      <feGaussianBlur stdDeviation="10"/>
+    </filter>
+    <filter id="nodeGlow">
+      <feGaussianBlur stdDeviation="16"/>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect x="12" y="12" width="1000" height="1000" rx="200" ry="200" fill="url(#bgGrad)" stroke="#1a2040" stroke-width="3"/>
+  <rect x="12" y="12" width="1000" height="1000" rx="200" ry="200" fill="url(#innerGlow)"/>
+
+  <!-- ===== OUTER HEXAGONAL FRAME ===== -->
+  <!-- Subtle geometric container — lighter than background -->
+  <polygon points="512,160 790,320 790,640 512,800 234,640 234,320"
+           fill="none" stroke="#1e2740" stroke-width="2.5" opacity="0.5"/>
+
+  <!-- ===== THREE PRIMARY PATHS — forming an inner triangle ===== -->
+  <!-- Connecting the three AI platform "nodes" -->
+
+  <!-- Orange to Purple path (top-left to top-right through apex) -->
+  <line x1="340" y1="620" x2="512" y2="260" stroke="#e07a4a" stroke-width="36" opacity="0.08"/>
+  <line x1="340" y1="620" x2="512" y2="260" stroke="#e07a4a" stroke-width="10" opacity="0.6" filter="url(#pathGlow)"/>
+
+  <!-- Purple to Blue path (apex to bottom-right) -->
+  <line x1="512" y1="260" x2="684" y2="620" stroke="#8b5cf6" stroke-width="36" opacity="0.08"/>
+  <line x1="512" y1="260" x2="684" y2="620" stroke="#8b5cf6" stroke-width="10" opacity="0.6" filter="url(#pathGlow)"/>
+
+  <!-- Blue to Orange path (bottom-right to bottom-left) -->
+  <line x1="684" y1="620" x2="340" y2="620" stroke="#4285f4" stroke-width="36" opacity="0.08"/>
+  <line x1="684" y1="620" x2="340" y2="620" stroke="#4285f4" stroke-width="10" opacity="0.6" filter="url(#pathGlow)"/>
+
+  <!-- ===== SECONDARY PATHS — to center ===== -->
+  <line x1="340" y1="620" x2="512" y2="480" stroke="#e07a4a" stroke-width="4" opacity="0.35" stroke-dasharray="8 8"/>
+  <line x1="512" y1="260" x2="512" y2="480" stroke="#8b5cf6" stroke-width="4" opacity="0.35" stroke-dasharray="8 8"/>
+  <line x1="684" y1="620" x2="512" y2="480" stroke="#4285f4" stroke-width="4" opacity="0.35" stroke-dasharray="8 8"/>
+
+  <!-- ===== THREE PLATFORM NODES ===== -->
+  <!-- Claude Orange — bottom-left -->
+  <circle cx="340" cy="620" r="40" fill="#e07a4a" opacity="0.12" filter="url(#nodeGlow)"/>
+  <circle cx="340" cy="620" r="26" fill="#111827" stroke="#e07a4a" stroke-width="6"/>
+  <circle cx="340" cy="620" r="10" fill="#e07a4a" opacity="0.9"/>
+
+  <!-- Codex Purple — top -->
+  <circle cx="512" cy="260" r="40" fill="#8b5cf6" opacity="0.12" filter="url(#nodeGlow)"/>
+  <circle cx="512" cy="260" r="26" fill="#111827" stroke="#8b5cf6" stroke-width="6"/>
+  <circle cx="512" cy="260" r="10" fill="#8b5cf6" opacity="0.9"/>
+
+  <!-- Gemini Blue — bottom-right -->
+  <circle cx="684" cy="620" r="40" fill="#4285f4" opacity="0.12" filter="url(#nodeGlow)"/>
+  <circle cx="684" cy="620" r="26" fill="#111827" stroke="#4285f4" stroke-width="6"/>
+  <circle cx="684" cy="620" r="10" fill="#4285f4" opacity="0.9"/>
+
+  <!-- ===== CENTRAL CONVERGENCE ===== -->
+  <!-- Primary sparkle — where all paths meet -->
+  <path d="M512 410 L530 460 L580 480 L530 500 L512 550 L494 500 L444 480 L494 460 Z"
+        fill="#fffbe6" opacity="0.95"/>
+  <path d="M512 410 L530 460 L580 480 L530 500 L512 550 L494 500 L444 480 L494 460 Z"
+        fill="#ffffff" opacity="0.3" filter="url(#sparkleGlow)"/>
+
+  <!-- ===== SUBTLE HEXAGON VERTEX SPARKLES ===== -->
+  <path d="M790 320 L796 336 L812 342 L796 348 L790 364 L784 348 L768 342 L784 336 Z"
+        fill="#ffffff" opacity="0.12"/>
+  <path d="M234 640 L238 650 L248 654 L238 658 L234 668 L230 658 L220 654 L230 650 Z"
+        fill="#ffffff" opacity="0.08"/>
+</svg>

@@ -1,0 +1,194 @@
+metadata:
+  name: ai-comms
+  version: 1.0.0
+  created: 2026-04-16
+  status: active
+  description: 'Multi-step workflow for communicating with other AI sessions — sending
+    prompts, delegating work, monitoring responses, and coordinating across platforms.
+    Covers both inner-session (subagent dispatch) and inter-session (CLI-to-CLI) communication.
+
+    '
+trigger:
+  description: 'Use when you need to communicate with another AI session, delegate
+    work to another CLI agent, send a prompt to a running session, monitor a session''s
+    progress, or coordinate multi-agent work.
+
+    '
+  patterns:
+  - send to {session/agent}
+  - delegate to {platform}
+  - check on {session}
+  - launch a {role} to {task}
+  - ask {gemini/codex/claude} to {task}
+  - multi-agent coordination
+  - cross-platform work dispatch
+context_files:
+  processes:
+  - ai_context_files/instructions/how_tos/instr_session_messaging
+  - ai_context_files/instructions/how_tos/instr_agent_operations
+  - ai_context_files/instructions/how_tos/instr_federated_memory
+  procedures:
+  - ai_context_files/instructions/how_tos/instr_activity_logging
+tools:
+  messages:
+    description: File-based async messaging between AI instances
+    mcp_server: messages
+    operations:
+    - send_direct: Send a message to a specific AI instance
+    - broadcast: Send a message to all instances
+    - list_direct: Check your inbox
+    - list_broadcasts: Check broadcast messages
+    - check_responses: Check for replies to your messages
+    - acknowledge: Mark a message as read
+  prompting:
+    description: Send prompts to and observe running terminal sessions
+    mcp_server: prompting
+    operations:
+    - send_prompt: Send a prompt to a session with closed-loop delivery
+    - send_to_session: Low-level text send to a terminal session
+    - is_busy: Check if a session is currently processing
+    - wait_response: Wait for a session to finish responding
+    - observe_session: Capture recent terminal output from a session
+    - list_sessions: List available terminal sessions
+    - read_history: Read conversation history from a session
+  slash_commands:
+    description: Send built-in CLI slash commands to any session, including yourself
+    mcp_server: comms
+    operations:
+    - send_slash_command: 'Send a slash command (e.g. /compact, /clear, /color, /rename, /fast) to any session. Internally
+        constructs a send_prompt call.'
+    notes:
+    - 'Preferred identifier: prompt:// URI (e.g. prompt://claude-cli/Relay)'
+    - 'Also accepts: tracking ID, CLI UUID, terminal name, display name, or ''self'''
+    - 'Use identifier=''self'' to target your own session — resolves via AI_TRACKING_ID'
+    - This is how you programmatically invoke built-in CLI commands that are not exposed as MCP tools or skills
+    - 'Common self-targeted commands: /compact (trigger compaction), /clear (clear context), /color (change prompt color)'
+    - 'Common cross-session commands: /compact (trigger compaction on another session), /clear'
+    - The command is auto-prefixed with '/' if missing, and Enter is pressed automatically
+  cli_agent:
+    description: Launch and manage CLI agent sessions
+    mcp_server: cli-agent
+    operations:
+    - launch_agent: Launch a generic CLI agent with role and task
+    - launch_librarian: Launch a librarian agent
+    - launch_dev_lead: Launch a dev lead agent
+    - launch_peer_review: Launch a peer review agent
+    - launch_tester: Launch a tester agent
+    - launch_researcher: Launch a researcher agent
+    - launch_validator: Launch a validator agent
+    - launch_custodian: Launch a custodian agent
+    - list_sessions: List running agent sessions
+    - get_status: Get status of a specific session
+    - read_session: Read recent output from a session
+    - kill: Terminate a session
+    - attach: Attach to a session for interactive use
+    - send_keys: Send keystrokes to a session
+workflow:
+  overview: 'AI communication has two modes: inner (subagents within your session
+    — a black box to others) and inter (between full CLI sessions — visible, persistent,
+    cross-platform). Choose the right mode for the job.
+
+    '
+  decision_tree:
+  - question: Does this work need its own persistent session with full context?
+    true: Use inter-session communication (launch_agent or send_prompt)
+    false: Use inner-session (Agent subagent tool — it's a black box, fast, no setup)
+  - question: Does the work need to survive if your session ends?
+    true: Inter-session — the other CLI session persists independently
+    false: Inner-session subagent is fine
+  - question: Do you need to coordinate with an ALREADY RUNNING session?
+    true: Use prompting:send_prompt or prompting:send_to_session
+    false: Launch a new session with cli-agent:launch_agent
+  - question: Does the target need to be a specific platform (Gemini, Codex)?
+    true: Use cli-agent:launch_agent with platform parameter
+    false: Default to Claude CLI for most tasks
+  inner_comms:
+    name: Subagent Dispatch (Inner)
+    description: 'Use the Agent tool to spawn subagents within your session. These
+      are ephemeral — they run, return results, and disappear. Other sessions cannot
+      see or interact with them.
+
+      '
+    when:
+    - Quick research or file search
+    - Parallel independent tasks (e.g., search 3 directories simultaneously)
+    - Work that doesn't need persistence or external visibility
+    how:
+    - Use the Agent tool with appropriate subagent_type
+    - Set run_in_background=true for parallel dispatch
+    - Results come back to you — you synthesize
+    constraints:
+    - Subagents cannot launch other CLI sessions
+    - Subagents share your context window cost
+    - Subagents cannot use MCP tools (depending on agent type)
+  inter_comms:
+    name: Cross-Session Communication (Inter)
+    description: 'Launch or communicate with independent CLI sessions (Claude, Codex,
+      Gemini). These are full sessions with their own context, tools, and persistence.
+      This is orchestration — you are coordinating peers, not spawning helpers.
+
+      '
+    patterns:
+      launch_and_wait:
+        name: Launch → Wait → Collect
+        description: Launch an agent with a task. Include YOUR session name so the agent can send results back via send_prompt.
+        steps:
+        - '1. Launch: cli-agent:launch_agent with role, task description, platform. Include in the prompt: "Send your results back to session {your_session_name} via prompting:send_prompt"'
+        - '2. Wait: prompting:wait_response for the agent to send_prompt back to you'
+        - '3. The result arrives as a prompt in YOUR session — no screen-scraping needed'
+        - '4. Log: Record what was delegated and what came back'
+        notes:
+        - 'CRITICAL: The responder must use prompting:send_prompt to send results back. Do NOT rely on observe_session to read terminal output — that is screen-scraping and unreliable.'
+        - 'Always include your session name in the task so the responder knows where to send results.'
+        - 'prompting:observe_session is for progress monitoring only, not for collecting results.'
+      prompt_existing:
+        name: Prompt Running Session
+        description: Send work to an already-running session. Include YOUR session name for the response.
+        steps:
+        - '1. Find: prompting:list_sessions to find the target'
+        - '2. Check: prompting:is_busy — wait if session is mid-response'
+        - '3. Send: prompting:send_prompt with the task/question. Include: "Send your response back to session {your_session_name} via prompting:send_prompt"'
+        - '4. Wait: prompting:wait_response for the response to arrive in YOUR session'
+      async_messaging:
+        name: Async File-Based Messaging
+        description: Send a message without waiting for immediate response
+        steps:
+        - '1. Send: messages:send_direct to target instance'
+        - '2. Continue: Do other work — don''t block'
+        - '3. Check: messages:check_responses periodically'
+        - '4. Acknowledge: messages:acknowledge when processed'
+      orchestrate_parallel:
+        name: Parallel Multi-Agent Orchestration
+        description: Launch multiple agents for independent tasks. Each sends results back via send_prompt.
+        steps:
+        - '1. Plan: Decompose work into independent tasks'
+        - '2. Launch: cli-agent:launch_agent for each task. Include your session name in each prompt for response routing.'
+        - '3. Wait: Results arrive in YOUR session as each agent completes and send_prompts back'
+        - '4. Synthesize: Combine results, resolve conflicts, produce final output'
+        - '5. Clean up: cli-agent:kill completed sessions if not needed'
+  guidelines:
+  - Always log what you delegate and to whom (action logging procedure)
+  - Always check is_busy before sending to a session — don't interrupt mid-response
+  - Use send_prompt (closed-loop) over send_to_session (fire-and-forget) for reliable delivery
+  - 'AI-to-AI responses MUST use send_prompt — the responder sends results back to the requester''s session via prompting:send_prompt. Never rely on observe_session or read_session for collecting results. Those are for progress monitoring only.'
+  - Always include your session name in task prompts so the responder knows where to send results
+  - When orchestrating, you are responsible for the quality of delegated work — verify results
+  - 'Cross-platform dispatch: use Gemini for search/research, Codex for code review, Claude for complex reasoning'
+  - Never assume a launched agent completed successfully — always check status or read output
+  - Working memory updates from other sessions may need manual federation — check memory slots
+  anti_patterns:
+  - Don't use inter-session comms for simple tasks a subagent can handle in seconds
+  - Don't launch an agent and forget about it — always have a collection step
+  - Don't use observe_session or read_session to collect AI-to-AI results — that's screen-scraping. The responder must send_prompt the results back.
+  - Don't forget to include your session name in task prompts — without it the responder can't send results back
+  - Don't send prompts to sessions that haven't finished bootstrapping
+  - Don't use messages:broadcast for targeted communication — use send_direct
+  - Don't orchestrate when you should just do the work yourself — overhead must be
+    justified
+_registry:
+  id: ai_comms
+  name: ai-comms
+  status: active
+  version: 1.0.0
+  created: '2026-04-16'
+  updated: '2026-04-16'

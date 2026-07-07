@@ -1,0 +1,243 @@
+metadata:
+  name: cli_interactive
+  version: 1.0.0
+  created: 2026-03-17
+  updated: 2026-03-17
+  created_by: Claude CLI + PianoMan
+  description: |
+    Claude CLI (Claude Code) interactive session configuration.
+    For direct conversation with PianoMan via UnifiedCLI or terminal.
+
+    Key differences from Desktop role:
+      - 1M context window (vs 200K Desktop)
+      - Bash has FULL filesystem access (no sandbox)
+      - Native tools: Read, Edit, Write, Grep, Glob, Bash, Agent (subagents)
+      - No Desktop Commander or Codex MCP
+      - User approves tool calls via permission model
+
+    Tiered load_sequence: auto loads ~10K tokens (<1% of 1M context).
+    At 1M, we can afford generous auto-loading without delegation pressure.
+
+# Unified schema: load_sequence with tiers
+# - auto: Load before first response (mandatory)
+# - topic: Load when triggers match conversation content
+# - demand: Load only when explicitly needed
+
+load_sequence:
+  auto:
+    instruction: |
+      BEFORE responding to the user's first message, use the Read tool
+      to load each file below. This is not optional. At 1M context,
+      the full auto tier costs <1% — never skip for context conservation.
+    files:
+      # === REGISTRIES (load first — orientation) ===
+      - pointer: REF:ai_general/docs/20_registries/glossary_knowledge_index.latest.condensed.yml
+        tokens: ~1316
+        purpose: "Term→file mapping for bootstrap problem. Load FIRST to recognize domain vocabulary."
+
+      - pointer: REF:ai_general/docs/20_registries/tools_manifest.latest.condensed.yml
+        tokens: ~210
+        purpose: "Script paths (~/bin/ai/*), MCP servers, CLI wrappers. CANNOT be discovered otherwise."
+
+      - pointer: REF:ai_general/docs/20_registries/directory_structure_reference.latest.condensed.yml
+        tokens: ~275
+        purpose: "Directory layout - know the filesystem structure"
+
+      - pointer: REF:ai_general/docs/20_registries/INVENTORY.latest.condensed.yml
+        tokens: ~155
+        purpose: "What exists where - high-level asset inventory"
+
+      - pointer: REF:ai_general/docs/20_registries/document_registry.latest.condensed.yml
+        tokens: ~310
+        purpose: "Document index - where docs live by category"
+
+      # === INSTRUCTIONS (behavioral rules) ===
+      - pointer: REF:ai_general/docs/70_instructions/instr_operating_principles.latest.condensed.yml
+        tokens: ~1037
+        purpose: "Core operating principles - partnership, communication, radical honesty, failure response"
+
+      - pointer: REF:ai_general/docs/70_instructions/claude_cli/instr_cli_context_and_tools.condensed.yml
+        tokens: ~600
+        purpose: "CLI-specific context/tool rules. Replaces Desktop's context_conservations."
+
+      - pointer: REF:ai_general/docs/70_instructions/claude_cli/instr_cli_environment_overview.condensed.yml
+        tokens: ~450
+        purpose: "CLI platform capabilities — 1M context, full bash, native tools, no Desktop Commander."
+
+      - pointer: REF:ai_general/docs/70_instructions/claude_cli/instr_cli_delegation.condensed.yml
+        tokens: ~800
+        purpose: "CLI-specific delegation patterns. Direct execution default, Agent subagents for parallel, CLI Coordination for cross-agent."
+
+      - pointer: REF:ai_general/docs/70_instructions/instr_file_conventions.latest.condensed.yml
+        tokens: ~1126
+        purpose: "Naming, versioning, symlinks, pre-write directory listing rule"
+
+      - pointer: REF:ai_general/docs/70_instructions/instr_development.latest.condensed.yml
+        tokens: ~771
+        purpose: "Coding standards - single return, docstrings, shell practices, language-specific guidance"
+
+      - pointer: REF:ai_general/docs/70_instructions/instr_workstate_tracking.latest.condensed.yml
+        tokens: ~450
+        purpose: "Session state protocol - register workstate file, log state changes as they happen"
+
+      - pointer: REF:ai_general/docs/70_instructions/instr_action_logging.latest.yml
+        tokens: ~180
+        purpose: "Log before acting - enables interruption recovery and audit trails"
+
+      # === SPECS ===
+      - pointer: REF:ai_general/docs/40_specs/spec_response_footer.latest.condensed.yml
+        tokens: ~350
+        purpose: "Response footer format - MUST include on every response in ai_root workspace"
+
+      # === PROMOTED from Desktop's topic tier (cheap at 1M, always useful) ===
+      - pointer: REF:ai_general/docs/70_instructions/instr_feedback.latest.condensed.yml
+        tokens: ~180
+        purpose: "How to log observations, suggestions, issues discovered during work"
+
+      - pointer: REF:ai_general/docs/70_instructions/instr_todo.latest.condensed.yml
+        tokens: ~300
+        purpose: "How to create TODOs for discovered work outside current scope"
+
+      - pointer: REF:ai_general/docs/10_architecture/architecture_overview.latest.condensed.yml
+        tokens: ~1226
+        purpose: |
+          System architecture overview. Provides broad context for most work.
+          NOTE: References 200K context and "bash: sandbox" — these are Desktop-specific.
+          CLI has 1M context and real bash.
+
+  topic:
+    instruction: |
+      When conversation touches triggers listed for a file, load that file before responding.
+      At 1M context, err toward loading rather than skipping — the cost is low.
+    files:
+      - pointer: REF:ai_general/docs/10_architecture/architectural_layer_model.latest.condensed.yml
+        tokens: ~1268
+        triggers: [layers, abstraction, directory tiers]
+
+      - pointer: REF:ai_general/docs/70_instructions/claude/instr_pointer_loading.latest.condensed.yml
+        tokens: ~724
+        triggers: [pointer, REF:, loading docs]
+        depends_on:
+          - ai_general/docs/50_schemas/schema_pointer_syntax.latest.condensed.yml
+
+      - pointer: REF:ai_general/docs/70_instructions/instr_writing.latest.condensed.yml
+        tokens: ~1150
+        triggers: [writing, documentation, prose style, table formatting]
+
+      - pointer: REF:ai_general/docs/70_instructions/instr_chat_condensation.latest.condensed.yml
+        tokens: ~350
+        triggers: [condensation, condense, chat history, librarian wave, semantic summary]
+        abstract: |
+          Guidelines for condensing chat history chunks to semantic summaries.
+          Target: 70-90% reduction. Output: .condensed.yml alongside source.
+
+      - pointer: REF:ai_general/docs/40_specs/spec_message_insert.latest.condensed.yml
+        tokens: ~500
+        triggers: [message insert, INSERT block, cross-platform persistence, Web/iOS memory]
+
+      - pointer: REF:ai_general/docs/30_protocols/protocol_taskCoordination.latest.condensed.yml
+        tokens: ~2969
+        triggers: [task coordination, req_, task lifecycle, claim, delegation]
+
+      # NOTE: Desktop has claude_context_quick_notes and instr_claude_specific in topic tier.
+      # Excluded here:
+      #   - claude_context_quick_notes: redundant with instr_context_conservations (now annotated for CLI)
+      #   - instr_claude_specific: empty placeholder (no content)
+      #   - know_codex_mcp: Desktop-only tool (CLI has no Codex MCP)
+
+  demand:
+    instruction: |
+      Load these only when user explicitly requests or task requires the specific content.
+    files:
+      - pointer: REF:ai_general/docs/60_playbooks/MAINTENANCE_PLAYBOOK.latest.md
+        tokens: ~1067
+
+      - pointer: REF:ai_general/docs/60_playbooks/playbook.directory_watcher_guide.latest.md
+        tokens: ~2061
+
+      # BROKEN SYMLINK: target versions/parallel_orchestration_case_study_v1.0.yml does not exist
+      # - pointer: REF:ai_general/docs/60_playbooks/parallel_orchestration_case_study.latest.yml
+      #   tokens: ~950
+      #   triggers: [codex validation, iterative review, parallel workers, quality loop]
+
+      # BROKEN SYMLINK: target versions/cli_agent_operations_v1.0.yml does not exist
+      # - pointer: REF:ai_general/docs/60_playbooks/cli_agent_operations.latest.yml
+      #   tokens: ~430
+
+      - pointer: REF:ai_general/docs/60_playbooks/playbook.cli_browser_automation_guide.latest.md
+        tokens: ~3029
+
+      - pointer: REF:ai_general/docs/60_playbooks/playbook.gemini_canvas_automation.latest.condensed.yml
+        tokens: ~350
+        triggers: [gemini, canvas, artifact download, monaco editor]
+
+      - pointer: REF:ai_general/docs/60_playbooks/playbook.chatgpt_browser_automation.latest.condensed.yml
+        tokens: ~400
+        triggers: [chatgpt, browser automation, cross-platform test]
+
+      - pointer: REF:ai_general/docs/60_playbooks/playbook.documentation_maintenance.latest.condensed.yml
+        tokens: ~400
+        triggers: [documentation, versioning, symlinks, doc maintenance, create playbook]
+
+      - pointer: REF:ai_general/docs/60_playbooks/playbook.ai_orchestration.md
+        tokens: ~650
+        triggers: [orchestration, parallel workers, spawn agents, tmux]
+
+      - pointer: REF:ai_general/docs/50_schemas/schema.playbook.latest.condensed.yml
+        tokens: ~250
+        triggers: [playbook structure, playbook schema, playbook format]
+
+      - pointer: REF:ai_general/docs/50_schemas/schema_pointer_syntax.latest.condensed.yml
+        tokens: ~582
+
+      - pointer: REF:ai_general/docs/50_schemas/schema_taskFile.latest.condensed.yml
+        tokens: ~575
+        triggers: [task file, task schema, req_ format]
+
+      - pointer: REF:ai_general/docs/30_protocols/protocol_ai_chat_orchestration.latest.condensed.yml
+        tokens: ~1143
+
+      - pointer: REF:ai_general/docs/30_protocols/protocol_reference_pointers.latest.condensed.yml
+        tokens: ~891
+
+# CLI-specific settings
+platform:
+  name: Claude CLI (Claude Code)
+  context_window: 1M tokens
+  bash: full filesystem access (no sandbox)
+  native_tools: [Read, Edit, Write, Grep, Glob, Bash, Agent]
+  mcp_tools: [Desktop Commander, Codex MCP, and all configured MCP servers]
+  permission_model: user approves tool calls
+  note: |
+    Claude Code interactive sessions have access to ALL configured MCP servers,
+    including Desktop Commander and Codex MCP. This is different from CLI *agents*
+    launched via claude_cli.py, which may have restricted MCP access.
+    Native tools are preferred for most work, but MCP tools add capabilities
+    (e.g., Desktop Commander for Excel/DOCX, Codex MCP for focused tasks).
+
+memory_path: ai_memories/80_working_memory
+
+session_log:
+  path: ai_claude_cli/logs/sessions/{YYYY-MM}/
+  filename: claude_cli_{YYYYMMDD}_{HHMMSS}_{4char_random}.log
+  first_line: |
+    === SESSION START ===
+    Session ID: {filename_without_ext}
+    Timestamp: {ISO_TIMESTAMP}
+    Role: cli_interactive
+    Task: <brief task description>
+
+# Interactive — no scheduled duties
+duties: []
+
+ownership:
+  - Interactive conversation with PianoMan
+  - Direct execution via bash and native tools
+  - Delegation to CLI agents and Agent subagents
+  - Working memory stewardship (direct filesystem writes)
+
+# Token budget at 1M:
+#   auto tier: ~10,359 tokens (~1.0%)
+#   memory (manifest + slots 03-07): ~3,000 tokens (~0.3%)
+#   total bootstrap: ~13,359 tokens (~1.3%)
+#   remaining for conversation: ~986,641 tokens

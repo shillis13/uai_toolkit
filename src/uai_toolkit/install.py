@@ -11,7 +11,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -24,7 +26,15 @@ HOOK_WIRING = [
     ("PostToolUse", "Edit|Write|MultiEdit", "ai-fa-track-write"),
 ]
 
-INSTANCE_SUBDIRS = ["data", "data/file_access", "logs"]
+INSTANCE_SUBDIRS = [
+    "data", "data/file_access", "logs",
+    "ai_general", "ai_general/data/context_files",
+    "ai_memories/80_working_memory", "ai_memories/40_histories/indexes",
+]
+
+# Content corpora shipped in the package and materialized into AI_ROOT on install
+# (source: <package>/content/<name>  ->  AI_ROOT/ai_general/<name>).
+CONTENT_CORPORA = ["ai_context_files", "ai_profiles"]
 
 # MCP servers to register: (name, module). Command is the active python -m module.
 MCP_SERVERS = [
@@ -118,6 +128,12 @@ def cmd_init(args: argparse.Namespace) -> int:
         else:
             print("  ! packaged config.example.toml not found; skipping config")
 
+    # 2.5) content materialization: seed knowledge base + build guidance registry
+    if getattr(args, "no_content", False):
+        print("  --no-content: skipping knowledge base + registry")
+    else:
+        materialize_content(root, dry, tag)
+
     # 3) hook wiring (idempotent merge)
     settings = {}
     if settings_path.is_file():
@@ -163,6 +179,55 @@ def cmd_init(args: argparse.Namespace) -> int:
     return 0
 
 
+def _packaged_content() -> Path | None:
+    """Locate the shipped content/ dir (knowledge base + composition layer)."""
+    cand = Path(__file__).resolve().parent / "content"
+    return cand if cand.is_dir() else None
+
+
+def materialize_content(root: Path, dry: bool, tag: str) -> None:
+    """Copy shipped corpora into AI_ROOT (never overwrite) and build the registry.
+
+    Idempotent: corpora already present in the instance are left untouched (the
+    user may have edited them); only missing ones are seeded. The guidance
+    registry is then (re)built from whatever the instance now holds.
+    """
+    content = _packaged_content()
+    if not content:
+        print("  ! packaged content/ not found; skipping knowledge base + registry")
+        return
+
+    ai_general = root / "ai_general"
+    for name in CONTENT_CORPORA:
+        src = content / name
+        dest = ai_general / name
+        if not src.is_dir():
+            print(f"  ! shipped corpus missing: {src.name} — skipping")
+            continue
+        if dest.exists():
+            print(f"  {name} present — leaving as-is: {dest}")
+            continue
+        print(f"  {tag}seed corpus: {name} -> {dest}")
+        if not dry:
+            shutil.copytree(src, dest)
+
+    # Build the guidance registry from the now-populated instance.
+    print(f"  {tag}build guidance registry (scan_registry --full)")
+    if not dry:
+        env = {**os.environ, "AI_ROOT": str(root)}
+        proc = subprocess.run(
+            [sys.executable, "-m", "uai_toolkit.guidance.scan_registry", "--full"],
+            env=env, capture_output=True, text=True,
+        )
+        if proc.returncode != 0:
+            print(f"  ! registry build failed (rc={proc.returncode}); guidance tools "
+                  f"will report a missing registry until rebuilt:\n"
+                  f"    {(proc.stderr or proc.stdout).strip().splitlines()[-1] if (proc.stderr or proc.stdout).strip() else '(no output)'}")
+        else:
+            tail = (proc.stdout or "").strip().splitlines()
+            print(f"    {tail[-1] if tail else 'registry built'}")
+
+
 def _packaged_example() -> Path | None:
     """Locate config.example.toml shipped alongside the package, if present."""
     # repo layout: <root>/config.example.toml, two parents up from this file's package
@@ -187,6 +252,8 @@ def main(argv: list[str] | None = None) -> int:
     p_init = sub.add_parser("install", aliases=["init"], help="Install: create AI_ROOT, wire hooks + register MCP servers")
     p_init.add_argument("--ai-root", help="Instance root (default: $AI_ROOT / discovery)")
     p_init.add_argument("--settings", help="Claude settings.json (default: ~/.claude/settings.json)")
+    p_init.add_argument("--no-content", action="store_true",
+                        help="skip seeding the knowledge base + building the guidance registry")
     p_init.add_argument("--mcp-config", help="MCP client config for server registration (default: ~/.claude.json)")
     p_init.add_argument("--dry-run", action="store_true", help="Show actions without writing")
     p_init.set_defaults(func=cmd_init)

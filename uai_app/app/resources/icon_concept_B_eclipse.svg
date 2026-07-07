@@ -1,0 +1,78 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="bgGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0e1225"/>
+      <stop offset="100%" stop-color="#080b16"/>
+    </linearGradient>
+    <filter id="ringGlow">
+      <feGaussianBlur stdDeviation="14" result="blur"/>
+      <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+    </filter>
+    <filter id="sparkleGlow">
+      <feGaussianBlur stdDeviation="10"/>
+    </filter>
+    <filter id="coreGlow">
+      <feGaussianBlur stdDeviation="30"/>
+    </filter>
+    <radialGradient id="intersectGlow" cx="0.5" cy="0.5" r="0.15">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.2"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect x="12" y="12" width="1000" height="1000" rx="200" ry="200" fill="url(#bgGrad)" stroke="#1a2040" stroke-width="3"/>
+
+  <!-- ===== THREE ORBITAL RINGS ===== -->
+  <!-- Each ring is an ellipse rotated at 120deg intervals -->
+
+  <!-- Claude Orange ring — tilted left -->
+  <g transform="rotate(-30, 512, 490)">
+    <ellipse cx="512" cy="490" rx="300" ry="180"
+             stroke="#e07a4a" stroke-width="42" fill="none" opacity="0.1"/>
+    <ellipse cx="512" cy="490" rx="300" ry="180"
+             stroke="#e07a4a" stroke-width="18" fill="none" opacity="0.7"
+             filter="url(#ringGlow)"/>
+    <ellipse cx="512" cy="490" rx="300" ry="180"
+             stroke="#ff9966" stroke-width="4" fill="none" opacity="0.4"/>
+  </g>
+
+  <!-- Codex Purple ring — tilted right -->
+  <g transform="rotate(30, 512, 490)">
+    <ellipse cx="512" cy="490" rx="300" ry="180"
+             stroke="#8b5cf6" stroke-width="42" fill="none" opacity="0.1"/>
+    <ellipse cx="512" cy="490" rx="300" ry="180"
+             stroke="#8b5cf6" stroke-width="18" fill="none" opacity="0.7"
+             filter="url(#ringGlow)"/>
+    <ellipse cx="512" cy="490" rx="300" ry="180"
+             stroke="#a78bfa" stroke-width="4" fill="none" opacity="0.4"/>
+  </g>
+
+  <!-- Gemini Blue ring — horizontal -->
+  <g transform="rotate(90, 512, 490)">
+    <ellipse cx="512" cy="490" rx="300" ry="180"
+             stroke="#4285f4" stroke-width="42" fill="none" opacity="0.1"/>
+    <ellipse cx="512" cy="490" rx="300" ry="180"
+             stroke="#4285f4" stroke-width="18" fill="none" opacity="0.7"
+             filter="url(#ringGlow)"/>
+    <ellipse cx="512" cy="490" rx="300" ry="180"
+             stroke="#6ea8ff" stroke-width="4" fill="none" opacity="0.4"/>
+  </g>
+
+  <!-- ===== CENTER INTERSECTION GLOW ===== -->
+  <circle cx="512" cy="490" r="80" fill="#ffffff" opacity="0.04" filter="url(#coreGlow)"/>
+  <circle cx="512" cy="490" r="45" fill="#ffffff" opacity="0.06" filter="url(#coreGlow)"/>
+  <circle cx="512" cy="490" r="120" fill="url(#intersectGlow)"/>
+
+  <!-- ===== PRIMARY SPARKLE ===== -->
+  <path d="M512 420 L530 470 L580 490 L530 510 L512 560 L494 510 L444 490 L494 470 Z"
+        fill="#fffbe6" opacity="0.95"/>
+  <path d="M512 420 L530 470 L580 490 L530 510 L512 560 L494 510 L444 490 L494 470 Z"
+        fill="#ffffff" opacity="0.35" filter="url(#sparkleGlow)"/>
+
+  <!-- ===== SECONDARY SPARKLES ===== -->
+  <path d="M740 250 L746 268 L764 274 L746 280 L740 298 L734 280 L716 274 L734 268 Z"
+        fill="#ffffff" opacity="0.25"/>
+  <path d="M280 720 L284 732 L296 736 L284 740 L280 752 L276 740 L264 736 L276 732 Z"
+        fill="#ffffff" opacity="0.15"/>
+</svg>

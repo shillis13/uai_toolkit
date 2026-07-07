@@ -1,0 +1,17 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "baseUrl": ".",
+    "composite": false,
+    "declaration": false,
+    "declarationMap": false,
+    "paths": {
+      "@contracts/*": ["../../architecture/contracts/*"]
+    }
+  },
+  "include": [
+    "src/**/*.ts",
+    "../../architecture/contracts/**/*.ts"
+  ]
+}

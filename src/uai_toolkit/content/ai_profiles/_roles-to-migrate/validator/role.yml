@@ -1,0 +1,30 @@
+metadata:
+  name: validator
+  version: 1.0.0
+  created: 2026-02-03
+  updated: 2026-02-03
+
+description: |
+  Adversarial validator — checks synthesized claims against source evidence.
+  Operates as an I&T (Integration & Testing) role: success is measured by
+  faults found, not results confirmed. Generic role applicable to research
+  synthesis, chat condensation, knowledge extraction, and cross-AI federation.
+
+platform: any  # Must be a DIFFERENT model than the synthesizer. Gemini excluded (runs as shards).
+
+context_files:
+  - REF:ai_general/docs/70_instructions/user_profile_for_cli_agents.yml
+  - REF:ai_general/docs/70_instructions/instr_workstate_tracking.latest.condensed.yml
+  - REF:ai_general/docs/70_instructions/instr_action_logging.latest.yml
+
+instructions_file: instructions.md
+
+ownership:
+  - Claim-by-claim evidence verification
+  - Structured challenge generation
+  - Grounded/unsupported/partial verdicts
+
+does_not_own:
+  - Original search or synthesis (that's the researcher/synthesizer)
+  - Direct shard access (works only from shard result files)
+  - Final delivery to user (pipeline script handles that)

@@ -1,0 +1,22 @@
+meta: {v: 1.0.0, updated: 2025-01-31, maintainer: PianoMan, status: auxiliary}
+
+overview: JS REPL for lint/pattern-match/summarize across languages. Small composable helpers, results chainable.
+
+checks_by_language:
+  python: [imports before code, unused imports, missing docstrings, snake_case drift, dependency mapping]
+  powershell: [param blocks, CmdletBinding, unified logging, naming, synopsis headers]
+  js_ts: [import/export symmetry, unused vars, JSDoc presence, declaration style]
+  md_yaml_shell: [heading hierarchy, fenced code, duplicate keys, unquoted shell vars]
+
+helpers:
+  validatePythonStructure: |
+    split lines, track seenFunction, flag imports after def/class
+  analyzeFileStructure: |
+    Object.entries(patterns[lang]).reduce → hits[name]=match count
+
+patterns:
+  batch: "Object.entries(files).map → {name, metrics}"
+  dependency_graphs: extract call sites, flag unused/circular
+  dashboards: aggregate LOC, functions, comments, complexity
+
+future: [pluggable rule sets, visual outputs (graphs), CI/pre-commit hooks]

@@ -1,0 +1,25 @@
+name: Worker
+description: 'Executes assigned tasks. Claims work, performs it, reports results.
+  Follows task coordination protocol for lifecycle management.
+
+  '
+responsibilities:
+  duties: []
+  ownership:
+  - Executing claimed tasks to completion
+  - Reporting results and status
+  does_not_own:
+  - Task creation or assignment (dev_lead/lead_cli domain)
+  - Task prioritization
+context_files:
+  procedures:
+  - ai_context_files/instructions/how_tos/instr_workstate_tracking
+  - ai_context_files/instructions/how_tos/instr_todo
+  - ai_context_files/instructions/how_tos/instr_activity_logging
+_registry:
+  id: worker
+  name: Worker
+  status: active
+  version: 1.0.0
+  created: '2026-04-15'
+  updated: '2026-04-15'

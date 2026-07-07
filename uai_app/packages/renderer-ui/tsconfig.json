@@ -1,0 +1,21 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "baseUrl": ".",
+    "composite": false,
+    "declaration": false,
+    "declarationMap": false,
+    "paths": {
+      "@uai/shared": ["../shared/src/index.ts"],
+      "@uai/shared/*": ["../shared/src/*"],
+      "@contracts/*": ["../../architecture/contracts/*"]
+    }
+  },
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    "../shared/src/**/*.ts",
+    "../../architecture/contracts/**/*.ts"
+  ]
+}

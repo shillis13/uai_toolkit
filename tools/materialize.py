@@ -26,9 +26,15 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from manifest import IMPORT_REWRITES, MODULES, SCRUB_PATTERNS, SOURCE_ROOTS  # noqa: E402
+from manifest import (  # noqa: E402
+    APP_EXCLUDE_DIRS, APP_EXCLUDE_FILES, APP_TEXT_SUFFIXES, APP_TREES,
+    CONTENT, CONTENT_EXCLUDE_DIR_PREFIXES, CONTENT_EXCLUDE_DIRS,
+    CONTENT_EXCLUDE_FILES, CONTENT_TEXT_SUFFIXES,
+    IMPORT_REWRITES, MODULES, SCRUB_PATTERNS, SOURCE_ROOTS,
+)
 
-PKG_ROOT = Path(__file__).resolve().parent.parent / "src" / "uai_toolkit"
+REPO_ROOT = Path(__file__).resolve().parent.parent
+PKG_ROOT = REPO_ROOT / "src" / "uai_toolkit"
 
 
 def _resolve_root(key: str) -> Path:
@@ -116,15 +122,115 @@ def process(entry: dict, apply: bool, show_diff: bool) -> dict:
     return result
 
 
+def _excluded_dir(name: str) -> bool:
+    return (name in CONTENT_EXCLUDE_DIRS
+            or name.startswith(CONTENT_EXCLUDE_DIR_PREFIXES))
+
+
+def process_content(entry: dict, apply: bool) -> dict:
+    """Vendor a content tree into the package: copy + scrub text files, prune noise."""
+    dest_rel = entry["dest"]
+    dest_root = PKG_ROOT / dest_rel
+    src_root = _resolve_source(entry["source"])
+    result = {"dest": dest_rel, "kind": "content", "status": "", "detail": "", "survivors": []}
+    if not src_root.exists():
+        result["status"] = "ERROR"
+        result["detail"] = f"source missing: {src_root}"
+        return result
+
+    copied = scrubbed = skipped = 0
+    survivors: set[str] = set()
+    for src in src_root.rglob("*"):
+        rel = src.relative_to(src_root)
+        if any(_excluded_dir(part) for part in rel.parts):
+            continue
+        if src.is_dir():
+            continue
+        if src.name in CONTENT_EXCLUDE_FILES:
+            skipped += 1
+            continue
+        out = dest_root / rel
+        if src.suffix.lower() in CONTENT_TEXT_SUFFIXES:
+            text = src.read_text(encoding="utf-8", errors="replace")
+            new_text, surv = scrub(text)
+            survivors.update(surv)
+            if new_text != text:
+                scrubbed += 1
+            if apply:
+                out.parent.mkdir(parents=True, exist_ok=True)
+                out.write_text(new_text, encoding="utf-8")
+        else:  # binary/opaque: copy verbatim
+            if apply:
+                out.parent.mkdir(parents=True, exist_ok=True)
+                out.write_bytes(src.read_bytes())
+        copied += 1
+
+    result["status"] = "CONTENT"
+    result["detail"] = f"{copied} files ({scrubbed} scrubbed, {skipped} skipped)"
+    result["survivors"] = sorted(survivors)
+    return result
+
+
+def process_app_tree(entry: dict, apply: bool) -> dict:
+    """Vendor an app source tree to a REPO-ROOT sibling (not Python package-data).
+
+    Excludes node_modules + build outputs (restored via `npm ci` / build on the
+    target). Text files scrubbed; binaries copied verbatim.
+    """
+    dest_rel = entry["dest"]
+    dest_root = REPO_ROOT / dest_rel
+    src_root = _resolve_source(entry["source"])
+    result = {"dest": dest_rel + "/ (app)", "kind": "app", "status": "", "detail": "", "survivors": []}
+    if not src_root.exists():
+        result["status"] = "ERROR"
+        result["detail"] = f"source missing: {src_root}"
+        return result
+
+    copied = scrubbed = 0
+    survivors: set[str] = set()
+    for src in src_root.rglob("*"):
+        rel = src.relative_to(src_root)
+        if any(p in APP_EXCLUDE_DIRS for p in rel.parts):
+            continue
+        if src.is_dir() or src.name in APP_EXCLUDE_FILES:
+            continue
+        out = dest_root / rel
+        if src.suffix.lower() in APP_TEXT_SUFFIXES:
+            text = src.read_text(encoding="utf-8", errors="replace")
+            new_text, surv = scrub(text)
+            survivors.update(surv)
+            if new_text != text:
+                scrubbed += 1
+            if apply:
+                out.parent.mkdir(parents=True, exist_ok=True)
+                out.write_text(new_text, encoding="utf-8")
+        else:
+            if apply:
+                out.parent.mkdir(parents=True, exist_ok=True)
+                out.write_bytes(src.read_bytes())
+        copied += 1
+    result["status"] = "APP"
+    result["detail"] = f"{copied} files ({scrubbed} scrubbed) -> {dest_rel}/ (excl node_modules+build)"
+    result["survivors"] = sorted(survivors)
+    return result
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="Materialize uai_toolkit from source.")
     ap.add_argument("--apply", action="store_true", help="write changes (default: dry run)")
     ap.add_argument("--only", default="", help="limit to dests starting with this prefix")
     ap.add_argument("--diff", action="store_true", help="print full unified diffs (clean files)")
+    ap.add_argument("--content", action="store_true", help="also materialize content trees (ai_context_files, ai_profiles)")
+    ap.add_argument("--app", action="store_true", help="also materialize app source trees (uai_app)")
     args = ap.parse_args(argv)
 
     entries = [e for e in MODULES if e["dest"].startswith(args.only)]
     results = [process(e, apply=args.apply, show_diff=args.diff) for e in entries]
+    if args.content:
+        results += [process_content(e, apply=args.apply)
+                    for e in CONTENT if e["dest"].startswith(args.only)]
+    if args.app:
+        results += [process_app_tree(e, apply=args.apply) for e in APP_TREES]
 
     mode = "APPLY" if args.apply else "DRY RUN"
     print(f"=== materialize uai_toolkit [{mode}] — {len(results)} entries ===\n")

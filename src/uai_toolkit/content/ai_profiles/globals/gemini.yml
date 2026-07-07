@@ -1,0 +1,30 @@
+name: Gemini CLI
+description: 'Secondary platform. Full filesystem access, MCP servers (whitelisted),
+  system prompt injection via gemini_cli.py wrapper.
+
+  '
+platform:
+  context_window: 1M tokens (model-dependent)
+  bash: full filesystem access
+  mcp_tools: whitelisted MCP servers
+  config_file: GEMINI.md
+context_files:
+  knowledge: []
+  processes: []
+  procedures: []
+delivery:
+  mechanisms:
+  - gemini_md
+  - mcp
+  - system_prompt_injection
+  notes: 'GEMINI.md auto-loaded. MCP servers available via configuration. System prompt
+    via gemini_cli.py --append-system-prompt.
+
+    '
+_registry:
+  id: gemini
+  name: Gemini
+  status: active
+  version: 1.0.0
+  created: '2026-04-15'
+  updated: '2026-04-15'

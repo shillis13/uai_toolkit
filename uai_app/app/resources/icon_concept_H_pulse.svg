@@ -1,0 +1,72 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="bgH" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#0c0a09"/>
+      <stop offset="100%" stop-color="#1c1917"/>
+    </linearGradient>
+    <linearGradient id="waveGrad" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#f59e0b" stop-opacity="0"/>
+      <stop offset="20%" stop-color="#f59e0b"/>
+      <stop offset="50%" stop-color="#ef4444"/>
+      <stop offset="80%" stop-color="#ec4899"/>
+      <stop offset="100%" stop-color="#ec4899" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="waveGrad2" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#22d3ee" stop-opacity="0"/>
+      <stop offset="20%" stop-color="#22d3ee"/>
+      <stop offset="50%" stop-color="#6366f1"/>
+      <stop offset="80%" stop-color="#a855f7"/>
+      <stop offset="100%" stop-color="#a855f7" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="waveGlow">
+      <feGaussianBlur stdDeviation="8" result="blur"/>
+      <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+    </filter>
+    <filter id="softGlowH">
+      <feGaussianBlur stdDeviation="20"/>
+    </filter>
+    <clipPath id="iconClipH">
+      <rect x="12" y="12" width="1000" height="1000" rx="200" ry="200"/>
+    </clipPath>
+  </defs>
+
+  <!-- Background — warm dark -->
+  <rect x="12" y="12" width="1000" height="1000" rx="200" ry="200" fill="url(#bgH)" stroke="#292524" stroke-width="2"/>
+
+  <g clip-path="url(#iconClipH)">
+    <!-- Subtle horizontal grid lines -->
+    <line x1="80" y1="300" x2="944" y2="300" stroke="#292524" stroke-width="1"/>
+    <line x1="80" y1="420" x2="944" y2="420" stroke="#292524" stroke-width="1"/>
+    <line x1="80" y1="500" x2="944" y2="500" stroke="#292524" stroke-width="1.5" opacity="0.6"/>
+    <line x1="80" y1="580" x2="944" y2="580" stroke="#292524" stroke-width="1"/>
+    <line x1="80" y1="700" x2="944" y2="700" stroke="#292524" stroke-width="1"/>
+
+    <!-- Primary waveform — bold, active -->
+    <path d="M 60 500 L 160 500 L 220 500 L 280 480 L 340 500 L 380 500
+             L 420 500 L 440 350 L 470 580 L 500 280 L 530 680 L 560 380 L 590 550
+             L 620 460 L 660 500 L 720 500 L 780 490 L 840 500 L 960 500"
+          stroke="url(#waveGrad)" stroke-width="14" fill="none" opacity="0.9"
+          stroke-linecap="round" stroke-linejoin="round" filter="url(#waveGlow)"/>
+
+    <!-- Primary waveform glow underneath -->
+    <path d="M 60 500 L 160 500 L 220 500 L 280 480 L 340 500 L 380 500
+             L 420 500 L 440 350 L 470 580 L 500 280 L 530 680 L 560 380 L 590 550
+             L 620 460 L 660 500 L 720 500 L 780 490 L 840 500 L 960 500"
+          stroke="url(#waveGrad)" stroke-width="40" fill="none" opacity="0.06"
+          stroke-linecap="round" stroke-linejoin="round"/>
+
+    <!-- Secondary waveform — lower frequency, behind -->
+    <path d="M 60 500 L 200 500 L 300 530 L 400 460 L 500 540 L 600 450 L 700 510 L 800 480 L 960 500"
+          stroke="url(#waveGrad2)" stroke-width="6" fill="none" opacity="0.45"
+          stroke-linecap="round" stroke-linejoin="round" filter="url(#waveGlow)"/>
+
+    <!-- Tertiary waveform — subtle, different rhythm -->
+    <path d="M 60 500 L 200 490 L 350 520 L 450 475 L 550 515 L 650 485 L 800 505 L 960 495"
+          stroke="#ffffff" stroke-width="2" fill="none" opacity="0.12"
+          stroke-linecap="round" stroke-linejoin="round"/>
+
+    <!-- Peak highlight — the most active moment -->
+    <circle cx="500" cy="280" r="6" fill="#ffffff" opacity="0.8"/>
+    <circle cx="500" cy="280" r="20" fill="#ef4444" opacity="0.15" filter="url(#softGlowH)"/>
+  </g>
+</svg>

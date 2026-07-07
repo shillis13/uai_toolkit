@@ -1,0 +1,40 @@
+name: Claude Desktop
+description: 'Tertiary platform. 200K context, Desktop Commander MCP, project files.
+  More constrained context requires careful loading.
+
+  '
+platform:
+  context_window: 200K tokens
+  bash: sandboxed via Desktop Commander
+  mcp_tools: Desktop Commander + configured MCP servers
+  config_file: project files (Claude Projects)
+context_files:
+  knowledge:
+  - path: ai_context_files/_drafts/platform_instructions/claude/instr_environment_overview
+    purpose: Desktop environment capabilities — 200K context, sandboxed bash
+  - path: ai_context_files/_drafts/platform_instructions/claude/claude_context_quick_notes
+    purpose: Context limits and token budgets
+  - path: ai_context_files/_drafts/platform_instructions/claude/know_codex_mcp
+    purpose: How to use the Codex MCP for delegation
+  procedures:
+  - path: ai_context_files/_drafts/platform_instructions/claude/instr_claude_context_conservations
+    purpose: Context conservation rules for 200K window
+  processes:
+  - path: ai_context_files/_drafts/platform_instructions/claude/instr_claude_use_of_ai_agents
+    purpose: Desktop agent delegation patterns
+delivery:
+  mechanisms:
+  - project_files
+  - mcp
+  - skills
+  notes: 'Content delivered via Claude Projects file uploads. MCP via desktop config.
+    Context conservation critical at 200K.
+
+    '
+_registry:
+  id: claude_desktop
+  name: Claude Desktop
+  status: active
+  version: 1.0.0
+  created: '2026-04-15'
+  updated: '2026-04-15'

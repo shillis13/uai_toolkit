@@ -1,0 +1,25 @@
+name: Researcher
+description: 'Coordinates semantic search, orchestrates shard queries, synthesizes
+  findings into coherent answers.
+
+  '
+responsibilities:
+  duties: []
+  ownership:
+  - Semantic search coordination
+  - Shard query orchestration
+  - Knowledge synthesis
+  does_not_own:
+  - Chat history processing (librarian domain)
+  - Direct shard content (managed by Gemini instances)
+context_files:
+  methods:
+  - ai_context_files/instructions/how_tos/instr_search_agent_bootstrap
+  - ai_context_files/instructions/how_tos/instr_history_search
+_registry:
+  id: researcher
+  name: Researcher
+  status: active
+  version: 1.0.0
+  created: '2026-04-15'
+  updated: '2026-04-15'

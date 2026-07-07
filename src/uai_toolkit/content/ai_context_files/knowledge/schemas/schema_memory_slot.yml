@@ -1,0 +1,84 @@
+---
+# Memory Slot Schema v1.0
+# Defines structure for AI memory slot files (e.g., ai_memories/80_working_memory/NN.yml)
+
+metadata:
+  title: Memory Slot Schema
+  version: 1.1.0
+  created: 2026-01-13
+  maintainer: Claude Desktop
+  purpose: |
+    Standard structure for memory slot files. All slots use this format
+    to ensure consistent parsing by Memory MCP and cross-AI tooling.
+
+structure:
+  type: object
+  required: [metadata, observations]
+  properties:
+    
+    metadata:
+      description: Slot identification (mirrors manifest but embedded for standalone use)
+      type: object
+      required: [slot, name]
+      properties:
+        slot: {type: integer, description: "Slot number (03-30)"}
+        name: {type: string, description: "Human-readable slot name"}
+        last_updated: {type: string, format: iso8601}
+        updated_by: {type: string, description: "Which AI instance last wrote"}
+    
+    reference:
+      description: |
+        Optional structured reference material. Use for stable patterns,
+        rules, or organized knowledge that doesn't fit time-series format.
+        Structure is free-form (slot-specific).
+      type: object
+    
+    observations:
+      description: |
+        Time-series observations. Memory MCP appends here.
+        Newest entries at end (chronological order).
+      type: array
+      items:
+        type: object
+        required: [ts, content]
+        properties:
+          ts:
+            type: string
+            format: iso8601
+            description: "UTC timestamp when observation recorded"
+          content:
+            type: string
+            description: "The observation text"
+
+example:
+  metadata:
+    slot: 6
+    name: current_context
+    last_updated: 2026-03-16T05:40:00Z
+    updated_by: Claude Desktop
+  
+  reference:
+    active_projects:
+      - memory_mcp: "Building slot-based memory operations"
+      - chat_pipeline: "Export/condense chat histories"
+    current_focus: "MCP development sprint"
+  
+  observations:
+    - ts: 2026-01-13T05:30:00Z
+      content: "Implemented Memory MCP with read/write/search/delete operations"
+    - ts: 2026-01-13T05:40:00Z
+      content: "Created schema for memory slots to prevent format drift"
+
+notes:
+  migration: |
+    Existing slots need migration:
+    - Pure list slots (03, 05, 06): Wrap in {metadata, observations}
+    - Structured slots (04, 07): Move root content to 'reference', list to 'observations'
+    - Empty slots (08, 09): Add minimal structure
+  
+  mcp_behavior: |
+    Memory MCP operations:
+    - append: Adds to observations[] with auto-timestamp
+    - read: Returns observations[] (optionally with reference)
+    - search: Searches observations[].content
+    - update/delete: Operates on observations[] by index

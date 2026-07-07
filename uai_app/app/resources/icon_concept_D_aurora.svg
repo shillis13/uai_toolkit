@@ -1,0 +1,71 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="bgD" x1="0" y1="0" x2="0.3" y2="1">
+      <stop offset="0%" stop-color="#f8f6f3"/>
+      <stop offset="100%" stop-color="#e8e4df"/>
+    </linearGradient>
+    <linearGradient id="ribbonA" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#ff6b35"/>
+      <stop offset="50%" stop-color="#f7418c"/>
+      <stop offset="100%" stop-color="#a855f7"/>
+    </linearGradient>
+    <linearGradient id="ribbonB" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0%" stop-color="#3b82f6"/>
+      <stop offset="50%" stop-color="#06b6d4"/>
+      <stop offset="100%" stop-color="#10b981"/>
+    </linearGradient>
+    <linearGradient id="ribbonC" x1="1" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#a855f7"/>
+      <stop offset="50%" stop-color="#6366f1"/>
+      <stop offset="100%" stop-color="#3b82f6"/>
+    </linearGradient>
+    <filter id="softShadowD">
+      <feGaussianBlur stdDeviation="18"/>
+    </filter>
+    <clipPath id="iconClipD">
+      <rect x="12" y="12" width="1000" height="1000" rx="200" ry="200"/>
+    </clipPath>
+  </defs>
+
+  <!-- Light warm background -->
+  <rect x="12" y="12" width="1000" height="1000" rx="200" ry="200" fill="url(#bgD)"/>
+
+  <g clip-path="url(#iconClipD)">
+    <!-- Flowing ribbon shadows (depth) -->
+    <path d="M -50 350 C 200 200, 400 500, 550 300 C 700 100, 800 400, 1100 250"
+          stroke="none" fill="url(#ribbonA)" opacity="0.08" filter="url(#softShadowD)"
+          transform="translate(15,25)"/>
+    <path d="M -50 550 C 150 700, 350 350, 550 500 C 750 650, 850 300, 1100 500"
+          stroke="none" fill="url(#ribbonB)" opacity="0.08" filter="url(#softShadowD)"
+          transform="translate(15,25)"/>
+
+    <!-- Primary ribbon — warm gradient (orange → pink → purple) -->
+    <path d="M -80 400 C 150 220, 320 520, 512 340 C 700 160, 820 440, 1120 280"
+          stroke="url(#ribbonA)" stroke-width="90" stroke-linecap="round" fill="none"
+          opacity="0.85"/>
+    <path d="M -80 400 C 150 220, 320 520, 512 340 C 700 160, 820 440, 1120 280"
+          stroke="url(#ribbonA)" stroke-width="50" stroke-linecap="round" fill="none"
+          opacity="0.3"/>
+
+    <!-- Secondary ribbon — cool gradient (blue → cyan → green) -->
+    <path d="M -80 620 C 100 780, 300 420, 512 580 C 720 740, 860 380, 1120 560"
+          stroke="url(#ribbonB)" stroke-width="90" stroke-linecap="round" fill="none"
+          opacity="0.85"/>
+    <path d="M -80 620 C 100 780, 300 420, 512 580 C 720 740, 860 380, 1120 560"
+          stroke="url(#ribbonB)" stroke-width="50" stroke-linecap="round" fill="none"
+          opacity="0.3"/>
+
+    <!-- Tertiary ribbon — purple/indigo weaving between -->
+    <path d="M -50 510 C 180 380, 350 600, 512 460 C 680 320, 800 540, 1080 420"
+          stroke="url(#ribbonC)" stroke-width="55" stroke-linecap="round" fill="none"
+          opacity="0.55"/>
+
+    <!-- Intersection highlight — where ribbons cross -->
+    <circle cx="512" cy="470" r="45" fill="#ffffff" opacity="0.6"/>
+    <circle cx="512" cy="470" r="25" fill="#ffffff" opacity="0.9"/>
+  </g>
+
+  <!-- Border -->
+  <rect x="12" y="12" width="1000" height="1000" rx="200" ry="200"
+        fill="none" stroke="#d4d0cc" stroke-width="2"/>
+</svg>

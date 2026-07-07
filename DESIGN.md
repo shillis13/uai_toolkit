@@ -84,6 +84,17 @@ The MCP servers invoke their backing domain CLIs via `python -m uai_toolkit.<dom
      repo with an `npm` install path, not part of this Python package.
    - HARD GATE before any public push: PII/secret scrub; tie to Git Guardian.
 
+8. **UAI app is included as a Node sibling (revised 2026-07-06).** Supersedes the
+   original "TS/Node stays out of the package." The Electron monorepo
+   (`unified_ai_interface`) is vendored SOURCE-ONLY to a repo-root sibling
+   `uai_app/` (git-tracked, NOT Python package-data) via the materialize keystone
+   (`APP_TREES`; excludes `node_modules` + `.vite`/`dist`/`out`/`UAI.app`).
+   `node_modules` restore via `npm ci`; the app builds with its own
+   electron-forge/vite toolchain. So the repo is a **Python-package + Node-app
+   monorepo**: `pip install` gets the Python kit; a git clone additionally gets
+   `uai_app/` to `npm ci` + build. Build automation (a `uai-toolkit build-app`
+   step vs. left to the in-WSL session) is TBD.
+
 7. **Hooks wire directly; no directory-scanning dispatcher.** The live
    `dispatch.py` scans a dir for executable handlers (`os.access(X_OK)`) and
    shells to `bash`/`python3` — both Windows-hostile, and redundant with Claude

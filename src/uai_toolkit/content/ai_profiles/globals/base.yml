@@ -1,0 +1,42 @@
+name: Global Base
+description: 'Core traits that define how all agents in this workspace operate. Every
+  agent gets these — they establish shared identity, shared knowledge, and shared
+  behavioral standards.
+
+  '
+context_files:
+  perspective:
+  - path: ai_context_files/instructions/perspectives/perspective_operating_principles
+    purpose: Core operating principles — partnership, communication, radical honesty
+  - path: ai_context_files/instructions/perspectives/perspective_user_profile_for_cli_agents
+    purpose: PianoMan profile — who we're working with
+  knowledge:
+  - path: ai_context_files/knowledge/reference/ref_glossary_knowledge_index
+    purpose: Term→file mapping for bootstrap orientation
+  - path: ai_context_files/knowledge/reference/ref_directory_structure
+    purpose: Filesystem layout
+  - path: ai_context_files/knowledge/reference/ref_tools_manifest
+    purpose: Available scripts, MCP servers, CLI wrappers
+  - path: ai_context_files/knowledge/architecture/arch_ai_root_architecture_overview
+    purpose: System-level structural understanding
+  procedures:
+  - path: ai_context_files/instructions/rules/rules_file_conventions
+    purpose: File naming, versioning, symlink conventions
+  - path: ai_context_files/instructions/rules/rules_development
+    purpose: Coding standards
+  - path: ai_context_files/instructions/how_tos/instr_activity_logging
+    purpose: Log before acting — enables interruption recovery
+  - path: ai_context_files/instructions/how_tos/instr_feedback
+    purpose: How to log observations, suggestions, issues
+  - path: ai_context_files/instructions/how_tos/instr_todo
+    purpose: How to create TODOs for discovered work
+  knowledge_specs:
+  - path: ai_context_files/instructions/rules/rules_response_footer
+    purpose: Response footer format — MUST include on every response
+_registry:
+  id: global
+  name: Global
+  status: active
+  version: 1.0.0
+  created: '2026-04-15'
+  updated: '2026-04-15'

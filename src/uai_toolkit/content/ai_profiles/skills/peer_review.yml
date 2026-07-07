@@ -1,0 +1,116 @@
+metadata:
+  name: peer-review
+  version: 1.0.0
+  created: 2026-04-16
+  status: active
+  description: 'Structured workflow for reviewing code, designs, and other artifacts.
+    Can be self-performed or delegated to another CLI agent (Codex, Gemini, or another
+    Claude session). Produces a review report with verdict.
+
+    '
+trigger:
+  description: 'Use when code or design artifacts need review before merging, when
+    verifying implementation quality, or when asked to review another agent''s work.
+
+    '
+  patterns:
+  - review this code
+  - review the implementation
+  - get a peer review
+  - check this before merging
+  - quality gate before merge/completion
+context_files:
+  procedures:
+  - ai_context_files/instructions/rules/rules_development
+  templates:
+  - ai_context_files/instructions/templates/peer_review_template
+tools:
+  cli_agent:
+    description: Dispatch review to another agent
+    mcp_server: cli-agent
+    operations:
+    - launch_peer_review: Launch a dedicated peer review agent
+    - launch_agent: Launch reviewer on specific platform (Gemini for broad review,
+        Codex for code-focused)
+    - read_session: Collect review results
+  prompting:
+    description: Monitor and collect from reviewer
+    mcp_server: prompting
+    operations:
+    - wait_response: Wait for review to complete
+    - observe_session: Check progress
+workflow:
+  overview: 'Review follows: scope → read → assess → report → verdict. The reviewer
+    must understand the intent (what was being built) before evaluating the implementation.
+
+    '
+  decision_tree:
+  - question: Can you review this yourself (you have context and it's in your scope)?
+    true: Self-review using the assessment criteria below
+    false: Delegate to a peer review agent
+  - question: Is this a code review or a design review?
+    yes_code: Focus on correctness, edge cases, style, testing
+    yes_design: Focus on completeness, feasibility, consistency with architecture
+  patterns:
+    self_review:
+      name: Self-Review
+      description: Review artifacts you have in context
+      steps:
+      - '1. Scope: Understand what was changed and why (read the task/PR description)'
+      - '2. Read: Read all changed files completely'
+      - '3. Assess against criteria: correctness, edge cases, style, testing, security'
+      - '4. Note issues with severity: critical, important, suggestion'
+      - 5. Write review report (use peer_review_template)
+      - '6. Verdict: approve, request_changes, or reject'
+    delegated_review:
+      name: Delegated Review
+      description: Send work to another agent for review
+      steps:
+      - '1. Prepare: Identify files to review and the intent/acceptance criteria'
+      - '2. Dispatch: cli-agent:launch_peer_review with file paths and context'
+      - '3. Wait: prompting:wait_response'
+      - '4. Collect: cli-agent:read_session for the review report'
+      - '5. Assess: Review the reviewer''s findings — do they make sense?'
+      - 6. Act on findings or escalate disagreements
+    cross_platform_review:
+      name: Cross-Platform Review
+      description: Use Gemini or Codex for different review perspectives
+      steps:
+      - '1. Gemini: Good for broad design review, architecture consistency'
+      - '2. Codex: Good for focused code review, implementation correctness'
+      - '3. Claude: Good for complex logic review, edge case analysis'
+      - '4. Launch on chosen platform: cli-agent:launch_agent with platform param'
+      - 5. Provide the same review context regardless of platform
+  assessment_criteria:
+    code_review:
+    - 'Correctness: Does it do what the task/spec requires?'
+    - 'Edge cases: Are boundary conditions handled?'
+    - 'Style: Does it follow development_standards?'
+    - 'Testing: Are changes tested? Are tests meaningful?'
+    - 'Security: No injection, no hardcoded secrets, no unsafe operations'
+    - 'Simplicity: Is it the simplest solution that works? No over-engineering?'
+    design_review:
+    - 'Completeness: Are all requirements addressed?'
+    - 'Feasibility: Can this be implemented as described?'
+    - 'Consistency: Does it align with existing architecture?'
+    - 'Scalability: Will it handle growth?'
+    - 'Migration: Is the migration path clear?'
+  guidelines:
+  - Read the intent before the code — understand WHAT before assessing HOW
+  - 'Severity matters: critical blocks merge, important should be fixed, suggestions
+    are optional'
+  - Don't nitpick style if the code works and follows standards
+  - Verify claims via git diff — never relay unverified completion claims
+  - 'When receiving review feedback: verify technical claims before accepting blindly'
+  anti_patterns:
+  - Don't rubber-stamp — actually read the code
+  - Don't review your own code as a peer review (bias)
+  - Don't mix implementation with review — reviewer should not fix the code
+  - Don't block on suggestions — only criticals and importants gate the verdict
+_registry:
+  id: peer_review
+  name: peer-review
+  status: active
+  version: 1.0.0
+  created: '2026-04-16'
+  updated: '2026-04-16'

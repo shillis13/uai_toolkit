@@ -1,0 +1,296 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <!-- Split background: left side slightly chaotic warm, right side ordered cool -->
+    <linearGradient id="bgLeft" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#1c1525"/>
+      <stop offset="100%" stop-color="#151020"/>
+    </linearGradient>
+    <linearGradient id="bgRight" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#101828"/>
+      <stop offset="100%" stop-color="#0a1220"/>
+    </linearGradient>
+
+    <!-- Full background -->
+    <linearGradient id="bgFull" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#1c1525"/>
+      <stop offset="40%" stop-color="#141020"/>
+      <stop offset="60%" stop-color="#101828"/>
+      <stop offset="100%" stop-color="#0a1220"/>
+    </linearGradient>
+
+    <!-- Lens body gradient — glass-like convex lens -->
+    <linearGradient id="lensBody" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#c8d8ec" stop-opacity="0.12"/>
+      <stop offset="35%" stop-color="#e8f0fa" stop-opacity="0.18"/>
+      <stop offset="50%" stop-color="#ffffff" stop-opacity="0.08"/>
+      <stop offset="65%" stop-color="#e8f0fa" stop-opacity="0.18"/>
+      <stop offset="100%" stop-color="#c8d8ec" stop-opacity="0.12"/>
+    </linearGradient>
+
+    <!-- Lens rim gradient -->
+    <linearGradient id="lensRim" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#8098b8"/>
+      <stop offset="20%" stop-color="#c0d0e4"/>
+      <stop offset="50%" stop-color="#e8f0fa"/>
+      <stop offset="80%" stop-color="#c0d0e4"/>
+      <stop offset="100%" stop-color="#8098b8"/>
+    </linearGradient>
+
+    <!-- Lens inner highlight -->
+    <radialGradient id="lensHighlight" cx="0.4" cy="0.35" r="0.4">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.12"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Convergence glow at center -->
+    <radialGradient id="convergenceGlow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0%" stop-color="#e0ecff" stop-opacity="0.25"/>
+      <stop offset="50%" stop-color="#6090c0" stop-opacity="0.08"/>
+      <stop offset="100%" stop-color="#000000" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Ray glow -->
+    <filter id="rayGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="5" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <!-- Soft glow -->
+    <filter id="softGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="8" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <!-- Element glow -->
+    <filter id="elemGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="3" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <!-- Clip to rounded rect -->
+    <clipPath id="clipBg">
+      <rect x="0" y="0" width="1024" height="1024" rx="200" ry="200"/>
+    </clipPath>
+
+    <!-- Clip to right side of lens (ordered output side) -->
+    <clipPath id="clipRight">
+      <rect x="512" y="0" width="512" height="1024"/>
+    </clipPath>
+  </defs>
+
+  <!-- Background -->
+  <rect x="0" y="0" width="1024" height="1024" rx="200" ry="200" fill="url(#bgFull)"/>
+
+  <g clip-path="url(#clipBg)">
+
+    <!-- ===== LEFT SIDE: SCATTERED CHAOTIC ELEMENTS (diverse AI agents) ===== -->
+    <!-- These are scattered, rotated, varied sizes/shapes/colors — chaos -->
+
+    <!-- Scattered element: orange square, tilted -->
+    <rect x="60" y="180" width="52" height="52" rx="8" fill="#e8943a" opacity="0.55"
+          transform="rotate(-22, 86, 206)" filter="url(#elemGlow)"/>
+
+    <!-- Scattered element: purple circle -->
+    <circle cx="130" cy="350" r="22" fill="#9b6ddb" opacity="0.5" filter="url(#elemGlow)"/>
+
+    <!-- Scattered element: teal diamond -->
+    <rect x="80" y="500" width="36" height="36" rx="4" fill="#3dbdb5" opacity="0.5"
+          transform="rotate(45, 98, 518)" filter="url(#elemGlow)"/>
+
+    <!-- Scattered element: pink triangle-ish (hexagon) -->
+    <polygon points="165,130 190,110 215,130 215,160 190,180 165,160" fill="#e06088" opacity="0.45"
+             transform="rotate(15, 190, 150)" filter="url(#elemGlow)"/>
+
+    <!-- Scattered element: green rounded rect, tilted -->
+    <rect x="40" y="660" width="60" height="35" rx="10" fill="#50b860" opacity="0.45"
+          transform="rotate(18, 70, 678)" filter="url(#elemGlow)"/>
+
+    <!-- Scattered element: blue circle, small -->
+    <circle cx="180" cy="780" r="16" fill="#4890d8" opacity="0.45" filter="url(#elemGlow)"/>
+
+    <!-- Scattered element: amber star-like -->
+    <polygon points="110,450 118,430 126,450 146,450 130,462 136,482 118,470 100,482 106,462 90,450"
+             fill="#d4a030" opacity="0.4" transform="rotate(-10, 118, 456)" filter="url(#elemGlow)"/>
+
+    <!-- Scattered element: coral rect -->
+    <rect x="160" y="590" width="44" height="28" rx="6" fill="#d06848" opacity="0.4"
+          transform="rotate(-30, 182, 604)" filter="url(#elemGlow)"/>
+
+    <!-- Scattered element: light blue pentagon-ish -->
+    <polygon points="80,830 100,815 120,830 115,855 85,855" fill="#60b0e0" opacity="0.4"
+          transform="rotate(12, 100, 838)" filter="url(#elemGlow)"/>
+
+    <!-- Scattered element: violet small square -->
+    <rect x="155" y="260" width="30" height="30" rx="5" fill="#8060c0" opacity="0.4"
+          transform="rotate(35, 170, 275)" filter="url(#elemGlow)"/>
+
+    <!-- Additional scattered elements for density -->
+    <circle cx="50" cy="400" r="12" fill="#c08040" opacity="0.3"/>
+    <rect x="140" cy="700" width="25" height="25" rx="4" fill="#5090b0" opacity="0.3"
+          transform="rotate(-15, 152, 712)"/>
+    <circle cx="190" cy="480" r="10" fill="#d07080" opacity="0.3"/>
+
+
+    <!-- ===== CONVERGENCE RAYS: Elements traveling toward the lens ===== -->
+    <!-- From chaotic left side, paths curve/converge into the lens -->
+
+    <!-- Ray from orange square -->
+    <path d="M 112,206 C 200,250 320,350 430,420"
+          fill="none" stroke="#e8943a" stroke-width="2" stroke-opacity="0.3"
+          stroke-dasharray="8,6" filter="url(#rayGlow)"/>
+
+    <!-- Ray from purple circle -->
+    <path d="M 152,350 C 230,370 340,400 430,460"
+          fill="none" stroke="#9b6ddb" stroke-width="2" stroke-opacity="0.3"
+          stroke-dasharray="8,6" filter="url(#rayGlow)"/>
+
+    <!-- Ray from teal diamond -->
+    <path d="M 130,518 C 220,510 350,495 430,500"
+          fill="none" stroke="#3dbdb5" stroke-width="2" stroke-opacity="0.3"
+          stroke-dasharray="8,6" filter="url(#rayGlow)"/>
+
+    <!-- Ray from pink hexagon -->
+    <path d="M 215,150 C 280,220 380,340 440,390"
+          fill="none" stroke="#e06088" stroke-width="2" stroke-opacity="0.25"
+          stroke-dasharray="8,6" filter="url(#rayGlow)"/>
+
+    <!-- Ray from green rect -->
+    <path d="M 100,678 C 200,660 340,600 430,560"
+          fill="none" stroke="#50b860" stroke-width="2" stroke-opacity="0.25"
+          stroke-dasharray="8,6" filter="url(#rayGlow)"/>
+
+    <!-- Ray from blue circle -->
+    <path d="M 196,780 C 260,730 370,640 440,590"
+          fill="none" stroke="#4890d8" stroke-width="2" stroke-opacity="0.25"
+          stroke-dasharray="8,6" filter="url(#rayGlow)"/>
+
+    <!-- Ray from amber star -->
+    <path d="M 140,456 C 230,460 350,470 430,480"
+          fill="none" stroke="#d4a030" stroke-width="2" stroke-opacity="0.2"
+          stroke-dasharray="8,6" filter="url(#rayGlow)"/>
+
+    <!-- Ray from coral rect -->
+    <path d="M 200,604 C 270,590 370,560 435,540"
+          fill="none" stroke="#d06848" stroke-width="1.5" stroke-opacity="0.2"
+          stroke-dasharray="8,6" filter="url(#rayGlow)"/>
+
+
+    <!-- ===== THE LENS — prominent convex lens shape ===== -->
+    <!-- Convex lens: two curved sides meeting at points top and bottom -->
+
+    <!-- Lens body — convex shape using two cubic bezier arcs -->
+    <path d="M 512,160 C 400,300 400,700 512,840 C 624,700 624,300 512,160 Z"
+          fill="url(#lensBody)"/>
+
+    <!-- Lens inner highlight -->
+    <path d="M 512,160 C 400,300 400,700 512,840 C 624,700 624,300 512,160 Z"
+          fill="url(#lensHighlight)"/>
+
+    <!-- Lens rim — left curve -->
+    <path d="M 512,160 C 400,300 400,700 512,840"
+          fill="none" stroke="url(#lensRim)" stroke-width="6" stroke-linecap="round"/>
+
+    <!-- Lens rim — right curve -->
+    <path d="M 512,160 C 624,300 624,700 512,840"
+          fill="none" stroke="url(#lensRim)" stroke-width="6" stroke-linecap="round"/>
+
+    <!-- Inner rim highlight — left -->
+    <path d="M 512,175 C 410,305 410,690 512,825"
+          fill="none" stroke="#ffffff" stroke-width="1.5" stroke-opacity="0.08"/>
+
+    <!-- Inner rim highlight — right -->
+    <path d="M 512,175 C 614,305 614,690 512,825"
+          fill="none" stroke="#ffffff" stroke-width="1.5" stroke-opacity="0.08"/>
+
+    <!-- Lens top point highlight -->
+    <circle cx="512" cy="160" r="6" fill="#e0ecff" opacity="0.4"/>
+
+    <!-- Lens bottom point highlight -->
+    <circle cx="512" cy="840" r="6" fill="#e0ecff" opacity="0.3"/>
+
+    <!-- Central convergence glow inside the lens -->
+    <ellipse cx="512" cy="500" rx="80" ry="120" fill="url(#convergenceGlow)" filter="url(#softGlow)"/>
+
+    <!-- Subtle refraction lines inside the lens -->
+    <line x1="480" y1="300" x2="480" y2="700" stroke="#ffffff" stroke-width="0.5" opacity="0.06"/>
+    <line x1="512" y1="250" x2="512" y2="750" stroke="#ffffff" stroke-width="0.8" opacity="0.08"/>
+    <line x1="544" y1="300" x2="544" y2="700" stroke="#ffffff" stroke-width="0.5" opacity="0.06"/>
+
+
+    <!-- ===== RIGHT SIDE: ORDERED, UNIFIED OUTPUT ===== -->
+    <!-- Same elements but now aligned, uniform, harmonized — order from chaos -->
+
+    <!-- Unified output rays — straight, parallel, organized -->
+    <line x1="600" y1="380" x2="880" y2="380"
+          stroke="#c0b8d8" stroke-width="2.5" stroke-opacity="0.5" filter="url(#rayGlow)"/>
+    <line x1="600" y1="430" x2="880" y2="430"
+          stroke="#c0b8d8" stroke-width="2.5" stroke-opacity="0.5" filter="url(#rayGlow)"/>
+    <line x1="600" y1="480" x2="880" y2="480"
+          stroke="#c0b8d8" stroke-width="2.5" stroke-opacity="0.5" filter="url(#rayGlow)"/>
+    <line x1="600" y1="530" x2="880" y2="530"
+          stroke="#c0b8d8" stroke-width="2.5" stroke-opacity="0.5" filter="url(#rayGlow)"/>
+    <line x1="600" y1="580" x2="880" y2="580"
+          stroke="#c0b8d8" stroke-width="2.5" stroke-opacity="0.5" filter="url(#rayGlow)"/>
+    <line x1="600" y1="630" x2="880" y2="630"
+          stroke="#c0b8d8" stroke-width="2.5" stroke-opacity="0.4" filter="url(#rayGlow)"/>
+
+    <!-- Unified elements on the right — same shapes as left but now uniform, aligned, evenly spaced -->
+    <!-- Row 1 -->
+    <rect x="640" y="365" width="30" height="30" rx="6" fill="#e8943a" opacity="0.6"/>
+    <rect x="690" y="365" width="30" height="30" rx="6" fill="#9b6ddb" opacity="0.6"/>
+    <rect x="740" y="365" width="30" height="30" rx="6" fill="#3dbdb5" opacity="0.6"/>
+    <rect x="790" y="365" width="30" height="30" rx="6" fill="#e06088" opacity="0.6"/>
+    <rect x="840" y="365" width="30" height="30" rx="6" fill="#50b860" opacity="0.55"/>
+
+    <!-- Row 2 -->
+    <rect x="640" y="415" width="30" height="30" rx="6" fill="#4890d8" opacity="0.6"/>
+    <rect x="690" y="415" width="30" height="30" rx="6" fill="#d4a030" opacity="0.6"/>
+    <rect x="740" y="415" width="30" height="30" rx="6" fill="#d06848" opacity="0.6"/>
+    <rect x="790" y="415" width="30" height="30" rx="6" fill="#60b0e0" opacity="0.6"/>
+    <rect x="840" y="415" width="30" height="30" rx="6" fill="#8060c0" opacity="0.55"/>
+
+    <!-- Row 3 -->
+    <rect x="640" y="465" width="30" height="30" rx="6" fill="#50b860" opacity="0.55"/>
+    <rect x="690" y="465" width="30" height="30" rx="6" fill="#e06088" opacity="0.55"/>
+    <rect x="740" y="465" width="30" height="30" rx="6" fill="#9b6ddb" opacity="0.55"/>
+    <rect x="790" y="465" width="30" height="30" rx="6" fill="#e8943a" opacity="0.55"/>
+    <rect x="840" y="465" width="30" height="30" rx="6" fill="#4890d8" opacity="0.5"/>
+
+    <!-- Row 4 -->
+    <rect x="640" y="515" width="30" height="30" rx="6" fill="#3dbdb5" opacity="0.5"/>
+    <rect x="690" y="515" width="30" height="30" rx="6" fill="#d4a030" opacity="0.5"/>
+    <rect x="740" y="515" width="30" height="30" rx="6" fill="#60b0e0" opacity="0.5"/>
+    <rect x="790" y="515" width="30" height="30" rx="6" fill="#d06848" opacity="0.5"/>
+    <rect x="840" y="515" width="30" height="30" rx="6" fill="#50b860" opacity="0.45"/>
+
+    <!-- Row 5 -->
+    <rect x="640" y="565" width="30" height="30" rx="6" fill="#8060c0" opacity="0.45"/>
+    <rect x="690" y="565" width="30" height="30" rx="6" fill="#e8943a" opacity="0.45"/>
+    <rect x="740" y="565" width="30" height="30" rx="6" fill="#4890d8" opacity="0.45"/>
+    <rect x="790" y="565" width="30" height="30" rx="6" fill="#3dbdb5" opacity="0.45"/>
+    <rect x="840" y="565" width="30" height="30" rx="6" fill="#9b6ddb" opacity="0.4"/>
+
+    <!-- Row 6 -->
+    <rect x="640" y="615" width="30" height="30" rx="6" fill="#d06848" opacity="0.4"/>
+    <rect x="690" y="615" width="30" height="30" rx="6" fill="#50b860" opacity="0.4"/>
+    <rect x="740" y="615" width="30" height="30" rx="6" fill="#e06088" opacity="0.4"/>
+    <rect x="790" y="615" width="30" height="30" rx="6" fill="#d4a030" opacity="0.4"/>
+    <rect x="840" y="615" width="30" height="30" rx="6" fill="#60b0e0" opacity="0.35"/>
+
+    <!-- Subtle connecting lines between unified elements — showing they're now linked -->
+    <line x1="655" y1="395" x2="655" y2="415" stroke="#c0b8d8" stroke-width="0.5" opacity="0.3"/>
+    <line x1="705" y1="395" x2="705" y2="415" stroke="#c0b8d8" stroke-width="0.5" opacity="0.3"/>
+    <line x1="755" y1="395" x2="755" y2="415" stroke="#c0b8d8" stroke-width="0.5" opacity="0.3"/>
+    <line x1="805" y1="395" x2="805" y2="415" stroke="#c0b8d8" stroke-width="0.5" opacity="0.3"/>
+
+  </g>
+</svg>

@@ -1,0 +1,189 @@
+metadata:
+  title: Parallel Query Dispatcher
+  version: 0.1.0
+  created: 2026-02-13
+  status: draft
+  author: Desktop Claude
+  location: ~/bin/ai/orchestration/dispatch_query.py
+
+overview: |
+  CLI tool to dispatch the same query to multiple AI instances in parallel,
+  with controlled concurrency, status tracking, and result collection.
+  
+  Primary use cases:
+  - Query all Gemini shards for corpus search
+  - Dispatch research tasks to multiple CLI agents
+  - Verify health/state across AI instances
+
+users:
+  - PianoMan via CLI (primary, v0.1)
+  - researcher agent (future)
+  - research_orchestrator (future)
+  - Desktop Claude (future)
+
+input:
+  query_source:
+    - CLI argument: --prompt "natural language query"
+    - Task file: --task /path/to/task.yml (reads prompt from task file)
+    - Query file: --query-file /path/to/query.txt (plain text prompt)
+  
+  targets:
+    gemini_shards:
+      - --shards all (default - uses manifest to enumerate)
+      - --shards 01,02,03 (explicit list)
+      - --shards 01-06 (range)
+    
+    cli_agents:
+      - --agents librarian,researcher (by role)
+      - --sessions session-name-1,session-name-2 (by tmux session)
+    
+    # v0.1: gemini shards only
+    # future: claude_cli, codex_cli targets
+
+  concurrency:
+    - --parallel N (default: 3)
+    - Controls max simultaneous instances
+
+  timeouts:
+    - --timeout-startup SECONDS (default: 60, checkpoint resume)
+    - --timeout-response SECONDS (default: 180, query response)
+
+output:
+  location:
+    - --output-dir /path/to/dir (explicit)
+    - Default workflow:
+      - Created in: ai_comms/gemini_cli/tasks/to_execute/query_{timestamp}/
+      - Moved to in_progress/ when execution starts
+      - Moved to completed/ when done
+    - If --task provided: uses existing task directory
+  
+  structure:
+    query_20260213_120000/
+      status.yml          # Overall status, timing, success/fail counts
+      query.txt           # The query that was sent
+      logs/
+        dispatch.log      # Script execution log
+        shard-01.log      # tmux capture-pane output (full session)
+        shard-02.log
+        ...
+      output/
+        shard-01.txt      # Extracted response only
+        shard-02.txt
+        ...
+      consolidated.md     # In-order concatenation of all outputs
+
+  status_file_schema:
+    started_at: ISO timestamp
+    completed_at: ISO timestamp
+    query: string
+    targets:
+      - id: shard-01
+        status: success|failed|timeout|skipped
+        started_at: ISO timestamp
+        completed_at: ISO timestamp
+        duration_seconds: int
+        output_lines: int
+        error: string (if failed)
+
+progress_feedback:
+  v0.1: |
+    Line-per-shard output to stderr:
+    [12:00:01] shard-01: starting...
+    [12:00:05] shard-02: starting...
+    [12:00:45] shard-01: done (44s, 127 lines)
+    [12:01:02] shard-02: done (57s, 89 lines)
+    [12:01:02] shard-03: FAILED - timeout after 180s
+    ...
+    Summary: 17/18 succeeded, 1 failed
+
+execution_flow:
+  1_startup:
+    - Parse args, validate inputs
+    - Load shard manifest if --shards all
+    - Create output directory
+    - Write query.txt
+    - Initialize status.yml with all targets queued
+  
+  2_dispatch:
+    - Worker pool of size --parallel
+    - For each target:
+      - Start tmux session
+      - Send /chat resume {shard} (for shards)
+      - Wait for checkpoint restore (poll for prompt)
+      - Send query
+      - Wait for response (poll for completion markers)
+      - Capture output to file
+      - Kill session
+      - Update status.yml
+  
+  3_completion:
+    - Write final status.yml
+    - Print summary to stdout
+    - Exit 0 if all succeeded, 1 if any failed
+
+completion_detection:
+  markers:
+    - "✦" followed by text (Gemini response indicator)
+    - Prompt reappearance ("Type your message" or "> ")
+    - Context percentage in status bar (indicates idle)
+  
+  strategy: |
+    Poll tmux capture every 3s. Response complete when:
+    - See ✦ + content
+    - AND prompt returns
+    - AND no spinner active
+    Wait additional 2s buffer before capture.
+
+error_handling:
+  - Checkpoint restore fails: log error, mark failed, continue
+  - Response timeout: capture partial output, mark timeout, continue
+  - Session crash: mark failed, continue
+  - All failures don't block other targets
+
+retry_support:
+  v0.1: |
+    Manual retry via: dispatch_query.py --task /path/to/task/ --retry-failed
+    Reads status.yml, re-runs only failed/timeout targets
+  
+  future: |
+    Automatic retry with backoff
+
+dependencies:
+  - gemini CLI installed and configured
+  - tmux
+  - Python 3.9+
+  - ~/bin/ai/cli/gemini_cli.py (for start-clean behavior reference)
+
+implementation_phases:
+  v0.1:
+    - Gemini shards only
+    - --prompt and --shards args
+    - --parallel N
+    - Line-per-shard progress to stderr
+    - Output to dispatch_{timestamp}/ directory
+    - status.yml tracking
+    - logs/ and output/ subdirs
+    - consolidated.md (simple concat)
+    - --retry-failed support
+    - Directory lifecycle: to_execute → in_progress → completed
+  
+  v0.2:
+    - --task file input
+    - AI synthesis for consolidated.md
+    - CLI agent targets
+  
+  v0.3:
+    - Integration with task-coord MCP
+    - Callback on completion
+    - Cross-platform targets (claude_cli, codex_cli)
+
+testing:
+  smoke_test: |
+    dispatch_query.py --prompt "Report your shard ID and context availability" --shards 01,02,03 --parallel 2
+  
+  full_test: |
+    dispatch_query.py --prompt "Report your shard ID, date range, and context %" --shards all --parallel 4
+
+open_questions:
+  - Rate limiting concerns with many parallel Gemini instances? (start with --parallel 3-4)
+  - tmux pane logging: use script command or just capture-pane at end?

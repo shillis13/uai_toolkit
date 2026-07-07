@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Project Editor — Center Pane mock (Mullion, 2026-06-21)</title>
+<style>
+  :root{
+    --bg:#0e1014; --nav:#141b2e; --detail:#15171c; --right:#221d19;
+    --line:#262a33; --line2:#2f3542;
+    --text:#dce2ee; --muted:#7d8696; --dim:#5b6473;
+    --cyan:#56c7d6; --green:#5cd693; --amber:#e0af68; --violet:#bb9af7; --blue:#7aa2f7; --rose:#e0738a; --neutral:#cfd6e4;
+    --live:#3fb27f; --blocked:#d9913f;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:#07080b;color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-size:13px;line-height:1.45;padding:24px 24px 60px}
+  h1{font-size:19px;margin:0 0 4px}
+  .sub{color:var(--muted);font-size:12.5px;max-width:980px;margin:0 0 6px}
+  .legend{display:flex;gap:18px;flex-wrap:wrap;font-size:11.5px;color:var(--muted);margin:10px 0 22px;padding:8px 12px;border:1px solid var(--line);border-radius:7px;background:#0d1016}
+  .legend b{color:var(--text);font-weight:600}
+  .dot{width:8px;height:8px;border-radius:50%;display:inline-block;vertical-align:middle;margin-right:5px}
+  .live{background:var(--live)} .blocked{background:var(--blocked)}
+  .amk{display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;border-radius:50%;background:#2b2233;color:var(--violet);font-size:9.5px;font-weight:700;border:1px solid #46395a}
+
+  .aspectTitle{font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--blue);margin:26px 0 8px;display:flex;align-items:center;gap:9px}
+  .aspectTitle .rd{font-weight:500;text-transform:none;letter-spacing:0;font-size:11px;color:var(--muted)}
+
+  /* Center Pane frame */
+  .center{display:grid;grid-template-columns:186px 1fr 210px;height:340px;border:1px solid var(--line2);border-radius:8px;overflow:hidden;box-shadow:0 8px 26px rgba(0,0,0,.45)}
+  .titlebar{grid-column:1/4;height:30px;background:#1a1d24;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:8px;padding:0 12px;font-weight:600;font-size:12px}
+  .titlebar .crumb{color:var(--muted);font-weight:400}
+  .titlebar .pill{margin-left:auto;font-size:10px;color:var(--green);border:1px solid #1f3a2c;background:#11231a;border-radius:10px;padding:1px 8px}
+
+  /* Navigator (left) */
+  .nav{background:var(--nav);border-right:1px solid #20283f;padding:8px 0;overflow:hidden}
+  .nav .grp{font-size:9px;letter-spacing:.09em;text-transform:uppercase;color:var(--dim);padding:4px 12px 2px;font-weight:700}
+  .nav .asp{display:flex;align-items:center;gap:7px;padding:5px 12px;color:#aab3cc;cursor:default}
+  .nav .asp.on{background:#1b2440;color:#e7ecfb;border-left:3px solid var(--blue);padding-left:9px}
+  .nav .asp .ic{width:14px;text-align:center;opacity:.85}
+  .nav .item{display:flex;align-items:center;gap:6px;padding:3px 12px 3px 28px;color:var(--muted);font-size:11.5px}
+  .nav .item.on{color:var(--text);background:#171f36}
+  .nav .item .b{font-size:8px;padding:0 4px;border-radius:3px;font-weight:700;margin-left:auto}
+
+  /* Detail (center) */
+  .detail{background:var(--detail);overflow:hidden;display:flex;flex-direction:column}
+  .detail .body{padding:11px 14px;overflow:auto}
+  .meta{display:grid;grid-template-columns:96px 1fr;row-gap:5px;column-gap:10px;font-size:12px;margin-bottom:6px}
+  .meta .k{color:var(--muted)}
+  .meta .v{color:var(--text)}
+  .collapse{border-top:1px solid var(--line);margin-top:9px;padding-top:7px}
+  .collapse .h{font-weight:700;font-size:11.5px;color:var(--neutral);display:flex;align-items:center;gap:6px;cursor:default}
+  .tree{font-size:11.5px;color:var(--muted);margin:6px 0 2px}
+  .tree .row{display:flex;align-items:center;gap:7px;padding:2px 4px;border-radius:4px}
+  .tree .row.sel{background:#1d2740;color:var(--text)}
+  .tree .row input{margin:0}
+  .actionbar{display:flex;gap:7px;margin-top:8px;font-size:11px}
+  .actionbar .btn{border:1px solid var(--line2);border-radius:5px;padding:2px 9px;color:var(--muted);background:#161922}
+  .actionbar .btn.warn{color:var(--blocked);border-color:#3a2c1c}
+
+  .secLabel{font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim);font-weight:700;margin:4px 0 5px}
+  .splitH{border-top:1px dashed var(--line2);margin:11px 0 9px}
+
+  .todoDetail b{font-size:13px}
+  .badge{font-size:9px;padding:1px 6px;border-radius:3px;font-weight:700}
+  .b-ip{background:#16321f;color:#5cd693}.b-bl{background:#3a201f;color:#e8915c}.b-tri{background:#2a2433;color:#bb9af7}
+
+  /* AI chips */
+  .roles{display:flex;flex-direction:column;gap:8px}
+  .roleRow{display:flex;align-items:center;gap:9px}
+  .roleName{width:80px;color:var(--muted);font-size:11px}
+  .chip{display:inline-flex;align-items:center;gap:6px;padding:2px 9px;border-radius:13px;font-size:11px;font-weight:600;border:1px solid}
+  .chip .s{width:7px;height:7px;border-radius:50%}
+  .chip.sel{outline:2px solid rgba(255,255,255,.18)}
+
+  /* comms channels + messages */
+  .msg{margin:7px 0}
+  .msg .who{font-size:10.5px;font-weight:700}
+  .msg .t{font-size:9.5px;color:var(--dim);margin-left:6px;font-weight:400}
+  .msg .txt{font-size:11.5px;color:var(--text);background:#181c25;border:1px solid var(--line);border-radius:7px;padding:5px 8px;margin-top:2px}
+  .injbox{margin-top:auto;border-top:1px solid var(--line);background:#12151c;padding:7px 10px;display:flex;align-items:center;gap:8px}
+  .injbox .field{flex:1;border:1px solid var(--line2);border-radius:6px;background:#0d1016;color:var(--dim);padding:5px 8px;font-size:11px}
+  .injbox .to{font-size:10px;color:var(--muted)}
+  .injbox .send{font-size:11px;color:#0c0f14;background:var(--blue);border-radius:6px;padding:4px 11px;font-weight:700}
+
+  /* Right panel */
+  .right{background:var(--right);border-left:1px solid #34291f;padding:10px 11px;overflow:auto}
+  .right .rl{font-size:9px;letter-spacing:.07em;text-transform:uppercase;color:var(--amber);font-weight:700;margin:9px 0 3px}
+  .right .rl:first-child{margin-top:0}
+  .right .rv{font-size:11.5px;color:#e7ddcf}
+  .right .rv.mono{font-family:ui-monospace,Menlo,monospace;font-size:10.5px;color:#cdbfa9;word-break:break-all}
+  .blame{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px;vertical-align:middle}
+</style>
+</head>
+<body>
+  <h1>Project Editor — Center Pane, four aspects</h1>
+  <p class="sub">Your model rendered against <b>real wired data</b>. The Center Pane (when a Project tab is focused) splits into <b>Navigator&nbsp;Panel · Detail&nbsp;Area · Right&nbsp;Panel</b> — mirroring how a Session tab splits into Title&nbsp;Bar / Terminal / Prompt / Right&nbsp;Panel. Zones are lightly tinted (nav cool · detail neutral · right warm) to break the monochrome. Project shown: <b>uai_app</b>.</p>
+  <div class="legend">
+    <span><span class="dot live"></span><b>Live now</b> — backend IPC already wired (todos·list/read, comms·inbox/sent/send, relationships, sessions, openFile)</span>
+    <span><span class="dot blocked"></span><b>Needs IPC</b> — not yet wired (file/dir trees, doc discovery, todo writes) — todo_0317 + todo-write wiring</span>
+    <span><span class="amk">1</span>/<span class="amk">2</span>/<span class="amk">3</span> my assumptions, see notes below</span>
+  </div>
+
+  <!-- ░░░░░░░░░░ OVERVIEW ░░░░░░░░░░ -->
+  <div class="aspectTitle">Overview <span class="rd">— project metadata + collapsible Docs &amp; Team areas</span></div>
+  <div class="center">
+    <div class="titlebar">📁 uai_app <span class="crumb">› Overview</span> <span class="pill">● active · main · dirty</span></div>
+    <div class="nav">
+      <div class="grp">Project</div>
+      <div class="asp on"><span class="ic">◉</span>Overview</div>
+      <div class="asp"><span class="ic">☑</span>Work List</div>
+      <div class="asp"><span class="ic">👥</span>Team</div>
+      <div class="asp"><span class="ic">💬</span>Comms</div>
+    </div>
+    <div class="detail"><div class="body">
+      <div class="meta">
+        <span class="k">Name</span><span class="v">Unified AI Interface ✏</span>
+        <span class="k">Goal</span><span class="v">Desktop workspace for managing AI CLI agent sessions ✏</span>
+        <span class="k">Lifecycle</span><span class="v">active ✏</span>
+        <span class="k">Owner</span><span class="v">PianoMan ✏</span>
+        <span class="k">Branch</span><span class="v">main &nbsp;·&nbsp; <span style="color:var(--amber)">dirty</span></span>
+        <span class="k">Working dir</span><span class="v" style="font-family:ui-monospace,monospace;font-size:10.5px;color:var(--muted)">…/uai_app/unified_ai_interface ⧉</span>
+        <span class="k">Tags</span><span class="v">[electron] [typescript] [react]</span>
+      </div>
+      <div class="collapse">
+        <div class="h">▾ Docs <span style="color:var(--blocked);font-weight:500;font-size:10px"><span class="dot blocked"></span>doc discovery needs IPC</span> <span class="amk" style="margin-left:4px">2</span></div>
+        <div class="tree">
+          <div class="row"><input type="checkbox"> 📁 Designs/</div>
+          <div class="row sel" style="padding-left:18px"><input type="checkbox" checked> 📄 2026-06-11-unified-work-tracking-design.md</div>
+          <div class="row" style="padding-left:18px"><input type="checkbox" checked> 📄 2026-06-19-coordinator-session-architecture.md</div>
+          <div class="row"><input type="checkbox"> 📁 Reviews/</div>
+          <div class="row" style="padding-left:18px"><input type="checkbox"> 📄 codex_architecture_review_v1.1.md</div>
+        </div>
+        <div class="actionbar"><span class="btn">Move to Doc Folder</span><span class="btn">Open</span><span class="btn warn">Archive</span><span style="color:var(--dim);align-self:center">2 selected</span></div>
+      </div>
+      <div class="collapse">
+        <div class="h">▾ Team <span style="color:var(--muted);font-weight:500;font-size:10px"><span class="dot live"></span>summary — full view in Team aspect</span></div>
+        <div class="tree">
+          <div class="row">🟡 <b style="color:var(--amber)">Hamilton</b> — Lead/Coordinator</div>
+          <div class="row">🟦 <b style="color:var(--cyan)">Mullion</b> — Project Editor</div>
+          <div class="row">🟩 <b style="color:var(--green)">Plumbline</b> — Identity infra</div>
+        </div>
+      </div>
+    </div></div>
+    <div class="right">
+      <div class="rl">Selection</div><div class="rv">2 docs selected</div>
+      <div class="rl">Overflow</div><div class="rv" style="color:var(--muted)">When a detail item carries more state than fits inline, it expands here (file meta, AI meta, doc preview).</div>
+    </div>
+  </div>
+
+  <!-- ░░░░░░░░░░ WORK LIST ░░░░░░░░░░ -->
+  <div class="aspectTitle">Work List <span class="rd">— the project todo board; nav expands into todos; selected todo → detail + work files</span></div>
+  <div class="center">
+    <div class="titlebar">📁 uai_app <span class="crumb">› Work List › todo_0307</span> <span class="pill">7 todos · 2 in-progress</span></div>
+    <div class="nav">
+      <div class="grp">Project</div>
+      <div class="asp"><span class="ic">◉</span>Overview</div>
+      <div class="asp on"><span class="ic">☑</span>Work List <span class="amk" style="margin-left:auto">1</span></div>
+      <div class="item on">▪ todo_0307 unified work… <span class="b b-ip">IP</span></div>
+      <div class="item">▪ todo_0317 fs.listDir IPC <span class="b b-bl">BL</span></div>
+      <div class="item">▪ todo_0291 dropdown flicker <span class="b b-ip">IP</span></div>
+      <div class="item">▪ todo_0312 notes capture <span class="b b-tri">TR</span></div>
+      <div class="asp"><span class="ic">👥</span>Team</div>
+      <div class="asp"><span class="ic">💬</span>Comms</div>
+    </div>
+    <div class="detail"><div class="body">
+      <div class="todoDetail">
+        <b>todo_0307 — Unified work tracking system</b> <span class="badge b-ip">In&nbsp;Progress</span>
+        <div class="meta" style="margin-top:7px">
+          <span class="k">Owner</span><span class="v">Mullion ✏</span>
+          <span class="k">Project</span><span class="v">uai_app ✏</span>
+          <span class="k">Tags</span><span class="v">[design] [release-gate]</span>
+          <span class="k">Status</span><span class="v">In_Progress ▾ <span style="color:var(--blocked);font-size:10px"><span class="dot blocked"></span>write needs IPC</span></span>
+        </div>
+        <div style="font-size:11.5px;color:var(--muted)">Filesystem-is-the-database work tracker; Project Editor consumes it. notes.md rendered here (todos·read — live).</div>
+      </div>
+      <div class="splitH"></div>
+      <div class="secLabel">Work Folder &amp; files <span class="amk">2</span> &nbsp;<span style="color:var(--blocked);text-transform:none;letter-spacing:0"><span class="dot blocked"></span>tree needs IPC</span></div>
+      <div class="tree">
+        <div class="row">▸ 📁 artifacts/</div>
+        <div class="row sel">📄 2026-06-11-unified-work-tracking-design.md</div>
+        <div class="row">📄 2026-06-19-coordinator-session-architecture.md</div>
+        <div class="row" style="color:var(--dim)">↳ double-click opens in OS (openFile — live)</div>
+      </div>
+    </div></div>
+    <div class="right">
+      <div class="rl">File · metadata</div>
+      <div class="rv" style="font-weight:600">2026-06-11-unified-work-tracking-design.md</div>
+      <div class="rl">Path</div><div class="rv mono">…/todo_0307…/2026-06-11-unified-work-tracking-design.md</div>
+      <div class="rl">Size · modified</div><div class="rv">41 KB · Jun 19 23:11</div>
+      <div class="rl">Authored by <span class="amk">3</span></div>
+      <div class="rv"><span class="blame" style="background:var(--cyan)"></span>Mullion <span style="color:var(--blocked);font-size:10px">(blame needs attribution — other fork)</span></div>
+    </div>
+  </div>
+
+  <!-- ░░░░░░░░░░ TEAM ░░░░░░░░░░ -->
+  <div class="aspectTitle">Team <span class="rd">— Roles &amp; AIs (top); selected AI's work &amp; files (bottom); AI meta → Right Panel; open → Session tab</span></div>
+  <div class="center">
+    <div class="titlebar">📁 uai_app <span class="crumb">› Team › Mullion</span> <span class="pill">3 members</span></div>
+    <div class="nav">
+      <div class="grp">Project</div>
+      <div class="asp"><span class="ic">◉</span>Overview</div>
+      <div class="asp"><span class="ic">☑</span>Work List</div>
+      <div class="asp on"><span class="ic">👥</span>Team <span class="amk" style="margin-left:auto">1</span></div>
+      <div class="item">🟡 Hamilton</div>
+      <div class="item on">🟦 Mullion</div>
+      <div class="item">🟩 Plumbline</div>
+      <div class="asp"><span class="ic">💬</span>Comms</div>
+    </div>
+    <div class="detail"><div class="body">
+      <div class="secLabel">Roles &amp; AIs <span style="color:var(--muted);text-transform:none;letter-spacing:0"><span class="dot live"></span>sessions + relationships — live</span></div>
+      <div class="roles">
+        <div class="roleRow"><span class="roleName">Lead</span><span class="chip" style="border-color:var(--amber);color:var(--amber)"><span class="s" style="background:var(--amber)"></span>Hamilton</span></div>
+        <div class="roleRow"><span class="roleName">Project Editor</span><span class="chip sel" style="border-color:var(--cyan);color:var(--cyan)"><span class="s" style="background:var(--cyan)"></span>Mullion</span></div>
+        <div class="roleRow"><span class="roleName">Identity infra</span><span class="chip" style="border-color:var(--green);color:var(--green)"><span class="s" style="background:var(--green)"></span>Plumbline</span></div>
+      </div>
+      <div class="splitH"></div>
+      <div class="secLabel">Mullion · work &amp; files</div>
+      <div class="tree">
+        <div class="row">☑ todo_0307 unified work tracking <span class="badge b-ip" style="margin-left:auto">IP</span></div>
+        <div class="row">☑ todo_0291 dropdown flicker <span class="badge b-ip" style="margin-left:auto">IP</span></div>
+        <div class="row" style="color:var(--dim)">📄 WorkerProjectDetail.tsx · ProjectEditor mock</div>
+      </div>
+    </div></div>
+    <div class="right">
+      <div class="rl">AI · session meta <span style="color:var(--muted);font-size:9px">(same Right Panel as Session tab)</span></div>
+      <div class="rv" style="font-weight:600;color:var(--cyan)">Mullion</div>
+      <div class="rl">Platform · model</div><div class="rv">Claude CLI · opus-4-8 [1m]</div>
+      <div class="rl">State</div><div class="rv"><span class="dot live"></span>responding</div>
+      <div class="rl">Tracking ID</div><div class="rv mono">20260621_031933_50aaa957_cla</div>
+      <div class="rl">Role</div><div class="rv">architect · dev · Project Editor</div>
+      <div class="rv" style="margin-top:8px;color:var(--blue)">⧉ Open Session tab →</div>
+    </div>
+  </div>
+
+  <!-- ░░░░░░░░░░ COMMS ░░░░░░░░░░ -->
+  <div class="aspectTitle">Comms <span class="rd">— channels (lead↔you · each AI-pair · team); messages; inject prompt box. <b style="color:var(--live)">Richest live backend.</b></span></div>
+  <div class="center">
+    <div class="titlebar">📁 uai_app <span class="crumb">› Comms › PianoMan ↔ Hamilton</span> <span class="pill">comms·send / inbox — live</span></div>
+    <div class="nav">
+      <div class="grp">Project</div>
+      <div class="asp"><span class="ic">◉</span>Overview</div>
+      <div class="asp"><span class="ic">☑</span>Work List</div>
+      <div class="asp"><span class="ic">👥</span>Team</div>
+      <div class="asp on"><span class="ic">💬</span>Comms <span class="amk" style="margin-left:auto">1</span></div>
+      <div class="item on">＃ PianoMan ↔ Hamilton</div>
+      <div class="item">＃ Mullion ↔ Plumbline</div>
+      <div class="item">＃ Hamilton ↔ Mullion</div>
+      <div class="item">＃ #team-uai</div>
+    </div>
+    <div class="detail" style="position:relative">
+      <div class="body" style="flex:1">
+        <div class="secLabel">PianoMan ↔ Hamilton</div>
+        <div class="msg"><span class="who" style="color:var(--neutral)">PianoMan</span><span class="t">01:42</span><div class="txt">Give me a curated list of what needs my input today.</div></div>
+        <div class="msg"><span class="who" style="color:var(--amber)">Hamilton</span><span class="t">01:44</span><div class="txt">3 items: todo_0317 blocked on your IPC call; Mullion wants a Comms-data-model decision; Plumbline shipped v1.1.99 (FYI).</div></div>
+        <div class="msg"><span class="who" style="color:var(--neutral)">PianoMan</span><span class="t">01:49</span><div class="txt">Tell Mullion: Work List = the board. Docs folds into Overview.</div></div>
+      </div>
+      <div class="injbox"><span class="to">to&nbsp;<b style="color:var(--amber)">Hamilton</b> ▾</span><span class="field">Type a message to inject into this channel…</span><span class="send">Send ▸</span></div>
+    </div>
+    <div class="right">
+      <div class="rl">Channel</div><div class="rv">PianoMan ↔ Hamilton</div>
+      <div class="rl">Messages</div><div class="rv">3 · last 01:49</div>
+      <div class="rl">Participants</div>
+      <div class="rv"><span class="blame" style="background:var(--neutral)"></span>PianoMan &nbsp; <span class="blame" style="background:var(--amber)"></span>Hamilton</div>
+      <div class="rl">Member's comms</div><div class="rv" style="color:var(--blue)">⧉ select AI → open Session tab</div>
+    </div>
+  </div>
+
+  <!-- notes -->
+  <div style="margin-top:30px;max-width:1000px;border-top:1px solid var(--line);padding-top:14px">
+    <div style="font-weight:700;margin-bottom:8px">My three assumptions (the forks I want your read on)</div>
+    <div style="font-size:12.5px;color:var(--muted);line-height:1.7">
+      <div><span class="amk">1</span> <b style="color:var(--text)">Navigator expands uniformly.</b> Every aspect (not just Work) expands in the left nav into its primary items — Work→todos, Team→AIs, Comms→channels. Clicking an item loads its detail; clicking the aspect header loads the aspect landing. Consistent &amp; powerful — but it's a choice vs. "only Work expands."</div>
+      <div style="margin-top:6px"><span class="amk">2</span> <b style="color:var(--text)">Doc Folder == Work Folder == one mechanism.</b> A single generic <i>project-scoped folder tree</i> (multi-select, move, open, archive-not-delete), instantiated twice — once for Docs in Overview, once for work-files under a todo. One component, two mounts.</div>
+      <div style="margin-top:6px"><span class="amk">3</span> <b style="color:var(--text)">Right Panel == the Session tab's ContextPanel, reused.</b> Same component, content switches on what's selected in the Detail area: a file → file metadata; an AI → the very same session detail a Session tab shows.</div>
+    </div>
+  </div>
+</body>
+</html>

@@ -1,0 +1,378 @@
+---
+id: schema_session_state_keys
+name: Session State Reserved Keys Registry
+version: "1.0.0"
+created: "2026-04-30"
+status: active
+maintainer: PianoMan
+description: >
+  Canonical registry of reserved session state keys. SessionStore validates
+  writes to namespaced keys against this registry. Adding a reserved key
+  requires editing this file — a deliberate design decision, not an ad-hoc
+  AI action. Exposed to AI sessions via the sessions_state_keys MCP tool.
+
+# --- Reserved Keys ---
+
+reserved_keys:
+
+  # --- Legacy (no namespace prefix) ---
+  - key: role
+    type: list
+    writer: ai_via_mcp
+    description: Roles adopted by this session
+    example: '["chat", "assistant", "architect"]'
+    dedicated_tool: null
+    notes: List-typed key with merge/remove semantics
+
+  - key: features
+    type: list
+    writer: ai_via_mcp
+    description: Feature flags with trigger behavior
+    example: '["write_code"]'
+    dedicated_tool: null
+    notes: "write_code triggers auto-adding developer role via triggers.py"
+
+  - key: ai_root
+    type: str
+    writer: launcher_or_trigger
+    description: Current AI_ROOT path (may be devTree)
+    example: "$AI_ROOT"
+    dedicated_tool: sessions_get_ai_root
+
+  - key: ai_root_main
+    type: str
+    writer: launcher
+    description: Main (non-devTree) AI_ROOT path
+    example: "$AI_ROOT"
+    dedicated_tool: null
+
+  # --- env.* — Seeded from OS environment at launch ---
+  - key: env.AI_TRACKING_ID
+    type: str
+    writer: launcher
+    description: Session tracking ID (v5.3 format)
+    example: "20260425_005120_e0954f5d_cla"
+    dedicated_tool: null
+
+  - key: env.AI_CLI_SESSION_ID
+    type: str
+    writer: launcher
+    description: Platform-native CLI session UUID
+    example: "e0954f5d-fae8-49ff-8e91-c77db0d73227"
+    dedicated_tool: null
+
+  - key: env.AI_SESSION_DIR
+    type: str
+    writer: launcher
+    description: Session data directory path
+    example: "ai_general/data/sessions/claude_cli/2026/04/20260425_005120_e0954f5d_cla/"
+    dedicated_tool: null
+
+  - key: env.AI_SESSION_PLATFORM
+    type: str
+    writer: launcher
+    description: Platform identifier
+    example: "claude_cli"
+    dedicated_tool: null
+    valid_values: ["claude_cli", "codex_cli", "gemini_cli"]
+
+  - key: env.AI_PROJECT_DIR
+    type: str
+    writer: launcher
+    description: Project root / working directory
+    example: "$AI_ROOT"
+    dedicated_tool: null
+
+  # --- session.* — Identity and behavioral metadata ---
+  - key: session.display_name
+    type: str
+    writer: ai_via_mcp_or_launcher
+    description: Human-readable session name
+    example: "Nightwatch"
+    dedicated_tool: null
+
+  # --- compact.* — Compaction lifecycle ---
+  - key: compact.auto_brief
+    type: bool
+    writer: ai_via_mcp_or_config
+    description: Whether to auto-create a session brief on compaction
+    example: true
+    dedicated_tool: null
+    notes: Defaults to true if not set
+
+  - key: compact.start
+    type: str
+    writer: hook
+    description: ISO8601 timestamp when PreCompact fired
+    example: "2026-05-11T10:00:00"
+    dedicated_tool: null
+
+  - key: compact.end
+    type: str
+    writer: hook
+    description: ISO8601 timestamp when PostCompact fired
+    example: "2026-05-11T10:02:00"
+    dedicated_tool: null
+
+  - key: compact.brief_file
+    type: str
+    writer: hook
+    description: Path to auto-generated session brief
+    example: "ai_general/data/session_briefs/auto_briefs/Revenant_20260511.yml"
+    dedicated_tool: null
+
+  - key: compact.brief_pending
+    type: bool
+    writer: hook
+    description: True if auto-brief was dispatched but not yet completed
+    example: true
+    dedicated_tool: null
+
+  - key: compact.pre_ctx_pct
+    type: int
+    writer: hook
+    description: Context usage % before compaction
+    example: 82
+    dedicated_tool: null
+
+  - key: compact.pre_tokens
+    type: int
+    writer: hook
+    description: Token count before compaction
+    example: 820000
+    dedicated_tool: null
+
+  - key: compact.pre_turns
+    type: int
+    writer: hook
+    description: Turn count before compaction
+    example: 150
+    dedicated_tool: null
+
+  - key: compact.pre_msgs
+    type: int
+    writer: hook
+    description: Message count before compaction
+    example: 2500
+    dedicated_tool: null
+
+  # --- context.* — Context window usage, cached by hook ---
+  - key: context.used_pct
+    type: int
+    writer: hook
+    description: Context window usage as integer percentage
+    example: 18
+    dedicated_tool: sessions_get_ctx_used
+
+  - key: context.tokens
+    type: int
+    writer: hook
+    description: Total token count across all token types
+    example: 180432
+    dedicated_tool: sessions_get_ctx_used
+
+  - key: context.cost_usd
+    type: float
+    writer: hook
+    description: Session cost in USD
+    example: 22.90
+    dedicated_tool: sessions_get_ctx_used
+
+  - key: context.updated_at
+    type: str
+    writer: hook
+    description: ISO8601 timestamp of last context cache update
+    example: "2026-04-26T01:30:00-04:00"
+    dedicated_tool: sessions_get_ctx_used
+
+  # --- loaded.* — Documents and data the session has read ---
+  - key: loaded.docs
+    type: str
+    writer: ai_via_mcp
+    description: Loaded docs by directory tier (tier:count, comma-separated)
+    example: "20:5,40:2"
+    dedicated_tool: null
+
+  - key: loaded.mslots
+    type: str
+    writer: ai_via_mcp
+    description: Loaded memory slots (ranges for consecutive, comma for non-consecutive)
+    example: "3-6"
+    dedicated_tool: null
+  - key: loaded.traits
+    type: str
+    writer: ai_via_mcp
+    description: Loaded trait files (comma-separated subdir/stem names)
+    example: "perspective/user_profile_for_cli_agents.latest.condensed,methods/tradeoff_analysis.latest"
+    dedicated_tool: null
+  - key: loaded.roles
+    type: str
+    writer: ai_via_mcp
+    description: Loaded roles and skills (comma-separated names)
+    example: "assistant,dev,skill:peer_review"
+    dedicated_tool: null
+  - key: loaded.manifest
+    type: str
+    writer: ai_via_mcp
+    description: 'JSON array of loaded items with source tracking. Each entry: {type, name, src, at}'
+    example: '[{"type":"role","name":"assistant","src":"profile:developer_teammate","at":"2026-05-08T20:30:00"}]'
+    dedicated_tool: null
+
+  # --- transcript.* — JSONL transcript stats, cached by hook ---
+  - key: transcript.turns
+    type: int
+    writer: hook
+    description: Number of user messages (approximation of conversation turns)
+    example: 105
+    dedicated_tool: null
+
+  - key: transcript.messages
+    type: int
+    writer: hook
+    description: Total message count in JSONL (user + assistant + tool + system)
+    example: 1887
+    dedicated_tool: null
+
+  - key: transcript.assistant_messages
+    type: int
+    writer: hook
+    description: Count of assistant messages in JSONL
+    example: 372
+    dedicated_tool: null
+
+  - key: transcript.tool_calls
+    type: int
+    writer: hook
+    description: Count of tool call messages in JSONL
+    example: 693
+    dedicated_tool: null
+
+  - key: transcript.file_size_bytes
+    type: int
+    writer: hook
+    description: JSONL file size in bytes
+    example: 7525859
+    dedicated_tool: null
+
+  # --- usage.* — Rate limits (also written to platform_state.json) ---
+  - key: usage.5h.used_pct
+    type: float
+    writer: hook
+    description: 5-hour rate limit usage percentage
+    example: 14.0
+    dedicated_tool: null
+    notes: Also written to platform-level platform_state.json
+
+  - key: usage.5h.resets_at
+    type: int
+    writer: hook
+    description: 5-hour rate limit reset time (Unix epoch)
+    example: 1778518200
+    dedicated_tool: null
+
+  - key: usage.7d.used_pct
+    type: float
+    writer: hook
+    description: 7-day rate limit usage percentage
+    example: 91.0
+    dedicated_tool: null
+    notes: Also written to platform-level platform_state.json
+
+  - key: usage.7d.resets_at
+    type: int
+    writer: hook
+    description: 7-day rate limit reset time (Unix epoch)
+    example: 1778522400
+    dedicated_tool: null
+
+  # --- conversation.* — Properties of the chat ---
+  - key: conversation.artifacts
+    type: int
+    writer: ai_via_mcp
+    description: Count of artifacts produced in this session
+    example: 0
+    dedicated_tool: null
+    notes: Ephemeral — resets to 0 on state file rebuild
+
+  # --- footer.* — Footer configuration ---
+  - key: footer.format_brief
+    type: str
+    writer: ai_via_mcp_or_config
+    description: Format template string for brief footer mode
+    example: "{timestamp} | {display_name} | {tracking_id} | Ctx Used:{ctx_used_pct}% | Tokens:{tokens} | Turn:{turns}\nTags: {tags}"
+    dedicated_tool: sessions_get_footer
+    notes: Uses {variable} replacement syntax per protocol_response_footer v2.0
+
+  - key: footer.format_full
+    type: str
+    writer: ai_via_mcp_or_config
+    description: Format template string for full footer mode
+    example: "{timestamp} | {display_name} | {tracking_id} | {cli_uuid}\n{platform} | {project} | Roles:{roles} | Turn:{turns} | Msgs:{msgs} | Ctx Used:{ctx_used_pct}% | Tokens:{tokens}\nDocs:{docs} | MSlots:{mslots} | Artifacts:{artifacts} | Tags: {tags}"
+    dedicated_tool: sessions_get_footer
+
+  - key: footer.full_every
+    type: int
+    writer: ai_via_mcp_or_config
+    description: Full footer cadence — show full footer every Nth turn
+    example: 5
+    dedicated_tool: sessions_get_footer
+
+# --- Validation Rules ---
+
+validation:
+  behavior: >
+    When sessions_state_set is called with a key that has a namespace prefix
+    (contains a dot), SessionStore validates against this registry:
+    - Exact match in reserved_keys → allowed
+    - Not in reserved_keys but namespace prefix matches a reserved namespace
+      (env.*, context.*, session.*, loaded.*, conversation.*, footer.*) →
+      rejected with error listing valid keys in that namespace
+    - No namespace prefix (no dot) and not in reserved_keys → allowed as
+      free-form key
+    - No namespace prefix and in reserved_keys (role, features, ai_root,
+      ai_root_main) → allowed (these are the legacy reserved keys)
+
+  namespaces:
+    - "env."
+    - "context."
+    - "session."
+    - "loaded."
+    - "conversation."
+    - "footer."
+    - "transcript."
+    - "usage."
+    - "compact."
+
+# --- MCP Tool ---
+
+mcp_tool:
+  name: sessions_state_keys
+  description: >
+    List reserved session state key names. Use this before calling
+    sessions_state_set with a namespaced key to verify the exact key
+    name. Returns key name, type, description, and whether a dedicated
+    tool exists.
+  parameters:
+    namespace:
+      type: string
+      required: false
+      description: "Filter to a specific namespace (e.g., 'context', 'env', 'loaded'). Omit for all reserved keys."
+  returns: "List of {key, type, writer, description, dedicated_tool}"
+
+# --- Change Management ---
+
+change_management:
+  process: >
+    Adding, renaming, or deprecating a reserved key requires:
+    1. Edit this file (schema_session_state_keys)
+    2. Update spec_session_state_store if interface changes
+    3. Update protocol_response_footer if footer-consumed keys change
+    4. Update SessionStore validation logic if namespaces change
+    5. Commit with clear rationale
+    This is a deliberate design decision involving PianoMan review,
+    not an ad-hoc AI action.
+
+related:
+  - spec_session_state_store v1.0
+  - protocol_response_footer v2.0
+  - schema_hook_definition v1.0

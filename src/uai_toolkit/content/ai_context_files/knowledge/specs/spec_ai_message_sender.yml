@@ -1,0 +1,24 @@
+meta: {v: 1.1.0, created: 2025-11-01, author: PianoMan, status: production}
+location: ~/bin/projects/chat_orchestrators/send_ai_message.sh
+
+summary: Universal mechanism to send messages to AI desktop apps (Claude, ChatGPT) via AppleScript. Enables notifications, scheduled prompts, CLI alerts, cross-AI comms.
+
+interface:
+  command: "send_ai_message.sh <app> <message>"
+  params:
+    app: {type: string, required: yes, values: [claude, chatgpt]}
+    message: {type: string, required: yes, note: "can be multi-line"}
+  returns: {0: success, 1: error}
+
+behavior:
+  activation: activates app, brings to foreground, 1s delay
+  input: keystroke simulation via AppleScript to active conversation
+  timing: {activation: 1.0s, typing: 0.5s, total_min: ~1.5s}
+  targeting: sends to currently active/open conversation
+  concurrency: not thread-safe, serialize with lock/queue
+
+use_cases: [system notifications, CLI completion alerts, scheduled prompts, cross-AI comms, async collaboration]
+
+limitations: [no response reading, no URL targeting, no retry, single-threaded, requires app focus]
+
+related: [CLI Coordination Protocol v3.1, Chat Orchestrator (Puppeteer), Desktop Claude Prompt Sender v2.0]

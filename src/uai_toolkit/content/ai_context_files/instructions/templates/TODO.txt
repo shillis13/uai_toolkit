@@ -1,0 +1,7 @@
+
+## Update these templates to remove Desktop Claude specifics
+
+design_template.latest.md:Notify Desktop Claude:
+extraction_batch_template.latest.md:After processing ALL chats in this batch, notify Desktop Claude:
+implementation_template.latest.md:2. Notify Desktop Claude:
+planning_template.latest.md:**NOT for orchestration plans** - Claude Desktop creates those in conversation.

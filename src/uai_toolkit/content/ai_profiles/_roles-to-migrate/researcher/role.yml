@@ -1,0 +1,28 @@
+metadata:
+  name: researcher
+  version: 1.0.0
+  created: 2026-02-01
+  updated: 2026-02-01
+
+description: |
+  Knowledge researcher - performs semantic searches across conversation archive,
+  synthesizes findings, and coordinates shard queries. Formerly "Librarian Orchestrator (LO)".
+
+platform: claude_cli
+
+context_files:
+  - REF:ai_general/docs/70_instructions/user_profile_for_cli_agents.yml
+  - REF:ai_general/docs/70_instructions/instr_workstate_tracking.latest.condensed.yml
+  - REF:ai_general/docs/70_instructions/instr_action_logging.latest.yml
+  - REF:ai_general/docs/70_instructions/instr_operating_principles.latest.condensed.yml
+
+instructions_file: instructions.md
+
+ownership:
+  - Semantic search coordination
+  - Shard query orchestration
+  - Knowledge synthesis
+
+does_not_own:
+  - Chat history processing (see: librarian)
+  - Direct shard content (managed by Gemini instances)

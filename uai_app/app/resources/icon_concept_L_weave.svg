@@ -1,0 +1,103 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="bgL" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#1a1a2e"/>
+      <stop offset="100%" stop-color="#0a0a1a"/>
+    </linearGradient>
+    <linearGradient id="warpGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#c0caf5"/>
+      <stop offset="100%" stop-color="#7aa2f7"/>
+    </linearGradient>
+    <linearGradient id="weft1" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#f59e0b" stop-opacity="0"/>
+      <stop offset="20%" stop-color="#f59e0b"/>
+      <stop offset="80%" stop-color="#f59e0b"/>
+      <stop offset="100%" stop-color="#f59e0b" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="weft2" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#a78bfa" stop-opacity="0"/>
+      <stop offset="20%" stop-color="#a78bfa"/>
+      <stop offset="80%" stop-color="#a78bfa"/>
+      <stop offset="100%" stop-color="#a78bfa" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="weft3" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#38bdf8" stop-opacity="0"/>
+      <stop offset="20%" stop-color="#38bdf8"/>
+      <stop offset="80%" stop-color="#38bdf8"/>
+      <stop offset="100%" stop-color="#38bdf8" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="weft4" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#34d399" stop-opacity="0"/>
+      <stop offset="20%" stop-color="#34d399"/>
+      <stop offset="80%" stop-color="#34d399"/>
+      <stop offset="100%" stop-color="#34d399" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="weft5" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#fb7185" stop-opacity="0"/>
+      <stop offset="20%" stop-color="#fb7185"/>
+      <stop offset="80%" stop-color="#fb7185"/>
+      <stop offset="100%" stop-color="#fb7185" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="threadGlow">
+      <feGaussianBlur stdDeviation="6" result="blur"/>
+      <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+    </filter>
+    <clipPath id="iconClipL">
+      <rect x="12" y="12" width="1000" height="1000" rx="200" ry="200"/>
+    </clipPath>
+  </defs>
+
+  <!-- Background -->
+  <rect x="12" y="12" width="1000" height="1000" rx="200" ry="200" fill="url(#bgL)" stroke="#2a2a4a" stroke-width="2"/>
+
+  <g clip-path="url(#iconClipL)">
+    <!-- ===== WARP THREADS (vertical) — the UAI framework/scaffolding ===== -->
+    <!-- These are the constant, structural lines — silver/cool, evenly spaced -->
+    <line x1="280" y1="80" x2="280" y2="944" stroke="url(#warpGrad)" stroke-width="10" opacity="0.35"/>
+    <line x1="380" y1="80" x2="380" y2="944" stroke="url(#warpGrad)" stroke-width="10" opacity="0.4"/>
+    <line x1="480" y1="80" x2="480" y2="944" stroke="url(#warpGrad)" stroke-width="10" opacity="0.45"/>
+    <line x1="540" y1="80" x2="540" y2="944" stroke="url(#warpGrad)" stroke-width="12" opacity="0.5"/>
+    <line x1="620" y1="80" x2="620" y2="944" stroke="url(#warpGrad)" stroke-width="10" opacity="0.45"/>
+    <line x1="720" y1="80" x2="720" y2="944" stroke="url(#warpGrad)" stroke-width="10" opacity="0.35"/>
+
+    <!-- ===== WEFT THREADS (horizontal) — the diverse agents woven through ===== -->
+    <!-- Each is a different color, different weight — diversity made coherent -->
+
+    <!-- Amber thread -->
+    <path d="M 60 260 C 280 260, 280 240, 380 240 C 480 240, 480 260, 540 260
+             C 620 260, 620 240, 720 240 C 820 240, 820 260, 960 260"
+          stroke="url(#weft1)" stroke-width="14" fill="none" opacity="0.8"
+          filter="url(#threadGlow)"/>
+
+    <!-- Purple thread -->
+    <path d="M 60 370 C 280 370, 280 390, 380 390 C 480 390, 480 370, 540 370
+             C 620 370, 620 390, 720 390 C 820 390, 820 370, 960 370"
+          stroke="url(#weft2)" stroke-width="16" fill="none" opacity="0.8"
+          filter="url(#threadGlow)"/>
+
+    <!-- Cyan thread -->
+    <path d="M 60 480 C 280 480, 280 460, 380 460 C 480 460, 480 480, 540 480
+             C 620 480, 620 460, 720 460 C 820 460, 820 480, 960 480"
+          stroke="url(#weft3)" stroke-width="12" fill="none" opacity="0.8"
+          filter="url(#threadGlow)"/>
+
+    <!-- Green thread -->
+    <path d="M 60 580 C 280 580, 280 600, 380 600 C 480 600, 480 580, 540 580
+             C 620 580, 620 600, 720 600 C 820 600, 820 580, 960 580"
+          stroke="url(#weft4)" stroke-width="10" fill="none" opacity="0.7"
+          filter="url(#threadGlow)"/>
+
+    <!-- Rose thread -->
+    <path d="M 60 680 C 280 680, 280 660, 380 660 C 480 660, 480 680, 540 680
+             C 620 680, 620 660, 720 660 C 820 660, 820 680, 960 680"
+          stroke="url(#weft5)" stroke-width="10" fill="none" opacity="0.65"
+          filter="url(#threadGlow)"/>
+
+    <!-- Intersection highlights — where warp meets weft -->
+    <circle cx="540" cy="260" r="5" fill="#ffffff" opacity="0.3"/>
+    <circle cx="540" cy="370" r="5" fill="#ffffff" opacity="0.35"/>
+    <circle cx="540" cy="480" r="6" fill="#ffffff" opacity="0.4"/>
+    <circle cx="540" cy="580" r="5" fill="#ffffff" opacity="0.3"/>
+    <circle cx="540" cy="680" r="5" fill="#ffffff" opacity="0.25"/>
+  </g>
+</svg>

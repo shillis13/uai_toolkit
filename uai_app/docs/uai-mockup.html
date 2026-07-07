@@ -1,0 +1,3688 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>UAI — Unified AI Interface</title>
+<style>
+:root {
+  --bg-primary: #0d1117;
+  --bg-secondary: #161b22;
+  --bg-card: #1c2128;
+  --bg-hover: #21262d;
+  --bg-active: #282e36;
+  --text-primary: #c9d1d9;
+  --text-secondary: #8b949e;
+  --text-muted: #484f58;
+  --border: #30363d;
+  --border-light: #3a424b;
+  --accent-blue: #7aa2f7;
+  --accent-green: #73da88;
+  --accent-yellow: #e0af68;
+  --accent-red: #f7768e;
+  --accent-orange: #ff9e64;
+  --accent-purple: #bb9af7;
+  --accent-cyan: #7dcfff;
+  --platform-claude: #ff9e64;
+  --platform-codex: #bb9af7;
+  --platform-gemini: #7dcfff;
+  --radius: 5px;
+  --radius-lg: 8px;
+  --font-mono: 'SF Mono', 'Fira Code', 'Cascadia Code', 'JetBrains Mono', Consolas, monospace;
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --left-panel-width: 240px;
+  --right-panel-width: 280px;
+  --bottom-drawer-height: 200px;
+  --tab-bar-height: 36px;
+  --title-bar-height: 38px;
+  --window-border: #252d38;
+  --window-title-bar-height: 38px;
+  --explain-panel-bg: #0f1318;
+  --explain-accent: #d4a64a;
+  --explain-border: #1e242c;
+  --explain-title: #e8dcc8;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: var(--font-sans);
+  background: #0a0c10;
+  color: var(--text-primary);
+  height: 100vh;
+  overflow: hidden;
+  font-size: 13px;
+  line-height: 1.4;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+/* ==================== OUTER WRAPPER ==================== */
+.outer-wrapper {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  gap: 8px;
+}
+
+/* ==================== APP WINDOW FRAME ==================== */
+.window-frame {
+  width: 72%;
+  min-width: 72%;
+  height: 100%;
+  background: var(--window-border);
+  border-radius: 12px;
+  overflow: hidden;
+  border: 2px solid var(--window-border);
+  display: flex;
+  flex-direction: column;
+}
+
+/* macOS Title Bar */
+.macos-title-bar {
+  height: var(--window-title-bar-height);
+  background: var(--window-border);
+  display: flex;
+  align-items: center;
+  padding: 0 14px;
+  flex-shrink: 0;
+  position: relative;
+  -webkit-app-region: drag;
+}
+.traffic-lights {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.traffic-light {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  cursor: pointer;
+}
+.traffic-light.red { background: #ff5f57; }
+.traffic-light.yellow { background: #febc2e; }
+.traffic-light.green { background: #28c840; }
+.traffic-light:hover { filter: brightness(1.15); }
+.macos-title-text {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 12px;
+  color: var(--text-muted);
+  font-weight: 500;
+  letter-spacing: 0.3px;
+  user-select: none;
+}
+
+/* ==================== EXPLANATION PANEL (SIDE) ==================== */
+.explanation-panel {
+  width: 28%;
+  min-width: 28%;
+  background: var(--explain-panel-bg);
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.explanation-panel-inner {
+  padding: 24px 20px;
+  overflow-y: auto;
+  flex: 1;
+}
+.explanation-panel .ep-header {
+  position: relative;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--explain-border);
+  margin-bottom: 16px;
+}
+.explanation-panel h2 {
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--explain-title);
+  margin-bottom: 8px;
+  padding-right: 36px;
+}
+.explanation-panel .ep-desc {
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+.explanation-panel h4 {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+  margin-top: 16px;
+}
+.explanation-panel ul {
+  list-style: none;
+  padding: 0;
+}
+.explanation-panel ul li {
+  font-size: 12px;
+  color: var(--text-secondary);
+  padding: 4px 0;
+  padding-left: 14px;
+  position: relative;
+}
+.explanation-panel ul li::before {
+  content: '\2022';
+  position: absolute;
+  left: 0;
+  color: var(--explain-accent);
+}
+.explanation-panel .arch-note {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-style: italic;
+  padding: 10px 12px;
+  background: #151a21;
+  border-radius: var(--radius);
+  border-left: 3px solid var(--explain-accent);
+  margin-top: 12px;
+  line-height: 1.5;
+}
+
+/* Empty state for explanation panel */
+.ep-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  text-align: center;
+  padding: 40px 20px;
+}
+.ep-empty-state .ep-logo {
+  font-size: 48px;
+  margin-bottom: 20px;
+  opacity: 0.25;
+  color: var(--explain-accent);
+}
+.ep-empty-state .ep-hint {
+  font-size: 13px;
+  color: var(--text-muted);
+  line-height: 1.6;
+  max-width: 220px;
+}
+
+/* Highlight for clicked element */
+.explain-highlight {
+  outline: 2px solid var(--accent-blue) !important;
+  box-shadow: 0 0 12px rgba(122,162,247,0.4) !important;
+}
+
+/* Highlight for hovered zones */
+.zone-highlight {
+  outline: 2px solid rgba(122,162,247,0.6);
+  outline-offset: -2px;
+  box-shadow: inset 0 0 20px rgba(122,162,247,0.08);
+}
+
+/* ==================== LAYOUT ==================== */
+.app-container {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  background: var(--bg-primary);
+}
+.main-area {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+.left-panel {
+  width: var(--left-panel-width);
+  min-width: var(--left-panel-width);
+  background: var(--bg-secondary);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.center-pane {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  position: relative;
+}
+.right-panel {
+  width: var(--right-panel-width);
+  min-width: var(--right-panel-width);
+  background: var(--bg-secondary);
+  border-left: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  transition: width 0.2s, min-width 0.2s;
+}
+.right-panel.collapsed {
+  width: 0;
+  min-width: 0;
+  border-left: none;
+}
+.bottom-drawer {
+  height: var(--bottom-drawer-height);
+  background: var(--bg-secondary);
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  transition: height 0.2s;
+}
+.bottom-drawer.collapsed {
+  height: 24px;
+  min-height: 24px;
+  border-top: 1px solid var(--border);
+}
+.bottom-drawer.collapsed .drawer-content { display: none; }
+.bottom-drawer.collapsed .drawer-tabs-bar .drawer-tab { display: none; }
+.bottom-drawer.collapsed .drawer-tabs-bar {
+  justify-content: center;
+  height: 24px;
+  min-height: 24px;
+}
+.bottom-drawer.collapsed .drawer-toggle {
+  font-size: 10px;
+}
+.bottom-drawer.collapsed .drawer-expand-label {
+  display: inline;
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-right: 6px;
+  cursor: pointer;
+}
+.drawer-expand-label { display: none; }
+
+/* ==================== SCROLLBAR ==================== */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--text-muted); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-secondary); }
+
+/* ==================== LEFT PANEL ==================== */
+.tools-section {
+  padding: 8px;
+  border-bottom: 1px solid var(--border);
+}
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 0;
+  cursor: pointer;
+  user-select: none;
+}
+.section-header h3 {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+.section-header .collapse-icon {
+  color: var(--text-muted);
+  font-size: 10px;
+  transition: transform 0.2s;
+}
+.section-header .collapse-icon.rotated { transform: rotate(-90deg); }
+.tools-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  margin-top: 6px;
+}
+.tool-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 7px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+  font-size: 10px;
+  color: var(--text-primary);
+  border-left: 3px solid;
+  transition: background 0.15s;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tool-btn:hover { background: var(--bg-hover); }
+.tool-btn.active { background: var(--bg-active); }
+.tool-btn .tool-icon { font-size: 12px; flex-shrink: 0; }
+
+/* Entity Tabs */
+.entity-tabs-bar {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-primary);
+  overflow-x: auto;
+  flex-shrink: 0;
+}
+.entity-tab {
+  padding: 6px 8px;
+  font-size: 10px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  white-space: nowrap;
+  transition: color 0.15s, border-color 0.15s;
+  user-select: none;
+}
+.entity-tab:hover { color: var(--text-primary); }
+.entity-tab.active {
+  color: var(--accent-blue);
+  border-bottom-color: var(--accent-blue);
+}
+
+.entity-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px 8px;
+}
+
+/* Session Card */
+.session-card {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: 4px;
+  cursor: pointer;
+  border-left: 3px solid;
+  transition: background 0.15s, border-color 0.15s;
+}
+.session-card:hover { background: var(--bg-hover); border-color: var(--border-light); }
+.session-card.active { background: var(--bg-active); }
+.session-card .platform-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.session-card .session-info { flex: 1; min-width: 0; }
+.session-card .session-name {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.session-card .session-meta {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+.session-card .status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.status-running { background: var(--accent-green); box-shadow: 0 0 4px var(--accent-green); }
+.status-stopped { background: var(--text-muted); }
+
+/* Folder tree */
+.folder-item {
+  margin-bottom: 2px;
+}
+.folder-header {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 6px;
+  cursor: pointer;
+  border-radius: var(--radius);
+  font-size: 12px;
+  color: var(--text-secondary);
+  user-select: none;
+}
+.folder-header:hover { background: var(--bg-hover); color: var(--text-primary); }
+.folder-header .folder-icon { font-size: 13px; }
+.folder-header .folder-arrow { font-size: 9px; color: var(--text-muted); transition: transform 0.15s; }
+.folder-header .folder-arrow.open { transform: rotate(90deg); }
+.folder-children {
+  margin-left: 16px;
+  display: none;
+}
+.folder-children.open { display: block; }
+
+/* Project card */
+.project-card {
+  padding: 8px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: 4px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.project-card:hover { background: var(--bg-hover); }
+.project-card .project-name { font-size: 12px; font-weight: 500; color: var(--text-primary); }
+.project-card .project-desc { font-size: 10px; color: var(--text-muted); margin-top: 2px; }
+
+/* Web UI / Terminal / App / News items */
+.list-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: 4px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.list-item:hover { background: var(--bg-hover); }
+.list-item .item-icon { font-size: 14px; flex-shrink: 0; }
+.list-item .item-name { font-size: 12px; color: var(--text-primary); }
+.list-item .item-meta { font-size: 10px; color: var(--text-muted); }
+
+/* Recent sessions section */
+.recent-section {
+  border-top: 1px solid var(--border);
+  padding: 8px;
+  flex-shrink: 0;
+}
+.recent-section .session-card {
+  padding: 5px 7px;
+}
+.recent-section .session-card .session-name { font-size: 11px; }
+
+/* ==================== CENTER PANE ==================== */
+.center-tab-bar {
+  display: flex;
+  align-items: center;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+  height: var(--tab-bar-height);
+  overflow-x: auto;
+  flex-shrink: 0;
+}
+.center-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+  height: 100%;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  border-left: 2px solid transparent;
+  white-space: nowrap;
+  user-select: none;
+  transition: color 0.15s, background 0.15s;
+  position: relative;
+}
+.center-tab:hover { background: var(--bg-hover); color: var(--text-primary); }
+.center-tab.active {
+  color: var(--text-primary);
+  background: var(--bg-primary);
+  border-bottom-color: var(--accent-blue);
+}
+.center-tab .tab-close {
+  font-size: 14px;
+  color: var(--text-muted);
+  margin-left: 4px;
+  border-radius: 3px;
+  width: 16px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.1s, color 0.1s;
+}
+.center-tab .tab-close:hover { background: var(--accent-red); color: white; }
+
+/* Title bar */
+.title-bar {
+  display: flex;
+  align-items: center;
+  height: var(--title-bar-height);
+  padding: 0 12px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+  gap: 10px;
+  flex-shrink: 0;
+}
+.title-bar .nav-btn {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  transition: background 0.15s, color 0.15s;
+}
+.title-bar .nav-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
+.title-bar .entity-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.title-bar .entity-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.title-bar .entity-uri {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+.title-bar .view-toggles { display: flex; gap: 4px; }
+.title-bar .view-toggle {
+  padding: 3px 8px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.title-bar .view-toggle:hover { background: var(--bg-hover); color: var(--text-primary); }
+.title-bar .view-toggle.active { background: var(--accent-blue); color: var(--bg-primary); border-color: var(--accent-blue); }
+
+/* Content area */
+.content-area {
+  flex: 1;
+  overflow-y: auto;
+  background: var(--bg-primary);
+  position: relative;
+}
+.content-view {
+  display: none;
+  height: 100%;
+  overflow-y: auto;
+}
+.content-view.active { display: block; }
+
+/* ==================== TERMINAL VIEW (realistic CLI) ==================== */
+.terminal-view {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+  background: #0a0c10;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+.terminal-status-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 16px;
+  background: #161b22;
+  border-bottom: 1px solid #30363d;
+  font-size: 11px;
+  flex-shrink: 0;
+}
+.terminal-status-bar .tsb-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.terminal-status-bar .tsb-name {
+  color: var(--accent-orange);
+  font-weight: 600;
+}
+.terminal-status-bar .tsb-sep {
+  color: var(--text-muted);
+}
+.terminal-status-bar .tsb-model {
+  color: var(--text-secondary);
+}
+.terminal-status-bar .tsb-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--text-muted);
+}
+.terminal-status-bar .tsb-ctx {
+  color: var(--accent-blue);
+}
+.terminal-status-bar .tsb-tokens {
+  color: var(--text-muted);
+}
+.terminal-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 16px;
+}
+
+/* Terminal line types */
+.t-user {
+  color: var(--accent-green);
+  font-weight: 500;
+  margin-top: 12px;
+}
+.t-user::before {
+  content: '> ';
+  color: var(--accent-green);
+  font-weight: 700;
+}
+.t-assistant {
+  color: #c9d1d9;
+  margin-top: 8px;
+}
+.t-tool-read {
+  color: var(--accent-blue);
+  margin-top: 6px;
+}
+.t-tool-read::before {
+  content: '  \25CF ';
+  color: var(--accent-blue);
+}
+.t-tool-edit {
+  color: var(--accent-cyan);
+  margin-top: 2px;
+}
+.t-tool-edit::before {
+  content: '  \270E ';
+  color: var(--accent-cyan);
+}
+.t-build {
+  color: var(--accent-yellow);
+  margin-top: 2px;
+}
+.t-build::before {
+  content: '  \2699 ';
+  color: var(--accent-yellow);
+}
+.t-success {
+  color: var(--accent-green);
+  margin-top: 2px;
+}
+.t-success::before {
+  content: '  \2713 ';
+  color: var(--accent-green);
+}
+.t-error {
+  color: var(--accent-red);
+}
+.t-system {
+  color: var(--accent-blue);
+  font-style: italic;
+}
+.t-spinner {
+  color: var(--accent-blue);
+  margin-top: 6px;
+}
+.t-spinner::before {
+  content: '\231B ';
+  color: var(--accent-blue);
+}
+.t-dim {
+  color: var(--text-muted);
+}
+.t-bold {
+  font-weight: 700;
+  color: var(--text-primary);
+}
+.t-codeblock {
+  background: #161b22;
+  border-radius: 4px;
+  padding: 8px 12px;
+  margin: 6px 0;
+  border-left: 3px solid var(--border);
+  overflow-x: auto;
+}
+.t-codeblock .t-keyword { color: var(--accent-purple); }
+.t-codeblock .t-property { color: var(--accent-blue); }
+.t-codeblock .t-value { color: var(--accent-green); }
+.t-codeblock .t-comment { color: var(--text-muted); font-style: italic; }
+.t-codeblock .t-string { color: var(--accent-yellow); }
+.t-codeblock .t-punct { color: var(--text-secondary); }
+
+.cursor-block {
+  display: inline-block;
+  width: 7px;
+  height: 14px;
+  background: var(--accent-green);
+  animation: blink 1s step-end infinite;
+  vertical-align: text-bottom;
+}
+@keyframes blink { 50% { opacity: 0; } }
+
+/* ==================== TRANSCRIPT VIEW ==================== */
+.transcript-view {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+  background: #0d1117;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+.transcript-status-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 16px;
+  background: #161b22;
+  border-bottom: 1px solid #30363d;
+  font-size: 11px;
+  flex-shrink: 0;
+}
+.transcript-status-bar .tsb-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.transcript-status-bar .tsb-name {
+  color: var(--accent-orange);
+  font-weight: 600;
+}
+.transcript-status-bar .tsb-sep {
+  color: var(--text-muted);
+}
+.transcript-status-bar .tsb-info {
+  color: var(--text-muted);
+}
+.transcript-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.transcript-msg {
+  border-left: 3px solid;
+  padding: 8px 12px;
+  border-radius: 0 4px 4px 0;
+}
+.transcript-msg-user { border-left-color: #7aa2f7; }
+.transcript-msg-assistant { border-left-color: #ff9e64; }
+.transcript-msg-tool_use { border-left-color: #7dcfff; }
+.transcript-msg-tool_result { border-left-color: #73da88; }
+.transcript-msg-system { border-left-color: #484f58; }
+.transcript-msg-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+.transcript-role-badge {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 10px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.transcript-role-user { background: rgba(122,162,247,0.15); color: #7aa2f7; }
+.transcript-role-assistant { background: rgba(255,158,100,0.15); color: #ff9e64; }
+.transcript-role-tool_use { background: rgba(125,207,255,0.15); color: #7dcfff; }
+.transcript-role-tool_result { background: rgba(115,218,136,0.15); color: #73da88; }
+.transcript-role-system { background: rgba(72,79,88,0.15); color: #484f58; }
+.transcript-time {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+.transcript-msg-content {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-primary);
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+.transcript-msg-user .transcript-msg-content {
+  color: #d4dce6;
+}
+.transcript-msg-content strong {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.transcript-msg-content code {
+  background: #161b22;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 11px;
+  color: var(--accent-cyan);
+}
+.transcript-tool-block {
+  background: #161b22;
+  border-radius: 4px;
+  padding: 6px 10px;
+  margin: 4px 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-secondary);
+  border-left: 2px solid var(--border);
+  overflow-x: auto;
+}
+
+/* ==================== MEMOREX VIEW ==================== */
+.memorex-view {
+  background: var(--bg-primary);
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+.memorex-top-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 16px;
+  background: #161b22;
+  border-bottom: 1px solid #30363d;
+  font-size: 11px;
+  flex-shrink: 0;
+}
+.memorex-top-bar .mtb-name {
+  color: var(--accent-orange);
+  font-weight: 600;
+}
+.memorex-top-bar .mtb-sep {
+  color: var(--text-muted);
+  margin: 0 6px;
+}
+.memorex-top-bar .mtb-info {
+  color: var(--text-muted);
+}
+.memorex-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Memorex message cards */
+.mem-card {
+  border-radius: 6px;
+  border: 1px solid #21262d;
+  overflow: hidden;
+}
+.mem-card-user {
+  border-left: 3px solid var(--accent-blue);
+  background: #0d1117;
+}
+.mem-card-assistant {
+  border-left: 3px solid var(--accent-orange);
+  background: #0d1117;
+}
+.mem-card-tool {
+  border-left: 3px solid var(--accent-cyan);
+  background: #0d1117;
+}
+.mem-card-system {
+  border-left: 3px solid var(--text-muted);
+  background: #0d1117;
+  opacity: 0.7;
+}
+.mem-card-inner {
+  padding: 10px 14px;
+}
+.mem-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+.mem-card-role {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.mem-card-user .mem-card-role { color: var(--accent-blue); }
+.mem-card-assistant .mem-card-role { color: var(--accent-orange); }
+.mem-card-tool .mem-card-role { color: var(--accent-cyan); }
+.mem-card-system .mem-card-role { color: var(--text-muted); }
+.mem-card-time {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+.mem-card-text {
+  font-size: 12px;
+  color: var(--text-primary);
+  line-height: 1.6;
+}
+.mem-card-text strong { color: var(--text-primary); font-weight: 600; }
+.mem-card-text code {
+  background: #161b22;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--accent-cyan);
+}
+.mem-card-text .mem-codeblock {
+  display: block;
+  background: #161b22;
+  border-radius: 4px;
+  padding: 8px 12px;
+  margin: 6px 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-secondary);
+  border-left: 3px solid var(--border);
+  overflow-x: auto;
+}
+.mem-tool-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  background: #161b22;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font-size: 10px;
+  font-family: var(--font-mono);
+  margin: 2px 4px 2px 0;
+}
+.mem-tool-badge .mtb-icon { font-size: 10px; }
+.mem-tool-badge.read { color: var(--accent-blue); }
+.mem-tool-badge.edit { color: var(--accent-cyan); }
+.mem-tool-badge.build { color: var(--accent-yellow); }
+.mem-tool-badge.success { color: var(--accent-green); }
+.mem-card-text ul {
+  list-style: none;
+  padding: 0;
+  margin: 4px 0;
+}
+.mem-card-text ul li {
+  padding: 2px 0 2px 14px;
+  position: relative;
+  font-size: 12px;
+}
+.mem-card-text ul li::before {
+  content: '-';
+  position: absolute;
+  left: 0;
+  color: var(--text-muted);
+}
+
+/* ==================== MANAGER VIEW ==================== */
+.manager-view {
+  padding: 16px;
+}
+.manager-view h2 {
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 12px;
+  color: var(--text-primary);
+}
+.task-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: 6px;
+  cursor: default;
+}
+.task-card .task-status {
+  padding: 2px 7px;
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border-radius: 10px;
+  flex-shrink: 0;
+}
+.badge-active { background: rgba(115,218,136,0.15); color: var(--accent-green); }
+.badge-pending { background: rgba(224,175,104,0.15); color: var(--accent-yellow); }
+.badge-done { background: rgba(122,162,247,0.15); color: var(--accent-blue); }
+.badge-blocked { background: rgba(247,118,142,0.15); color: var(--accent-red); }
+.task-card .task-body { flex: 1; }
+.task-card .task-title { font-size: 13px; font-weight: 500; color: var(--text-primary); }
+.task-card .task-desc { font-size: 11px; color: var(--text-secondary); margin-top: 2px; }
+.task-card .task-meta-row { font-size: 10px; color: var(--text-muted); margin-top: 4px; }
+
+/* Folder grid view */
+.folder-grid-view {
+  padding: 16px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 10px;
+  align-content: start;
+}
+.folder-grid-view .session-card-lg {
+  padding: 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  border-left: 4px solid;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.folder-grid-view .session-card-lg:hover { background: var(--bg-hover); }
+.folder-grid-view .session-card-lg .lg-name { font-size: 14px; font-weight: 600; }
+.folder-grid-view .session-card-lg .lg-platform { font-size: 10px; color: var(--text-muted); margin-top: 2px; }
+.folder-grid-view .session-card-lg .lg-status { margin-top: 6px; }
+
+/* Search view */
+.search-view { padding: 16px; }
+.search-view .search-input-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.search-view input {
+  flex: 1;
+  padding: 8px 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-primary);
+  font-size: 13px;
+  outline: none;
+}
+.search-view input:focus { border-color: var(--accent-blue); }
+.search-result-group { margin-bottom: 16px; }
+.search-result-group h4 { font-size: 12px; color: var(--text-secondary); margin-bottom: 6px; }
+.search-result {
+  padding: 8px 10px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: 4px;
+  cursor: pointer;
+}
+.search-result:hover { background: var(--bg-hover); }
+.search-result .result-text { font-size: 12px; font-family: var(--font-mono); color: var(--text-primary); }
+.search-result .result-meta { font-size: 10px; color: var(--text-muted); margin-top: 2px; }
+
+/* Project detail view */
+.project-detail-view { padding: 16px; }
+.project-detail-view h2 { font-size: 18px; margin-bottom: 4px; }
+.project-detail-view .project-subtitle { font-size: 12px; color: var(--text-secondary); margin-bottom: 16px; }
+.project-detail-view .detail-section { margin-bottom: 16px; }
+.project-detail-view .detail-section h4 {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+
+/* Prompt Box */
+.prompt-box {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--bg-secondary);
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.prompt-box .session-indicator {
+  font-size: 10px;
+  padding: 2px 8px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.prompt-box input {
+  flex: 1;
+  padding: 6px 10px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  outline: none;
+}
+.prompt-box input:focus { border-color: var(--accent-blue); }
+.prompt-box .send-btn {
+  padding: 6px 14px;
+  background: var(--accent-blue);
+  color: var(--bg-primary);
+  border: none;
+  border-radius: var(--radius);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+.prompt-box .send-btn:hover { opacity: 0.85; }
+
+/* ==================== RIGHT PANEL ==================== */
+.right-tabs-bar {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-primary);
+  overflow-x: auto;
+  flex-shrink: 0;
+}
+.right-tab {
+  padding: 7px 10px;
+  font-size: 10px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  white-space: nowrap;
+  user-select: none;
+  transition: color 0.15s, border-color 0.15s;
+}
+.right-tab:hover { color: var(--text-primary); }
+.right-tab.active { color: var(--accent-blue); border-bottom-color: var(--accent-blue); }
+.right-panel-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 10px;
+}
+.right-content-pane { display: none; }
+.right-content-pane.active { display: block; }
+.detail-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+}
+.detail-row .label { color: var(--text-muted); }
+.detail-row .value { color: var(--text-primary); font-family: var(--font-mono); font-size: 10px; text-align: right; max-width: 160px; overflow: hidden; text-overflow: ellipsis; }
+.context-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 6px;
+  background: var(--bg-card);
+  border-radius: var(--radius);
+  margin-bottom: 3px;
+  font-size: 11px;
+}
+.context-item .ctx-name { color: var(--text-primary); }
+.context-item .ctx-badge {
+  font-size: 9px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  font-weight: 600;
+}
+.ctx-loaded { background: rgba(115,218,136,0.15); color: var(--accent-green); }
+.ctx-available { background: rgba(138,153,168,0.1); color: var(--text-muted); }
+.mcp-item {
+  padding: 6px 8px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: 4px;
+  cursor: pointer;
+}
+.mcp-item .mcp-name { font-size: 12px; font-weight: 500; color: var(--text-primary); }
+.mcp-item .mcp-tools { font-size: 10px; color: var(--text-muted); }
+.prompt-queue-item, .message-item {
+  padding: 6px 8px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: 4px;
+  font-size: 11px;
+}
+.prompt-queue-item .pq-target { color: var(--accent-orange); font-weight: 500; }
+.prompt-queue-item .pq-body { color: var(--text-secondary); margin-top: 2px; font-family: var(--font-mono); font-size: 10px; }
+.message-item .msg-from { color: var(--accent-cyan); font-weight: 500; }
+.message-item .msg-body { color: var(--text-secondary); margin-top: 2px; }
+.message-item .msg-time { font-size: 9px; color: var(--text-muted); margin-top: 2px; }
+
+/* ==================== BOTTOM DRAWER ==================== */
+.drawer-tabs-bar {
+  display: flex;
+  align-items: center;
+  background: var(--bg-primary);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.drawer-tab {
+  padding: 6px 12px;
+  font-size: 10px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  white-space: nowrap;
+  user-select: none;
+}
+.drawer-tab:hover { color: var(--text-primary); }
+.drawer-tab.active { color: var(--accent-blue); border-bottom-color: var(--accent-blue); }
+.drawer-toggle {
+  margin-left: auto;
+  padding: 4px 8px;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 12px;
+}
+.drawer-toggle:hover { color: var(--text-primary); }
+.drawer-content {
+  flex: 1;
+  overflow-y: auto;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 6px 12px;
+}
+.drawer-content-pane { display: none; }
+.drawer-content-pane.active { display: block; }
+.log-entry {
+  display: flex;
+  gap: 10px;
+  padding: 2px 0;
+  border-bottom: 1px solid rgba(48,54,61,0.3);
+}
+.log-entry .log-time { color: var(--text-muted); flex-shrink: 0; white-space: nowrap; }
+.log-entry .log-session { color: var(--accent-orange); flex-shrink: 0; min-width: 70px; }
+.log-entry .log-msg { color: var(--text-secondary); }
+.log-entry .log-level-info { color: var(--accent-blue); }
+.log-entry .log-level-warn { color: var(--accent-yellow); }
+.log-entry .log-level-error { color: var(--accent-red); }
+.perf-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+  gap: 8px;
+  padding: 8px 0;
+}
+.perf-card {
+  padding: 10px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  text-align: center;
+}
+.perf-card .perf-value { font-size: 20px; font-weight: 700; color: var(--text-primary); font-family: var(--font-mono); }
+.perf-card .perf-label { font-size: 10px; color: var(--text-muted); margin-top: 2px; text-transform: uppercase; letter-spacing: 0.5px; font-family: var(--font-sans); }
+
+/* Hide entity panes by default */
+.entity-pane { display: none; }
+.entity-pane.active { display: block; }
+</style>
+</head>
+<body>
+
+<div class="outer-wrapper" id="outerWrapper">
+
+  <!-- ==================== APP WINDOW FRAME ==================== -->
+  <div class="window-frame" id="windowFrame">
+    <!-- macOS Title Bar -->
+    <div class="macos-title-bar">
+      <div class="traffic-lights">
+        <div class="traffic-light red" title="Close"></div>
+        <div class="traffic-light yellow" title="Minimize"></div>
+        <div class="traffic-light green" title="Maximize"></div>
+      </div>
+      <span class="macos-title-text">Unified AI Interface</span>
+    </div>
+
+    <!-- App Container -->
+    <div class="app-container">
+      <div class="main-area">
+
+        <!-- ==================== LEFT PANEL ==================== -->
+        <div class="left-panel">
+          <!-- Tools Section -->
+          <div class="tools-section">
+            <div class="section-header" onclick="toggleCollapse('tools-grid')" title="Click to collapse/expand the tools grid">
+              <h3>Tools</h3>
+              <span class="collapse-icon" id="tools-grid-icon">&#9660;</span>
+            </div>
+            <div class="tools-grid" id="tools-grid">
+              <div class="tool-btn" style="border-left-color: var(--accent-green)" title="Todo Manager -- Track and manage todo items across sessions" onclick="openTool('todo', this)">
+                <span class="tool-icon">&#9745;</span> Todo Mgr
+              </div>
+              <div class="tool-btn" style="border-left-color: var(--accent-blue)" title="Task Manager -- Manage tasks assigned to sessions" onclick="openTool('task', this)">
+                <span class="tool-icon">&#9776;</span> Task Mgr
+              </div>
+              <div class="tool-btn" style="border-left-color: var(--accent-purple)" title="Context Manager -- View and manage loaded context (traits, roles, skills)" onclick="openTool('context', this)">
+                <span class="tool-icon">&#9881;</span> Context Mgr
+              </div>
+              <div class="tool-btn" style="border-left-color: var(--accent-cyan)" title="Scheduled Tasks -- View and manage scheduled/cron tasks" onclick="openTool('sched', this)">
+                <span class="tool-icon">&#9200;</span> Sched Tasks
+              </div>
+              <div class="tool-btn" style="border-left-color: var(--accent-yellow)" title="Session Store Manager -- Inspect session key-value stores" onclick="openTool('store', this)">
+                <span class="tool-icon">&#128451;</span> Store Mgr
+              </div>
+              <div class="tool-btn" style="border-left-color: var(--accent-orange)" title="Assigned Tasks -- View tasks assigned to this session" onclick="openTool('assigned', this)">
+                <span class="tool-icon">&#128203;</span> Assigned
+              </div>
+            </div>
+          </div>
+
+          <!-- Entity Tabs -->
+          <div class="entity-tabs-bar">
+            <div class="entity-tab active" data-tab="folders" onclick="switchEntityTab(this)" title="Browse sessions organized in folders">Folders</div>
+            <div class="entity-tab" data-tab="projects" onclick="switchEntityTab(this)" title="View projects">Projects</div>
+            <div class="entity-tab" data-tab="webuis" onclick="switchEntityTab(this)" title="Web AI chat interfaces">Web UIs</div>
+            <div class="entity-tab" data-tab="terminals" onclick="switchEntityTab(this)" title="Standalone terminal sessions">Terms</div>
+            <div class="entity-tab" data-tab="apps" onclick="switchEntityTab(this)" title="Open application panes">Apps</div>
+            <div class="entity-tab" data-tab="news" onclick="switchEntityTab(this)" title="News and reports feed">News</div>
+          </div>
+
+          <!-- Entity Content -->
+          <div class="entity-content">
+            <!-- Folders -->
+            <div class="entity-pane active" id="entity-folders">
+              <div class="folder-item">
+                <div class="folder-header" onclick="toggleFolder(this)" title="All Sessions -- root folder containing all session groups">
+                  <span class="folder-arrow open">&#9654;</span>
+                  <span class="folder-icon">&#128193;</span>
+                  <span>All Sessions</span>
+                </div>
+                <div class="folder-children open">
+                  <div class="folder-item">
+                    <div class="folder-header" onclick="toggleFolder(this)" title="Active Work -- sessions currently in use">
+                      <span class="folder-arrow open">&#9654;</span>
+                      <span class="folder-icon">&#128194;</span>
+                      <span>Active Work</span>
+                    </div>
+                    <div class="folder-children open">
+                      <div class="session-card" style="border-left-color: var(--platform-claude)" onclick="openSession('relay', this)" title="Relay -- Claude session, running -- MCP consolidation work">
+                        <div class="platform-dot" style="background: var(--platform-claude)"></div>
+                        <div class="session-info">
+                          <div class="session-name">Relay</div>
+                          <div class="session-meta">Claude &middot; 3m ago</div>
+                        </div>
+                        <div class="status-dot status-running"></div>
+                      </div>
+                      <div class="session-card" style="border-left-color: var(--platform-claude)" onclick="openSession('helix', this)" title="Helix -- Claude session, running -- A&A game coordination">
+                        <div class="platform-dot" style="background: var(--platform-claude)"></div>
+                        <div class="session-info">
+                          <div class="session-name">Helix</div>
+                          <div class="session-meta">Claude &middot; 12m ago</div>
+                        </div>
+                        <div class="status-dot status-running"></div>
+                      </div>
+                      <div class="session-card" style="border-left-color: var(--platform-gemini)" onclick="openSession('meridian', this)" title="Meridian -- Gemini session, running -- research task">
+                        <div class="platform-dot" style="background: var(--platform-gemini)"></div>
+                        <div class="session-info">
+                          <div class="session-name">Meridian</div>
+                          <div class="session-meta">Gemini &middot; 1h ago</div>
+                        </div>
+                        <div class="status-dot status-running"></div>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="folder-item">
+                    <div class="folder-header" onclick="toggleFolder(this)" title="Research -- sessions for exploration and investigation">
+                      <span class="folder-arrow">&#9654;</span>
+                      <span class="folder-icon">&#128194;</span>
+                      <span>Research</span>
+                    </div>
+                    <div class="folder-children">
+                      <div class="session-card" style="border-left-color: var(--platform-codex)" onclick="openSession('noctis', this)" title="Noctis -- Codex session, stopped -- local LLM research">
+                        <div class="platform-dot" style="background: var(--platform-codex)"></div>
+                        <div class="session-info">
+                          <div class="session-name">Noctis</div>
+                          <div class="session-meta">Codex &middot; 2h ago</div>
+                        </div>
+                        <div class="status-dot status-stopped"></div>
+                      </div>
+                      <div class="session-card" style="border-left-color: var(--platform-claude)" onclick="openSession('splice', this)" title="Splice -- Claude session, stopped -- data pipeline work">
+                        <div class="platform-dot" style="background: var(--platform-claude)"></div>
+                        <div class="session-info">
+                          <div class="session-name">Splice</div>
+                          <div class="session-meta">Claude &middot; 5h ago</div>
+                        </div>
+                        <div class="status-dot status-stopped"></div>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="folder-item">
+                    <div class="folder-header" onclick="toggleFolder(this)" title="Games -- game-related sessions">
+                      <span class="folder-arrow">&#9654;</span>
+                      <span class="folder-icon">&#128194;</span>
+                      <span>Games</span>
+                    </div>
+                    <div class="folder-children">
+                      <div class="session-card" style="border-left-color: var(--platform-claude)" onclick="openSession('cadence', this)" title="Cadence -- Claude session, stopped -- A&A game engine">
+                        <div class="platform-dot" style="background: var(--platform-claude)"></div>
+                        <div class="session-info">
+                          <div class="session-name">Cadence</div>
+                          <div class="session-meta">Claude &middot; 1d ago</div>
+                        </div>
+                        <div class="status-dot status-stopped"></div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Projects -->
+            <div class="entity-pane" id="entity-projects">
+              <div class="project-card" onclick="openProject('uai', this)" title="UAI App -- The Unified AI Interface project">
+                <div class="project-name">UAI App</div>
+                <div class="project-desc">Unified AI Interface desktop application</div>
+              </div>
+              <div class="project-card" onclick="openProject('llm', this)" title="Local LLM -- Stateless local reasoning service">
+                <div class="project-name">Local LLM</div>
+                <div class="project-desc">Stateless local reasoning service</div>
+              </div>
+              <div class="project-card" onclick="openProject('camera', this)" title="Camera Control -- Reolink camera integration">
+                <div class="project-name">Camera Control</div>
+                <div class="project-desc">Reolink camera management and automation</div>
+              </div>
+              <div class="project-card" onclick="openProject('aa', this)" title="Axis and Allies -- Classic board game via cameras">
+                <div class="project-name">Axis &amp; Allies</div>
+                <div class="project-desc">Classic 2nd Ed board game with camera vision</div>
+              </div>
+            </div>
+
+            <!-- Web UIs -->
+            <div class="entity-pane" id="entity-webuis">
+              <div class="list-item" onclick="openWebUI('grok', this)" title="Grok -- xAI's web chat interface">
+                <span class="item-icon" style="color: var(--text-primary)">&#10022;</span>
+                <div>
+                  <div class="item-name">Grok</div>
+                  <div class="item-meta">grok.x.ai</div>
+                </div>
+              </div>
+              <div class="list-item" onclick="openWebUI('chatgpt', this)" title="ChatGPT -- OpenAI's web chat interface">
+                <span class="item-icon" style="color: var(--accent-green)">&#9679;</span>
+                <div>
+                  <div class="item-name">ChatGPT</div>
+                  <div class="item-meta">chatgpt.com</div>
+                </div>
+              </div>
+              <div class="list-item" onclick="openWebUI('gemini-web', this)" title="Gemini Web -- Google's web chat interface">
+                <span class="item-icon" style="color: var(--accent-cyan)">&#9670;</span>
+                <div>
+                  <div class="item-name">Gemini Web</div>
+                  <div class="item-meta">gemini.google.com</div>
+                </div>
+              </div>
+              <div class="list-item" onclick="openWebUI('claude-web', this)" title="Claude Web -- Anthropic's web chat interface">
+                <span class="item-icon" style="color: var(--accent-orange)">&#9673;</span>
+                <div>
+                  <div class="item-name">Claude Web</div>
+                  <div class="item-meta">claude.ai</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Terminals -->
+            <div class="entity-pane" id="entity-terminals">
+              <div class="list-item" onclick="openTerminal('main', this)" title="Main terminal -- primary development terminal">
+                <span class="item-icon" style="color: var(--accent-green)">&#9618;</span>
+                <div>
+                  <div class="item-name">main-dev</div>
+                  <div class="item-meta">tmux: main-dev &middot; bash</div>
+                </div>
+              </div>
+              <div class="list-item" onclick="openTerminal('build', this)" title="Build terminal -- continuous build watcher">
+                <span class="item-icon" style="color: var(--accent-yellow)">&#9618;</span>
+                <div>
+                  <div class="item-name">build-watch</div>
+                  <div class="item-meta">tmux: build-watch &middot; npm run dev</div>
+                </div>
+              </div>
+              <div class="list-item" onclick="openTerminal('logs', this)" title="Logs terminal -- system log viewer">
+                <span class="item-icon" style="color: var(--accent-purple)">&#9618;</span>
+                <div>
+                  <div class="item-name">log-tail</div>
+                  <div class="item-meta">tmux: log-tail &middot; tail -f</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Apps -->
+            <div class="entity-pane" id="entity-apps">
+              <div class="list-item" onclick="openTool('todo', this)" title="Todo Manager application pane">
+                <span class="item-icon" style="color: var(--accent-green)">&#9745;</span>
+                <div>
+                  <div class="item-name">Todo Manager</div>
+                  <div class="item-meta">Active &middot; 14 items</div>
+                </div>
+              </div>
+              <div class="list-item" onclick="openTool('task', this)" title="Task Manager application pane">
+                <span class="item-icon" style="color: var(--accent-blue)">&#9776;</span>
+                <div>
+                  <div class="item-name">Task Manager</div>
+                  <div class="item-meta">Active &middot; 6 tasks</div>
+                </div>
+              </div>
+              <div class="list-item" onclick="openTool('store', this)" title="Session Store Manager application pane">
+                <span class="item-icon" style="color: var(--accent-yellow)">&#128451;</span>
+                <div>
+                  <div class="item-name">Session Store</div>
+                  <div class="item-meta">Active &middot; 3 sessions</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- News -->
+            <div class="entity-pane" id="entity-news">
+              <div class="list-item" onclick="openNews('n1', this)" title="Claude Opus 4.6 release announcement">
+                <span class="item-icon" style="color: var(--accent-orange)">&#128240;</span>
+                <div>
+                  <div class="item-name">Claude Opus 4.6 Released</div>
+                  <div class="item-meta">2 hours ago &middot; Anthropic Blog</div>
+                </div>
+              </div>
+              <div class="list-item" onclick="openNews('n2', this)" title="MCP Protocol v2 specification published">
+                <span class="item-icon" style="color: var(--accent-blue)">&#128240;</span>
+                <div>
+                  <div class="item-name">MCP Protocol v2 Spec</div>
+                  <div class="item-meta">6 hours ago &middot; GitHub</div>
+                </div>
+              </div>
+              <div class="list-item" onclick="openNews('n3', this)" title="Weekly AI development summary report">
+                <span class="item-icon" style="color: var(--accent-green)">&#128202;</span>
+                <div>
+                  <div class="item-name">Weekly Dev Summary</div>
+                  <div class="item-meta">1 day ago &middot; Internal</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Recent Sessions -->
+          <div class="recent-section">
+            <div class="section-header" onclick="toggleCollapse('recent-list')" title="Click to collapse/expand recent sessions">
+              <h3>Recent</h3>
+              <span class="collapse-icon" id="recent-list-icon">&#9660;</span>
+            </div>
+            <div id="recent-list">
+              <div class="session-card" style="border-left-color: var(--platform-claude)" onclick="openSession('relay', this)" title="Relay -- most recently active">
+                <div class="platform-dot" style="background: var(--platform-claude)"></div>
+                <div class="session-info">
+                  <div class="session-name">Relay</div>
+                  <div class="session-meta">3m ago</div>
+                </div>
+                <div class="status-dot status-running"></div>
+              </div>
+              <div class="session-card" style="border-left-color: var(--platform-claude)" onclick="openSession('helix', this)" title="Helix -- active 12 minutes ago">
+                <div class="platform-dot" style="background: var(--platform-claude)"></div>
+                <div class="session-info">
+                  <div class="session-name">Helix</div>
+                  <div class="session-meta">12m ago</div>
+                </div>
+                <div class="status-dot status-running"></div>
+              </div>
+              <div class="session-card" style="border-left-color: var(--platform-gemini)" onclick="openSession('meridian', this)" title="Meridian -- active 1 hour ago">
+                <div class="platform-dot" style="background: var(--platform-gemini)"></div>
+                <div class="session-info">
+                  <div class="session-name">Meridian</div>
+                  <div class="session-meta">1h ago</div>
+                </div>
+                <div class="status-dot status-running"></div>
+              </div>
+              <div class="session-card" style="border-left-color: var(--platform-codex)" onclick="openSession('noctis', this)" title="Noctis -- stopped 2 hours ago">
+                <div class="platform-dot" style="background: var(--platform-codex)"></div>
+                <div class="session-info">
+                  <div class="session-name">Noctis</div>
+                  <div class="session-meta">2h ago</div>
+                </div>
+                <div class="status-dot status-stopped"></div>
+              </div>
+              <div class="session-card" style="border-left-color: var(--platform-claude)" onclick="openSession('splice', this)" title="Splice -- stopped 5 hours ago">
+                <div class="platform-dot" style="background: var(--platform-claude)"></div>
+                <div class="session-info">
+                  <div class="session-name">Splice</div>
+                  <div class="session-meta">5h ago</div>
+                </div>
+                <div class="status-dot status-stopped"></div>
+              </div>
+              <div class="session-card" style="border-left-color: var(--platform-claude)" onclick="openSession('cadence', this)" title="Cadence -- stopped 1 day ago">
+                <div class="platform-dot" style="background: var(--platform-claude)"></div>
+                <div class="session-info">
+                  <div class="session-name">Cadence</div>
+                  <div class="session-meta">1d ago</div>
+                </div>
+                <div class="status-dot status-stopped"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ==================== CENTER PANE ==================== -->
+        <div class="center-pane">
+          <!-- Tab Bar -->
+          <div class="center-tab-bar" id="centerTabBar">
+            <div class="center-tab active" data-view="relay" style="border-left-color: var(--platform-claude)" onclick="switchCenterTab(this)" title="Relay -- Claude CLI session (running)">
+              <span>Relay</span>
+              <span class="tab-close" onclick="event.stopPropagation(); closeTab(this.parentElement)" title="Close tab">&times;</span>
+            </div>
+            <div class="center-tab" data-view="helix" style="border-left-color: var(--platform-claude)" onclick="switchCenterTab(this)" title="Helix -- Claude CLI session (running)">
+              <span>Helix</span>
+              <span class="tab-close" onclick="event.stopPropagation(); closeTab(this.parentElement)" title="Close tab">&times;</span>
+            </div>
+            <div class="center-tab" data-view="assigned" style="border-left-color: var(--accent-orange)" onclick="switchCenterTab(this)" title="Assigned Tasks -- tasks assigned to current session">
+              <span>Assigned Tasks</span>
+              <span class="tab-close" onclick="event.stopPropagation(); closeTab(this.parentElement)" title="Close tab">&times;</span>
+            </div>
+          </div>
+
+          <!-- Title Bar -->
+          <div class="title-bar">
+            <button class="nav-btn" onclick="showExplanation(null, 'Back Navigation', 'Navigate backwards through the viewport history stack. UAI tracks every entity you visit, allowing full back/forward navigation like a browser.', ['Viewport history stack with unlimited depth','Keyboard shortcut support (Cmd+[)','Works across entity types (sessions, tools, projects)'], 'Implemented via the ViewportStore, which maintains a navigation stack independent of the tab bar. The command bus dispatches viewport:navigate events.', this)" title="Navigate back">&larr;</button>
+            <button class="nav-btn" onclick="showExplanation(null, 'Forward Navigation', 'Navigate forward through the viewport history stack after going back.', ['Complements back navigation','Only available after navigating back','Keyboard shortcut: Cmd+]'], 'Uses the same ViewportStore forward stack. Cleared when navigating to a new entity from a back position.', this)" title="Navigate forward">&rarr;</button>
+            <div class="entity-info" id="titleBarInfo">
+              <div class="entity-name">Relay</div>
+              <div class="entity-uri">uai://session/claude/20260604_143022_a8b3c1d2_cla</div>
+            </div>
+            <div class="view-toggles" id="viewToggles">
+              <button class="view-toggle" onclick="toggleViewMode(this, 'transcript')" title="TRANSCRIPT -- Show the formatted transcript of the session">TRANSCRIPT</button>
+              <button class="view-toggle" onclick="toggleViewMode(this, 'memorex')" title="MEMOREX -- Show the session's formatted message view">MEMOREX</button>
+            </div>
+          </div>
+
+          <!-- Content Area -->
+          <div class="content-area">
+            <!-- Relay session - Terminal view (default) -->
+            <div class="content-view active" id="view-relay">
+              <div class="terminal-view">
+                <div class="terminal-status-bar">
+                  <div class="tsb-left">
+                    <span class="tsb-name">Relay</span>
+                    <span class="tsb-sep">&middot;</span>
+                    <span class="tsb-model">claude-opus-4-6</span>
+                    <span class="tsb-sep">&middot;</span>
+                    <span class="tsb-ctx">ctx:34%</span>
+                    <span class="tsb-sep">&middot;</span>
+                    <span class="tsb-tokens">127k tokens</span>
+                  </div>
+                  <div class="tsb-right">
+                    <span>14:30:22</span>
+                  </div>
+                </div>
+                <div class="terminal-body">
+                  <div class="t-user">Please increase the navigator font sizes for Tools, Search, + New, and Folders/Projects tabs.</div>
+                  <br>
+                  <div class="t-spinner">Let me check the current styles...</div>
+                  <br>
+                  <div class="t-tool-read">Read app/renderer/styles/styles.css (lines 140-190)</div>
+                  <br>
+                  <div class="t-codeblock"><span class="t-punct">.</span><span class="t-property">nav-section-header</span> <span class="t-punct">{</span>
+  <span class="t-property">font-size</span><span class="t-punct">:</span> <span class="t-value">11px</span><span class="t-punct">;</span>    <span class="t-comment">&larr; current</span>
+  <span class="t-property">font-weight</span><span class="t-punct">:</span> <span class="t-value">600</span><span class="t-punct">;</span>
+<span class="t-punct">}</span>
+<span class="t-punct">.</span><span class="t-property">nav-tab</span> <span class="t-punct">{</span>
+  <span class="t-property">font-size</span><span class="t-punct">:</span> <span class="t-keyword">var</span><span class="t-punct">(</span><span class="t-string">--size-sm</span><span class="t-punct">);</span>  <span class="t-comment">/* 11px */</span>
+<span class="t-punct">}</span></div>
+                  <br>
+                  <div class="t-assistant">The navigator elements are all 10-11px. I'll bump them to 13px.</div>
+                  <br>
+                  <div class="t-tool-edit">Edit styles.css &mdash; .nav-section-header font-size: 11px &rarr; 13px</div>
+                  <div class="t-tool-edit">Edit styles.css &mdash; .nav-tab font-size: var(--size-sm) &rarr; 13px</div>
+                  <div class="t-tool-edit">Edit Navigator.tsx &mdash; Search button fontSize: '11px' &rarr; '13px'</div>
+                  <div class="t-tool-edit">Edit Navigator.tsx &mdash; + New button fontSize: '11px' &rarr; '13px'</div>
+                  <br>
+                  <div class="t-build">Building UAI v1.1.8...</div>
+                  <div class="t-success">Build succeeded</div>
+                  <div class="t-success">Deployed to UnifiedAI.app</div>
+                  <br>
+                  <div class="t-assistant"><span class="t-bold">v1.1.8</span> deployed. Changes:</div>
+                  <div class="t-assistant">&nbsp; - Tools section header: 11px &rarr; 13px</div>
+                  <div class="t-assistant">&nbsp; - Search button: 11px &rarr; 13px, brighter border, bolder weight</div>
+                  <div class="t-assistant">&nbsp; - + New button: 11px &rarr; 13px, matching</div>
+                  <div class="t-assistant">&nbsp; - Folders/Projects tabs: 11px &rarr; 13px</div>
+                  <br>
+                  <div class="t-assistant">Restart UAI at your convenience.</div>
+                  <br>
+                  <div class="t-user" style="display: inline;"><span class="cursor-block"></span></div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Relay session - TRANSCRIPT view -->
+            <div class="content-view" id="view-relay-transcript">
+              <div class="transcript-view">
+                <div class="transcript-status-bar">
+                  <div class="tsb-left">
+                    <span class="tsb-name">Relay</span>
+                    <span class="tsb-sep">&middot;</span>
+                    <span class="tsb-info">Transcript</span>
+                    <span class="tsb-sep">&middot;</span>
+                    <span class="tsb-info">14 messages</span>
+                    <span class="tsb-sep">&middot;</span>
+                    <span class="tsb-info">Claude Opus 4.6</span>
+                  </div>
+                </div>
+                <div class="transcript-body">
+                  <div class="transcript-msg transcript-msg-user">
+                    <div class="transcript-msg-header">
+                      <span class="transcript-role-badge transcript-role-user">user</span>
+                      <span class="transcript-time">14:30:45</span>
+                    </div>
+                    <div class="transcript-msg-content">Please increase the navigator font sizes for Tools, Search, + New, and Folders/Projects tabs.</div>
+                  </div>
+
+                  <div class="transcript-msg transcript-msg-assistant">
+                    <div class="transcript-msg-header">
+                      <span class="transcript-role-badge transcript-role-assistant">assistant</span>
+                      <span class="transcript-time">14:30:48</span>
+                    </div>
+                    <div class="transcript-msg-content">Let me check the current styles...</div>
+                  </div>
+
+                  <div class="transcript-msg transcript-msg-tool_use">
+                    <div class="transcript-msg-header">
+                      <span class="transcript-role-badge transcript-role-tool_use">tool_use</span>
+                      <span class="transcript-time">14:30:49</span>
+                    </div>
+                    <div class="transcript-tool-block">Read(file_path="app/renderer/styles/styles.css", offset=140, limit=50)</div>
+                  </div>
+
+                  <div class="transcript-msg transcript-msg-tool_result">
+                    <div class="transcript-msg-header">
+                      <span class="transcript-role-badge transcript-role-tool_result">tool_result</span>
+                      <span class="transcript-time">14:30:49</span>
+                    </div>
+                    <div class="transcript-tool-block">.nav-section-header { font-size: 11px; font-weight: 600; }
+.nav-tab { font-size: var(--size-sm); /* 11px */ }</div>
+                  </div>
+
+                  <div class="transcript-msg transcript-msg-assistant">
+                    <div class="transcript-msg-header">
+                      <span class="transcript-role-badge transcript-role-assistant">assistant</span>
+                      <span class="transcript-time">14:30:51</span>
+                    </div>
+                    <div class="transcript-msg-content">The navigator elements are all 10-11px. I'll bump them to 13px.</div>
+                  </div>
+
+                  <div class="transcript-msg transcript-msg-tool_use">
+                    <div class="transcript-msg-header">
+                      <span class="transcript-role-badge transcript-role-tool_use">tool_use</span>
+                      <span class="transcript-time">14:30:52</span>
+                    </div>
+                    <div class="transcript-tool-block">Edit(file_path="styles.css", old_string="font-size: 11px", new_string="font-size: 13px")</div>
+                  </div>
+
+                  <div class="transcript-msg transcript-msg-tool_use">
+                    <div class="transcript-msg-header">
+                      <span class="transcript-role-badge transcript-role-tool_use">tool_use</span>
+                      <span class="transcript-time">14:30:52</span>
+                    </div>
+                    <div class="transcript-tool-block">Edit(file_path="styles.css", old_string="var(--size-sm)", new_string="13px")</div>
+                  </div>
+
+                  <div class="transcript-msg transcript-msg-tool_use">
+                    <div class="transcript-msg-header">
+                      <span class="transcript-role-badge transcript-role-tool_use">tool_use</span>
+                      <span class="transcript-time">14:30:53</span>
+                    </div>
+                    <div class="transcript-tool-block">Edit(file_path="Navigator.tsx", old_string="fontSize: '11px'", new_string="fontSize: '13px'")</div>
+                  </div>
+
+                  <div class="transcript-msg transcript-msg-tool_result">
+                    <div class="transcript-msg-header">
+                      <span class="transcript-role-badge transcript-role-tool_result">tool_result</span>
+                      <span class="transcript-time">14:30:53</span>
+                    </div>
+                    <div class="transcript-tool-block">OK (4 edits applied)</div>
+                  </div>
+
+                  <div class="transcript-msg transcript-msg-tool_use">
+                    <div class="transcript-msg-header">
+                      <span class="transcript-role-badge transcript-role-tool_use">tool_use</span>
+                      <span class="transcript-time">14:30:54</span>
+                    </div>
+                    <div class="transcript-tool-block">Bash(command="cd ~/AI/ai_root/...uai_app && npm run build")</div>
+                  </div>
+
+                  <div class="transcript-msg transcript-msg-tool_result">
+                    <div class="transcript-msg-header">
+                      <span class="transcript-role-badge transcript-role-tool_result">tool_result</span>
+                      <span class="transcript-time">14:30:58</span>
+                    </div>
+                    <div class="transcript-tool-block">Build succeeded. Deployed to UnifiedAI.app</div>
+                  </div>
+
+                  <div class="transcript-msg transcript-msg-assistant">
+                    <div class="transcript-msg-header">
+                      <span class="transcript-role-badge transcript-role-assistant">assistant</span>
+                      <span class="transcript-time">14:30:59</span>
+                    </div>
+                    <div class="transcript-msg-content"><strong>v1.1.8</strong> deployed. Changes:
+  - Tools section header: 11px -> 13px
+  - Search button: 11px -> 13px, brighter border, bolder weight
+  - + New button: 11px -> 13px, matching
+  - Folders/Projects tabs: 11px -> 13px
+
+Restart UAI at your convenience.</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Relay session - MEMOREX view -->
+            <div class="content-view" id="view-relay-memorex">
+              <div class="memorex-view">
+                <div class="memorex-top-bar">
+                  <div>
+                    <span class="mtb-name">Relay</span>
+                    <span class="mtb-sep">&mdash;</span>
+                    <span class="mtb-info">14 messages</span>
+                    <span class="mtb-sep">&mdash;</span>
+                    <span class="mtb-info">Claude Opus 4.6</span>
+                    <span class="mtb-sep">&mdash;</span>
+                    <span class="mtb-info">Jun 6, 2026</span>
+                  </div>
+                </div>
+                <div class="memorex-body">
+                  <div class="mem-card mem-card-user">
+                    <div class="mem-card-inner">
+                      <div class="mem-card-header">
+                        <span class="mem-card-role">User</span>
+                        <span class="mem-card-time">14:30:45</span>
+                      </div>
+                      <div class="mem-card-text">Please increase the navigator font sizes for Tools, Search, + New, and Folders/Projects tabs.</div>
+                    </div>
+                  </div>
+
+                  <div class="mem-card mem-card-assistant">
+                    <div class="mem-card-inner">
+                      <div class="mem-card-header">
+                        <span class="mem-card-role">Assistant</span>
+                        <span class="mem-card-time">14:30:48</span>
+                      </div>
+                      <div class="mem-card-text">
+                        Let me check the current styles...
+                        <br><br>
+                        <span class="mem-tool-badge read"><span class="mtb-icon">&#9679;</span> Read styles.css:140-190</span>
+                        <br><br>
+                        <span class="mem-codeblock"><span style="color: var(--accent-blue);">.nav-section-header</span> { font-size: <span style="color: var(--accent-green);">11px</span>; }
+<span style="color: var(--accent-blue);">.nav-tab</span> { font-size: <span style="color: var(--accent-green);">var(--size-sm)</span>; <span style="color: var(--text-muted);">/* 11px */</span> }</span>
+                        <br>
+                        The navigator elements are all 10-11px. I'll bump them to 13px.
+                        <br><br>
+                        <span class="mem-tool-badge edit"><span class="mtb-icon">&#9998;</span> Edit styles.css &mdash; font-size: 11px &rarr; 13px</span>
+                        <span class="mem-tool-badge edit"><span class="mtb-icon">&#9998;</span> Edit styles.css &mdash; nav-tab: 11px &rarr; 13px</span>
+                        <span class="mem-tool-badge edit"><span class="mtb-icon">&#9998;</span> Edit Navigator.tsx &mdash; Search: 13px</span>
+                        <span class="mem-tool-badge edit"><span class="mtb-icon">&#9998;</span> Edit Navigator.tsx &mdash; + New: 13px</span>
+                        <br><br>
+                        <span class="mem-tool-badge build"><span class="mtb-icon">&#9881;</span> Building UAI v1.1.8...</span>
+                        <span class="mem-tool-badge success"><span class="mtb-icon">&#10003;</span> Build succeeded</span>
+                        <span class="mem-tool-badge success"><span class="mtb-icon">&#10003;</span> Deployed to UnifiedAI.app</span>
+                        <br><br>
+                        <strong>v1.1.8</strong> deployed. Changes:
+                        <ul>
+                          <li>Tools section header: 11px &rarr; 13px</li>
+                          <li>Search button: 11px &rarr; 13px, brighter border, bolder weight</li>
+                          <li>+ New button: 11px &rarr; 13px, matching</li>
+                          <li>Folders/Projects tabs: 11px &rarr; 13px</li>
+                        </ul>
+                        <br>
+                        Restart UAI at your convenience.
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Helix session - Terminal view (default) -->
+            <div class="content-view" id="view-helix">
+              <div class="terminal-view">
+                <div class="terminal-status-bar">
+                  <div class="tsb-left">
+                    <span class="tsb-name">Helix</span>
+                    <span class="tsb-sep">&middot;</span>
+                    <span class="tsb-model">claude-opus-4-6</span>
+                    <span class="tsb-sep">&middot;</span>
+                    <span class="tsb-ctx">ctx:22%</span>
+                    <span class="tsb-sep">&middot;</span>
+                    <span class="tsb-tokens">84k tokens</span>
+                  </div>
+                  <div class="tsb-right">
+                    <span>14:18:05</span>
+                  </div>
+                </div>
+                <div class="terminal-body">
+                  <div class="t-user">Update the A&amp;A game state after Germany's combat phase</div>
+                  <br>
+                  <div class="t-assistant">Processing Germany's combat results...</div>
+                  <br>
+                  <div class="t-tool-read">Read data/game001/turn_01_germany_combat_move.json</div>
+                  <br>
+                  <div class="t-assistant">Battle: Eastern Europe &rarr; Ukraine</div>
+                  <div class="t-assistant">&nbsp; Attackers: 3 INF, 2 ARM, 1 FTR (Germany)</div>
+                  <div class="t-assistant">&nbsp; Defenders: 2 INF, 1 ART (Soviet Union)</div>
+                  <div class="t-assistant">&nbsp; Result: <span class="t-bold" style="color: var(--accent-yellow);">Germany captures Ukraine</span></div>
+                  <div class="t-assistant">&nbsp; Losses: Germany -1 INF, Soviet -2 INF -1 ART</div>
+                  <br>
+                  <div class="t-assistant">Battle: Baltic Sea (sz5)</div>
+                  <div class="t-assistant">&nbsp; Attackers: 2 SUB, 1 FTR (Germany)</div>
+                  <div class="t-assistant">&nbsp; Defenders: 1 TRN, 1 DD (UK)</div>
+                  <div class="t-assistant">&nbsp; Result: <span class="t-bold" style="color: var(--accent-yellow);">German naval victory</span></div>
+                  <div class="t-assistant">&nbsp; Losses: Germany -1 SUB, UK -1 TRN -1 DD</div>
+                  <br>
+                  <div class="t-tool-edit">Edit data/game001/game_state.json &mdash; update territory ownership</div>
+                  <div class="t-tool-edit">Edit data/game001/turn_01_germany_combat.json &mdash; save results</div>
+                  <div class="t-success">Game state updated and saved</div>
+                  <br>
+                  <div class="t-user" style="display: inline;"><span class="cursor-block"></span></div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Helix session - TRANSCRIPT view -->
+            <div class="content-view" id="view-helix-transcript">
+              <div class="transcript-view">
+                <div class="transcript-status-bar">
+                  <div class="tsb-left">
+                    <span class="tsb-name">Helix</span>
+                    <span class="tsb-sep">&middot;</span>
+                    <span class="tsb-info">Transcript</span>
+                    <span class="tsb-sep">&middot;</span>
+                    <span class="tsb-info">8 messages</span>
+                    <span class="tsb-sep">&middot;</span>
+                    <span class="tsb-info">Claude Opus 4.6</span>
+                  </div>
+                </div>
+                <div class="transcript-body">
+                  <div class="transcript-msg transcript-msg-user">
+                    <div class="transcript-msg-header">
+                      <span class="transcript-role-badge transcript-role-user">user</span>
+                      <span class="transcript-time">14:18:10</span>
+                    </div>
+                    <div class="transcript-msg-content">Update the A&amp;A game state after Germany's combat phase</div>
+                  </div>
+
+                  <div class="transcript-msg transcript-msg-assistant">
+                    <div class="transcript-msg-header">
+                      <span class="transcript-role-badge transcript-role-assistant">assistant</span>
+                      <span class="transcript-time">14:18:14</span>
+                    </div>
+                    <div class="transcript-msg-content">Processing Germany's combat results...</div>
+                  </div>
+
+                  <div class="transcript-msg transcript-msg-tool_use">
+                    <div class="transcript-msg-header">
+                      <span class="transcript-role-badge transcript-role-tool_use">tool_use</span>
+                      <span class="transcript-time">14:18:15</span>
+                    </div>
+                    <div class="transcript-tool-block">Read(file_path="data/game001/turn_01_germany_combat_move.json")</div>
+                  </div>
+
+                  <div class="transcript-msg transcript-msg-tool_result">
+                    <div class="transcript-msg-header">
+                      <span class="transcript-role-badge transcript-role-tool_result">tool_result</span>
+                      <span class="transcript-time">14:18:15</span>
+                    </div>
+                    <div class="transcript-tool-block">{"battles": [{"from": "Eastern Europe", "to": "Ukraine", ...}, {"zone": "sz5", ...}]}</div>
+                  </div>
+
+                  <div class="transcript-msg transcript-msg-assistant">
+                    <div class="transcript-msg-header">
+                      <span class="transcript-role-badge transcript-role-assistant">assistant</span>
+                      <span class="transcript-time">14:18:20</span>
+                    </div>
+                    <div class="transcript-msg-content"><strong>Battle: Eastern Europe -> Ukraine</strong>
+Attackers: 3 INF, 2 ARM, 1 FTR (Germany)
+Defenders: 2 INF, 1 ART (Soviet Union)
+Result: <strong>Germany captures Ukraine</strong>
+Losses: Germany -1 INF, Soviet -2 INF -1 ART
+
+<strong>Battle: Baltic Sea (sz5)</strong>
+Attackers: 2 SUB, 1 FTR (Germany)
+Defenders: 1 TRN, 1 DD (UK)
+Result: <strong>German naval victory</strong>
+Losses: Germany -1 SUB, UK -1 TRN -1 DD</div>
+                  </div>
+
+                  <div class="transcript-msg transcript-msg-tool_use">
+                    <div class="transcript-msg-header">
+                      <span class="transcript-role-badge transcript-role-tool_use">tool_use</span>
+                      <span class="transcript-time">14:18:22</span>
+                    </div>
+                    <div class="transcript-tool-block">Edit(file_path="data/game001/game_state.json", ...territory ownership updates...)
+Edit(file_path="data/game001/turn_01_germany_combat.json", ...save results...)</div>
+                  </div>
+
+                  <div class="transcript-msg transcript-msg-tool_result">
+                    <div class="transcript-msg-header">
+                      <span class="transcript-role-badge transcript-role-tool_result">tool_result</span>
+                      <span class="transcript-time">14:18:23</span>
+                    </div>
+                    <div class="transcript-tool-block">OK (2 files updated)</div>
+                  </div>
+
+                  <div class="transcript-msg transcript-msg-assistant">
+                    <div class="transcript-msg-header">
+                      <span class="transcript-role-badge transcript-role-assistant">assistant</span>
+                      <span class="transcript-time">14:18:24</span>
+                    </div>
+                    <div class="transcript-msg-content">Game state updated and saved.</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Helix session - MEMOREX view -->
+            <div class="content-view" id="view-helix-memorex">
+              <div class="memorex-view">
+                <div class="memorex-top-bar">
+                  <div>
+                    <span class="mtb-name">Helix</span>
+                    <span class="mtb-sep">&mdash;</span>
+                    <span class="mtb-info">8 messages</span>
+                    <span class="mtb-sep">&mdash;</span>
+                    <span class="mtb-info">Claude Opus 4.6</span>
+                    <span class="mtb-sep">&mdash;</span>
+                    <span class="mtb-info">Jun 6, 2026</span>
+                  </div>
+                </div>
+                <div class="memorex-body">
+                  <div class="mem-card mem-card-user">
+                    <div class="mem-card-inner">
+                      <div class="mem-card-header">
+                        <span class="mem-card-role">User</span>
+                        <span class="mem-card-time">14:18:10</span>
+                      </div>
+                      <div class="mem-card-text">Update the A&amp;A game state after Germany's combat phase</div>
+                    </div>
+                  </div>
+                  <div class="mem-card mem-card-assistant">
+                    <div class="mem-card-inner">
+                      <div class="mem-card-header">
+                        <span class="mem-card-role">Assistant</span>
+                        <span class="mem-card-time">14:18:14</span>
+                      </div>
+                      <div class="mem-card-text">
+                        Processing Germany's combat results...
+                        <br><br>
+                        <span class="mem-tool-badge read"><span class="mtb-icon">&#9679;</span> Read turn_01_germany_combat_move.json</span>
+                        <br><br>
+                        <strong>Battle: Eastern Europe &rarr; Ukraine</strong><br>
+                        Attackers: 3 INF, 2 ARM, 1 FTR (Germany)<br>
+                        Defenders: 2 INF, 1 ART (Soviet Union)<br>
+                        Result: <strong style="color: var(--accent-yellow);">Germany captures Ukraine</strong><br>
+                        Losses: Germany -1 INF, Soviet -2 INF -1 ART
+                        <br><br>
+                        <strong>Battle: Baltic Sea (sz5)</strong><br>
+                        Attackers: 2 SUB, 1 FTR (Germany)<br>
+                        Defenders: 1 TRN, 1 DD (UK)<br>
+                        Result: <strong style="color: var(--accent-yellow);">German naval victory</strong><br>
+                        Losses: Germany -1 SUB, UK -1 TRN -1 DD
+                        <br><br>
+                        <span class="mem-tool-badge edit"><span class="mtb-icon">&#9998;</span> Edit game_state.json</span>
+                        <span class="mem-tool-badge edit"><span class="mtb-icon">&#9998;</span> Edit turn_01_germany_combat.json</span>
+                        <span class="mem-tool-badge success"><span class="mtb-icon">&#10003;</span> Game state saved</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Noctis session -->
+            <div class="content-view" id="view-noctis">
+              <div class="terminal-view">
+                <div class="terminal-status-bar">
+                  <div class="tsb-left">
+                    <span class="tsb-name">Noctis</span>
+                    <span class="tsb-sep">&middot;</span>
+                    <span class="tsb-model">codex-1</span>
+                    <span class="tsb-sep">&middot;</span>
+                    <span class="tsb-ctx" style="color: var(--text-muted);">stopped</span>
+                  </div>
+                  <div class="tsb-right">
+                    <span style="color: var(--text-muted);">12:44:18</span>
+                  </div>
+                </div>
+                <div class="terminal-body">
+                  <div class="t-user">Benchmark Qwen3 8B vs Llama 3 8B on code completion</div>
+                  <br>
+                  <div class="t-assistant">Running HumanEval benchmark suite...</div>
+                  <br>
+                  <div class="t-assistant">Results (pass@1):</div>
+                  <div class="t-assistant">&nbsp; Qwen3-8B: &nbsp;&nbsp;72.6% &nbsp;(118/162)</div>
+                  <div class="t-assistant">&nbsp; Llama3-8B: &nbsp;68.3% &nbsp;(110/162)</div>
+                  <br>
+                  <div class="t-assistant">Latency (tokens/sec, M3 Max):</div>
+                  <div class="t-assistant">&nbsp; Qwen3-8B: &nbsp;&nbsp;42.1 tok/s</div>
+                  <div class="t-assistant">&nbsp; Llama3-8B: &nbsp;38.7 tok/s</div>
+                  <br>
+                  <div class="t-assistant">Recommendation: Qwen3-8B for reasoning service backend.</div>
+                  <div class="t-dim">[Session ended]</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Meridian session -->
+            <div class="content-view" id="view-meridian">
+              <div class="terminal-view">
+                <div class="terminal-status-bar">
+                  <div class="tsb-left">
+                    <span class="tsb-name">Meridian</span>
+                    <span class="tsb-sep">&middot;</span>
+                    <span class="tsb-model">gemini-2.5-pro</span>
+                    <span class="tsb-sep">&middot;</span>
+                    <span class="tsb-ctx">ctx:18%</span>
+                    <span class="tsb-sep">&middot;</span>
+                    <span class="tsb-tokens">62k tokens</span>
+                  </div>
+                  <div class="tsb-right">
+                    <span>13:22:47</span>
+                  </div>
+                </div>
+                <div class="terminal-body">
+                  <div class="t-user">Research current state of WebGPU for ML inference</div>
+                  <br>
+                  <div class="t-assistant">WebGPU ML Inference - Current State (June 2026):</div>
+                  <br>
+                  <div class="t-assistant"><span class="t-bold">Browser Support:</span></div>
+                  <div class="t-assistant">&nbsp; Chrome 126+: Full support, shader precompilation</div>
+                  <div class="t-assistant">&nbsp; Firefox 130+: Full support since March 2026</div>
+                  <div class="t-assistant">&nbsp; Safari 19: Partial (no compute shaders)</div>
+                  <br>
+                  <div class="t-assistant"><span class="t-bold">Key Libraries:</span></div>
+                  <div class="t-assistant">&nbsp; - ONNX Runtime Web 2.0: WebGPU backend stable</div>
+                  <div class="t-assistant">&nbsp; - Transformers.js 4.x: Direct WebGPU pipeline</div>
+                  <div class="t-assistant">&nbsp; - MediaPipe: WebGPU acceleration for all tasks</div>
+                  <br>
+                  <div class="t-assistant">Performance vs WASM: 3-8x faster for transformer models</div>
+                  <br>
+                  <div class="t-user" style="display: inline;"><span class="cursor-block"></span></div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Splice session -->
+            <div class="content-view" id="view-splice">
+              <div class="terminal-view">
+                <div class="terminal-status-bar">
+                  <div class="tsb-left">
+                    <span class="tsb-name">Splice</span>
+                    <span class="tsb-sep">&middot;</span>
+                    <span class="tsb-model">claude-sonnet-4</span>
+                    <span class="tsb-sep">&middot;</span>
+                    <span class="tsb-ctx" style="color: var(--text-muted);">stopped</span>
+                  </div>
+                  <div class="tsb-right">
+                    <span style="color: var(--text-muted);">09:15:33</span>
+                  </div>
+                </div>
+                <div class="terminal-body">
+                  <div class="t-user">Migrate chat history pipeline to new JSONL format</div>
+                  <br>
+                  <div class="t-assistant">Migration plan:</div>
+                  <div class="t-assistant">&nbsp; 1. Convert 847 transcript files to JSONL</div>
+                  <div class="t-assistant">&nbsp; 2. Update read_jsonl.py parsers</div>
+                  <div class="t-assistant">&nbsp; 3. Rebuild compact_jsonl deduplication</div>
+                  <br>
+                  <div class="t-tool-read">Read ai_memories/10_raw_transcripts/ (847 files)</div>
+                  <div class="t-build">Converting 847 transcripts...</div>
+                  <div class="t-success">847/847 files converted</div>
+                  <div class="t-success">All checksums match</div>
+                  <br>
+                  <div class="t-dim">[Session ended]</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Cadence session -->
+            <div class="content-view" id="view-cadence">
+              <div class="terminal-view">
+                <div class="terminal-status-bar">
+                  <div class="tsb-left">
+                    <span class="tsb-name">Cadence</span>
+                    <span class="tsb-sep">&middot;</span>
+                    <span class="tsb-model">claude-opus-4-6</span>
+                    <span class="tsb-sep">&middot;</span>
+                    <span class="tsb-ctx" style="color: var(--text-muted);">stopped</span>
+                  </div>
+                  <div class="tsb-right">
+                    <span style="color: var(--text-muted);">22:05:11</span>
+                  </div>
+                </div>
+                <div class="terminal-body">
+                  <div class="t-user">Implement purchase phase for A&amp;A game engine</div>
+                  <br>
+                  <div class="t-assistant">Implementing purchase phase logic for Classic 2nd Edition rules.</div>
+                  <br>
+                  <div class="t-codeblock"><span class="t-comment">// Unit costs (IPCs)</span>
+<span class="t-keyword">const</span> <span class="t-property">UNIT_COSTS</span> <span class="t-punct">=</span> <span class="t-punct">{</span>
+  <span class="t-property">infantry</span><span class="t-punct">:</span> <span class="t-value">3</span><span class="t-punct">,</span>  <span class="t-property">artillery</span><span class="t-punct">:</span> <span class="t-value">4</span><span class="t-punct">,</span>  <span class="t-property">tank</span><span class="t-punct">:</span> <span class="t-value">6</span><span class="t-punct">,</span>
+  <span class="t-property">fighter</span><span class="t-punct">:</span> <span class="t-value">10</span><span class="t-punct">,</span>  <span class="t-property">bomber</span><span class="t-punct">:</span> <span class="t-value">12</span><span class="t-punct">,</span>  <span class="t-property">transport</span><span class="t-punct">:</span> <span class="t-value">7</span><span class="t-punct">,</span>
+  <span class="t-property">submarine</span><span class="t-punct">:</span> <span class="t-value">6</span><span class="t-punct">,</span> <span class="t-property">destroyer</span><span class="t-punct">:</span> <span class="t-value">8</span><span class="t-punct">,</span> <span class="t-property">carrier</span><span class="t-punct">:</span> <span class="t-value">14</span><span class="t-punct">,</span>
+  <span class="t-property">battleship</span><span class="t-punct">:</span> <span class="t-value">20</span><span class="t-punct">,</span> <span class="t-property">aaGun</span><span class="t-punct">:</span> <span class="t-value">5</span>
+<span class="t-punct">};</span></div>
+                  <br>
+                  <div class="t-tool-edit">Edit aa_game/src/phases/purchase.ts &mdash; create file</div>
+                  <div class="t-tool-edit">Edit aa_game/src/phases/purchase.test.ts &mdash; create tests</div>
+                  <div class="t-build">Running tests...</div>
+                  <div class="t-success">24/24 tests passing</div>
+                  <br>
+                  <div class="t-dim">[Session ended]</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Assigned Tasks view -->
+            <div class="content-view" id="view-assigned">
+              <div class="manager-view">
+                <h2>Assigned Tasks</h2>
+                <div class="task-card" style="cursor:pointer" onclick="showExplanation(null, 'Task: MCP Consolidation', 'Consolidate the 14 MCP servers down to 5 unified servers. This reduces startup time, simplifies configuration, and improves tool discoverability.', ['Merge guidance into knowledge server','Merge browser/chat/chrome into comms server','Merge osascript/macos-tools/screeny into sessions','Merge fetch into filesystem','Write migration scripts for all dependent configs'], 'Tasks are stored in the WorkflowStore and dispatched via the command bus. The TaskManager viewport renders task cards with status badges and metadata.', this)">
+                  <span class="task-status badge-active">Active</span>
+                  <div class="task-body">
+                    <div class="task-title">MCP Server Consolidation (14 &#8594; 5)</div>
+                    <div class="task-desc">Merge related MCP servers to reduce complexity and startup overhead</div>
+                    <div class="task-meta-row">Assigned to: Relay &middot; Priority: High &middot; Due: 2026-06-06</div>
+                  </div>
+                </div>
+                <div class="task-card" style="cursor:pointer" onclick="showExplanation(null, 'Task: Tab Group Implementation', 'Implement tab groups in the UAI center pane. Groups allow organizing related tabs (e.g., all tabs for a project) with color-coded grouping and collapse/expand.', ['Tab group creation via drag-and-drop','Color assignment per group','Collapse/expand group','Persist groups in ViewportStore','Keyboard shortcuts for group navigation'], 'Tab groups extend the ViewportStore tab model. Each tab gains a groupId field. The TabBar component renders group headers and handles group-level operations.', this)">
+                  <span class="task-status badge-pending">Pending</span>
+                  <div class="task-body">
+                    <div class="task-title">Implement Tab Groups in Center Pane</div>
+                    <div class="task-desc">Allow grouping related tabs with color coding and collapse</div>
+                    <div class="task-meta-row">Assigned to: Kael &middot; Priority: Medium &middot; Due: 2026-06-10</div>
+                  </div>
+                </div>
+                <div class="task-card" style="cursor:pointer" onclick="showExplanation(null, 'Task: Camera Snapshot Pipeline', 'Build automated camera snapshot pipeline for Axis and Allies board state detection. Captures images at configurable intervals and runs through vision model for piece identification.', ['Reolink API integration for snapshot capture','Configurable capture intervals','Vision model pipeline for board state extraction','State diff detection between snapshots','Integration with A&A game engine'], 'The camera pipeline lives outside UAI as an external service. UAI connects to it via a dedicated MCP server that exposes capture and analysis tools.', this)">
+                  <span class="task-status badge-active">Active</span>
+                  <div class="task-body">
+                    <div class="task-title">Camera Snapshot Pipeline for A&amp;A</div>
+                    <div class="task-desc">Automated board state capture via Reolink cameras</div>
+                    <div class="task-meta-row">Assigned to: Helix &middot; Priority: High &middot; Due: 2026-06-08</div>
+                  </div>
+                </div>
+                <div class="task-card" style="cursor:pointer" onclick="showExplanation(null, 'Task: Memorex View Integration', 'Integrate the Memorex (knowledge memory) view into session viewports. Memorex shows a structured view of what a session knows, has learned, and remembers.', ['Working memory slot visualization','Knowledge graph connections between sessions','Memory search across all sessions','Inline memory editing','Export/import memory snapshots'], 'Memorex is a viewport mode alongside Transcript. It reads from the KnowledgeStore and renders slot contents, search results, and memory timeline. Toggle via the title bar button.', this)">
+                  <span class="task-status badge-pending">Pending</span>
+                  <div class="task-body">
+                    <div class="task-title">Memorex View for Sessions</div>
+                    <div class="task-desc">Structured knowledge/memory view alongside transcript</div>
+                    <div class="task-meta-row">Assigned to: Splice &middot; Priority: Medium &middot; Due: 2026-06-12</div>
+                  </div>
+                </div>
+                <div class="task-card">
+                  <span class="task-status badge-done">Done</span>
+                  <div class="task-body">
+                    <div class="task-title">Session Identity v5 Implementation</div>
+                    <div class="task-desc">Table-driven identity with PID tracking and no -s flag</div>
+                    <div class="task-meta-row">Completed: 2026-06-02 &middot; By: Turnstyle</div>
+                  </div>
+                </div>
+                <div class="task-card">
+                  <span class="task-status badge-blocked">Blocked</span>
+                  <div class="task-body">
+                    <div class="task-title">Terminal Overlay Spike</div>
+                    <div class="task-desc">Transparent overlay rendering for terminal sessions -- blocked on WebGPU research</div>
+                    <div class="task-meta-row">Assigned to: Canopy &middot; Blocked by: Meridian research</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Todo Manager view -->
+            <div class="content-view" id="view-todo">
+              <div class="manager-view">
+                <h2>Todo Manager</h2>
+                <div class="task-card">
+                  <span class="task-status badge-active">Open</span>
+                  <div class="task-body">
+                    <div class="task-title">Fix text selection in terminal viewport</div>
+                    <div class="task-desc">Selection doesn't work across line boundaries</div>
+                    <div class="task-meta-row">Tags: bug, uai &middot; Created: 2026-06-03</div>
+                  </div>
+                </div>
+                <div class="task-card">
+                  <span class="task-status badge-active">Open</span>
+                  <div class="task-body">
+                    <div class="task-title">Audit substrate layer for memory leaks</div>
+                    <div class="task-desc">Monitor heap growth during long sessions</div>
+                    <div class="task-meta-row">Tags: perf, substrate &middot; Created: 2026-06-02</div>
+                  </div>
+                </div>
+                <div class="task-card">
+                  <span class="task-status badge-done">Done</span>
+                  <div class="task-body">
+                    <div class="task-title">Add scope checkboxes to search</div>
+                    <div class="task-desc">Filter search by transcript, memory, files</div>
+                    <div class="task-meta-row">Tags: feature, search &middot; Completed: 2026-06-01</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Task Manager view -->
+            <div class="content-view" id="view-task">
+              <div class="manager-view">
+                <h2>Task Manager</h2>
+                <p style="color: var(--text-secondary); margin-bottom: 12px; font-size: 12px;">Central task coordination across all sessions</p>
+                <div class="task-card">
+                  <span class="task-status badge-active">In Progress</span>
+                  <div class="task-body">
+                    <div class="task-title">MCP Consolidation Sprint</div>
+                    <div class="task-desc">3 of 5 merges completed. Remaining: comms, sessions.</div>
+                    <div class="task-meta-row">Owner: Relay &middot; Sprint: Week 23</div>
+                  </div>
+                </div>
+                <div class="task-card">
+                  <span class="task-status badge-pending">Queued</span>
+                  <div class="task-body">
+                    <div class="task-title">UAI Component API Refactor</div>
+                    <div class="task-desc">Self-describing component protocol for all viewports</div>
+                    <div class="task-meta-row">Owner: Kael &middot; Sprint: Week 24</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Context Manager view -->
+            <div class="content-view" id="view-context">
+              <div class="manager-view">
+                <h2>Context Manager</h2>
+                <p style="color: var(--text-secondary); margin-bottom: 12px; font-size: 12px;">Manage loaded traits, roles, skills, and knowledge across sessions</p>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+                  <div>
+                    <h4 style="font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px;">Loaded Roles (3)</h4>
+                    <div class="context-item"><span class="ctx-name">developer</span><span class="ctx-badge ctx-loaded">Loaded</span></div>
+                    <div class="context-item"><span class="ctx-name">architect</span><span class="ctx-badge ctx-loaded">Loaded</span></div>
+                    <div class="context-item"><span class="ctx-name">coordinator</span><span class="ctx-badge ctx-loaded">Loaded</span></div>
+                    <div class="context-item"><span class="ctx-name">researcher</span><span class="ctx-badge ctx-available">Available</span></div>
+                    <div class="context-item"><span class="ctx-name">librarian</span><span class="ctx-badge ctx-available">Available</span></div>
+                  </div>
+                  <div>
+                    <h4 style="font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px;">Loaded Traits (5)</h4>
+                    <div class="context-item"><span class="ctx-name">cross-session-comms</span><span class="ctx-badge ctx-loaded">Loaded</span></div>
+                    <div class="context-item"><span class="ctx-name">error-handling</span><span class="ctx-badge ctx-loaded">Loaded</span></div>
+                    <div class="context-item"><span class="ctx-name">working-memory</span><span class="ctx-badge ctx-loaded">Loaded</span></div>
+                    <div class="context-item"><span class="ctx-name">design-patterns</span><span class="ctx-badge ctx-loaded">Loaded</span></div>
+                    <div class="context-item"><span class="ctx-name">code-review</span><span class="ctx-badge ctx-loaded">Loaded</span></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Scheduled Tasks view -->
+            <div class="content-view" id="view-sched">
+              <div class="manager-view">
+                <h2>Scheduled Tasks</h2>
+                <p style="color: var(--text-secondary); margin-bottom: 12px; font-size: 12px;">Cron-based and timed task scheduling</p>
+                <div class="task-card">
+                  <span class="task-status badge-active">Active</span>
+                  <div class="task-body">
+                    <div class="task-title">Submodule Reference Update</div>
+                    <div class="task-desc">Automatically update git submodule references</div>
+                    <div class="task-meta-row">Schedule: */30 * * * * &middot; Next: 15:00 &middot; Last: 14:30</div>
+                  </div>
+                </div>
+                <div class="task-card">
+                  <span class="task-status badge-active">Active</span>
+                  <div class="task-body">
+                    <div class="task-title">Memory Pipeline Sweep</div>
+                    <div class="task-desc">Process pending chat transcripts through knowledge pipeline</div>
+                    <div class="task-meta-row">Schedule: 0 */4 * * * &middot; Next: 16:00 &middot; Last: 12:00</div>
+                  </div>
+                </div>
+                <div class="task-card">
+                  <span class="task-status badge-pending">Paused</span>
+                  <div class="task-body">
+                    <div class="task-title">Camera Board Capture</div>
+                    <div class="task-desc">Snapshot Reolink cameras for A&amp;A board state</div>
+                    <div class="task-meta-row">Schedule: 0 * * * * &middot; Paused since: 2026-06-03</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Store Manager view -->
+            <div class="content-view" id="view-store">
+              <div class="manager-view">
+                <h2>Session Store Manager</h2>
+                <p style="color: var(--text-secondary); margin-bottom: 12px; font-size: 12px;">Inspect and manage key-value state for all sessions</p>
+                <div style="margin-bottom: 16px;">
+                  <h4 style="font-size: 11px; color: var(--accent-orange); margin-bottom: 8px;">Relay &middot; 8 keys</h4>
+                  <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 8px; font-family: var(--font-mono); font-size: 11px;">
+                    <div style="display: flex; justify-content: space-between; padding: 3px 0; border-bottom: 1px solid var(--border);"><span style="color: var(--accent-blue);">role</span><span style="color: var(--text-secondary);">developer,architect</span></div>
+                    <div style="display: flex; justify-content: space-between; padding: 3px 0; border-bottom: 1px solid var(--border);"><span style="color: var(--accent-blue);">task_count</span><span style="color: var(--text-secondary);">3</span></div>
+                    <div style="display: flex; justify-content: space-between; padding: 3px 0; border-bottom: 1px solid var(--border);"><span style="color: var(--accent-blue);">mcp_consolidation_progress</span><span style="color: var(--text-secondary);">3/5</span></div>
+                    <div style="display: flex; justify-content: space-between; padding: 3px 0;"><span style="color: var(--accent-blue);">ctx_used_pct</span><span style="color: var(--text-secondary);">34</span></div>
+                  </div>
+                </div>
+                <div>
+                  <h4 style="font-size: 11px; color: var(--accent-orange); margin-bottom: 8px;">Helix &middot; 5 keys</h4>
+                  <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 8px; font-family: var(--font-mono); font-size: 11px;">
+                    <div style="display: flex; justify-content: space-between; padding: 3px 0; border-bottom: 1px solid var(--border);"><span style="color: var(--accent-blue);">role</span><span style="color: var(--text-secondary);">developer,coordinator</span></div>
+                    <div style="display: flex; justify-content: space-between; padding: 3px 0; border-bottom: 1px solid var(--border);"><span style="color: var(--accent-blue);">game_id</span><span style="color: var(--text-secondary);">game001</span></div>
+                    <div style="display: flex; justify-content: space-between; padding: 3px 0;"><span style="color: var(--accent-blue);">current_turn</span><span style="color: var(--text-secondary);">1_germany_combat</span></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Folder detail view -->
+            <div class="content-view" id="view-folder-active">
+              <div class="manager-view">
+                <h2>Active Work</h2>
+                <p style="color: var(--text-secondary); margin-bottom: 16px; font-size: 12px;">3 sessions</p>
+              </div>
+              <div class="folder-grid-view">
+                <div class="session-card-lg" style="border-left-color: var(--platform-claude)" onclick="openSession('relay', this)">
+                  <div class="lg-name" style="color: var(--platform-claude)">Relay</div>
+                  <div class="lg-platform">Claude CLI &middot; claude-opus-4-6</div>
+                  <div class="lg-status"><span class="task-status badge-active">Running</span></div>
+                </div>
+                <div class="session-card-lg" style="border-left-color: var(--platform-claude)" onclick="openSession('helix', this)">
+                  <div class="lg-name" style="color: var(--platform-claude)">Helix</div>
+                  <div class="lg-platform">Claude CLI &middot; claude-opus-4-6</div>
+                  <div class="lg-status"><span class="task-status badge-active">Running</span></div>
+                </div>
+                <div class="session-card-lg" style="border-left-color: var(--platform-gemini)" onclick="openSession('meridian', this)">
+                  <div class="lg-name" style="color: var(--platform-gemini)">Meridian</div>
+                  <div class="lg-platform">Gemini CLI &middot; gemini-2.5-pro</div>
+                  <div class="lg-status"><span class="task-status badge-active">Running</span></div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Project detail views -->
+            <div class="content-view" id="view-project-uai">
+              <div class="project-detail-view">
+                <h2>UAI App</h2>
+                <div class="project-subtitle">Unified AI Interface -- Desktop application for multi-platform AI session management</div>
+                <div class="detail-section">
+                  <h4>Description</h4>
+                  <p style="font-size: 12px; color: var(--text-secondary);">Electron-based desktop app that provides a unified interface for managing Claude CLI, Codex CLI, Gemini CLI, and web AI sessions. Features include session lifecycle management, cross-session communication, shared knowledge/memory, and a command bus architecture.</p>
+                </div>
+                <div class="detail-section">
+                  <h4>Active Sessions</h4>
+                  <div class="task-card" style="cursor: pointer;" onclick="openSession('relay', this)">
+                    <span class="task-status badge-active">Running</span>
+                    <div class="task-body">
+                      <div class="task-title">Relay -- MCP Consolidation</div>
+                      <div class="task-meta-row">Claude CLI &middot; 34% context used</div>
+                    </div>
+                  </div>
+                  <div class="task-card" style="cursor: pointer;" onclick="openSession('helix', this)">
+                    <span class="task-status badge-active">Running</span>
+                    <div class="task-body">
+                      <div class="task-title">Helix -- A&amp;A Game Coordination</div>
+                      <div class="task-meta-row">Claude CLI &middot; 22% context used</div>
+                    </div>
+                  </div>
+                </div>
+                <div class="detail-section">
+                  <h4>Repository</h4>
+                  <p style="font-size: 12px; color: var(--text-secondary); font-family: var(--font-mono);">~/AI/ai_root/ai_general/work/projects/uai_app/unified_ai_interface</p>
+                </div>
+              </div>
+            </div>
+
+            <div class="content-view" id="view-project-llm">
+              <div class="project-detail-view">
+                <h2>Local LLM</h2>
+                <div class="project-subtitle">Stateless local reasoning service for fast, private inference</div>
+                <div class="detail-section">
+                  <h4>Description</h4>
+                  <p style="font-size: 12px; color: var(--text-secondary);">A local LLM service that provides stateless reasoning capabilities. Runs quantized models (Qwen3-8B, Llama3-8B) on Apple Silicon for code completion, classification, and lightweight reasoning without sending data to external APIs.</p>
+                </div>
+              </div>
+            </div>
+
+            <div class="content-view" id="view-project-camera">
+              <div class="project-detail-view">
+                <h2>Camera Control</h2>
+                <div class="project-subtitle">Reolink camera management and board state detection</div>
+                <div class="detail-section">
+                  <h4>Description</h4>
+                  <p style="font-size: 12px; color: var(--text-secondary);">Integrates with Reolink cameras for automated snapshot capture. Primary use case is board game state detection for the Axis and Allies project, using vision models to identify game pieces and board positions.</p>
+                </div>
+              </div>
+            </div>
+
+            <div class="content-view" id="view-project-aa">
+              <div class="project-detail-view">
+                <h2>Axis &amp; Allies</h2>
+                <div class="project-subtitle">Classic 2nd Edition board game with camera vision integration</div>
+                <div class="detail-section">
+                  <h4>Description</h4>
+                  <p style="font-size: 12px; color: var(--text-secondary);">Digital companion for playing Axis and Allies (1987 Classic 2nd Edition). Uses Reolink cameras to capture board state, vision models for piece recognition, and a full game engine implementing all rules including combat resolution, movement, and purchase phases.</p>
+                </div>
+                <div class="detail-section">
+                  <h4>Rules Edition</h4>
+                  <p style="font-size: 12px; color: var(--accent-yellow);">1987 Classic 2nd Edition -- NOT Revised, 1942, or Global rules</p>
+                </div>
+              </div>
+            </div>
+
+            <!-- Web UI views -->
+            <div class="content-view" id="view-webui-grok">
+              <div class="manager-view">
+                <h2>Grok</h2>
+                <p style="color: var(--text-secondary); margin-bottom: 12px; font-size: 12px;">xAI web chat interface -- grok.x.ai</p>
+                <div style="background: #0a0e14; border-radius: var(--radius); padding: 16px; font-family: var(--font-mono); font-size: 12px; color: var(--text-secondary);">
+                  <div style="color: var(--accent-cyan);">[Embedded web view would render here]</div>
+                  <br>
+                  <div>In the full UAI app, this pane contains a sandboxed webview rendering the Grok chat interface. UAI can inject prompts, capture responses, and route messages through the comms system.</div>
+                </div>
+              </div>
+            </div>
+            <div class="content-view" id="view-webui-chatgpt">
+              <div class="manager-view">
+                <h2>ChatGPT</h2>
+                <p style="color: var(--text-secondary); margin-bottom: 12px; font-size: 12px;">OpenAI web chat interface -- chatgpt.com</p>
+                <div style="background: #0a0e14; border-radius: var(--radius); padding: 16px; font-family: var(--font-mono); font-size: 12px; color: var(--text-secondary);">
+                  <div style="color: var(--accent-green);">[Embedded web view would render here]</div>
+                </div>
+              </div>
+            </div>
+            <div class="content-view" id="view-webui-gemini-web">
+              <div class="manager-view">
+                <h2>Gemini Web</h2>
+                <p style="color: var(--text-secondary); margin-bottom: 12px; font-size: 12px;">Google web chat interface -- gemini.google.com</p>
+                <div style="background: #0a0e14; border-radius: var(--radius); padding: 16px; font-family: var(--font-mono); font-size: 12px; color: var(--text-secondary);">
+                  <div style="color: var(--accent-cyan);">[Embedded web view would render here]</div>
+                </div>
+              </div>
+            </div>
+            <div class="content-view" id="view-webui-claude-web">
+              <div class="manager-view">
+                <h2>Claude Web</h2>
+                <p style="color: var(--text-secondary); margin-bottom: 12px; font-size: 12px;">Anthropic web chat interface -- claude.ai</p>
+                <div style="background: #0a0e14; border-radius: var(--radius); padding: 16px; font-family: var(--font-mono); font-size: 12px; color: var(--text-secondary);">
+                  <div style="color: var(--accent-orange);">[Embedded web view would render here]</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Terminal views -->
+            <div class="content-view" id="view-terminal-main">
+              <div class="terminal-view">
+                <div class="terminal-status-bar">
+                  <div class="tsb-left">
+                    <span class="tsb-name" style="color: var(--accent-green);">main-dev</span>
+                    <span class="tsb-sep">&middot;</span>
+                    <span class="tsb-model">tmux &middot; bash</span>
+                  </div>
+                  <div class="tsb-right">
+                    <span>active</span>
+                  </div>
+                </div>
+                <div class="terminal-body">
+                  <div style="color: var(--accent-green);">shawn@mac ~/AI/ai_root $</div>
+                  <div class="t-assistant">git status</div>
+                  <div class="t-assistant">On branch main</div>
+                  <div class="t-assistant">Changes not staged for commit:</div>
+                  <div class="t-assistant">&nbsp; modified:&nbsp;&nbsp; ai_general (new commits)</div>
+                  <br>
+                  <div style="color: var(--accent-green); display: inline;">shawn@mac ~/AI/ai_root $ </div><span class="cursor-block"></span>
+                </div>
+              </div>
+            </div>
+            <div class="content-view" id="view-terminal-build">
+              <div class="terminal-view">
+                <div class="terminal-status-bar">
+                  <div class="tsb-left">
+                    <span class="tsb-name" style="color: var(--accent-yellow);">build-watch</span>
+                    <span class="tsb-sep">&middot;</span>
+                    <span class="tsb-model">tmux &middot; npm run dev</span>
+                  </div>
+                  <div class="tsb-right">
+                    <span>active</span>
+                  </div>
+                </div>
+                <div class="terminal-body">
+                  <div class="t-assistant">[14:32:01] File change detected: src/stores/viewport.ts</div>
+                  <div class="t-assistant">[14:32:01] Rebuilding...</div>
+                  <div style="color: var(--accent-yellow);">[14:32:02] Build succeeded in 1.2s</div>
+                  <div class="t-assistant">[14:32:02] Watching for changes...</div>
+                </div>
+              </div>
+            </div>
+            <div class="content-view" id="view-terminal-logs">
+              <div class="terminal-view">
+                <div class="terminal-status-bar">
+                  <div class="tsb-left">
+                    <span class="tsb-name" style="color: var(--accent-purple);">log-tail</span>
+                    <span class="tsb-sep">&middot;</span>
+                    <span class="tsb-model">tmux &middot; tail -f</span>
+                  </div>
+                  <div class="tsb-right">
+                    <span>active</span>
+                  </div>
+                </div>
+                <div class="terminal-body">
+                  <div class="t-assistant">14:30:22 <span style="color: var(--accent-blue);">[INFO]</span> Session Relay started (claude-opus-4-6)</div>
+                  <div class="t-assistant">14:30:23 <span style="color: var(--accent-blue);">[INFO]</span> MCP servers connected: 5/5</div>
+                  <div class="t-assistant">14:31:05 <span style="color: var(--accent-blue);">[INFO]</span> Prompt dispatched to Relay</div>
+                  <div class="t-assistant">14:32:02 <span style="color: var(--accent-blue);">[INFO]</span> Build completed (viewport.ts)</div>
+                  <div style="color: var(--accent-yellow);">14:32:15 [WARN] Memory pipeline: 3 files pending</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- News views -->
+            <div class="content-view" id="view-news-n1">
+              <div class="manager-view">
+                <h2>Claude Opus 4.6 Released</h2>
+                <p style="color: var(--text-muted); margin-bottom: 16px; font-size: 11px;">2 hours ago &middot; Anthropic Blog</p>
+                <p style="color: var(--text-secondary); font-size: 13px; line-height: 1.7;">Anthropic has released Claude Opus 4.6 with expanded context window (1M tokens), improved tool use reliability, and enhanced reasoning capabilities. The model shows particular improvements in multi-step planning and code generation tasks.</p>
+              </div>
+            </div>
+            <div class="content-view" id="view-news-n2">
+              <div class="manager-view">
+                <h2>MCP Protocol v2 Specification</h2>
+                <p style="color: var(--text-muted); margin-bottom: 16px; font-size: 11px;">6 hours ago &middot; GitHub</p>
+                <p style="color: var(--text-secondary); font-size: 13px; line-height: 1.7;">The Model Context Protocol v2 specification has been published with support for streaming tool results, server-initiated notifications, and improved authentication. Key changes include a new capability negotiation handshake and resource subscription model.</p>
+              </div>
+            </div>
+            <div class="content-view" id="view-news-n3">
+              <div class="manager-view">
+                <h2>Weekly Development Summary</h2>
+                <p style="color: var(--text-muted); margin-bottom: 16px; font-size: 11px;">1 day ago &middot; Internal Report</p>
+                <p style="color: var(--text-secondary); font-size: 13px; line-height: 1.7;">This week: Session identity v5 shipped, MCP consolidation at 60%, A&amp;A combat phase complete. 47 commits across 6 sessions. Total context consumed: 2.8M tokens. Upcoming: Tab groups, terminal overlay, Memorex integration.</p>
+              </div>
+            </div>
+
+            <!-- Search view -->
+            <div class="content-view" id="view-search">
+              <div class="search-view">
+                <div class="search-input-row">
+                  <input type="text" placeholder="Search across sessions, transcripts, memory..." value="MCP consolidation" title="Search input -- searches across all sessions, transcripts, and memory">
+                </div>
+                <div class="search-result-group">
+                  <h4>Relay &middot; Transcript</h4>
+                  <div class="search-result">
+                    <div class="result-text">Consolidate <span style="background: rgba(224,175,104,0.3); color: var(--accent-yellow); padding: 0 2px;">MCP</span> servers from 14 to 5</div>
+                    <div class="result-meta">14:30:45 &middot; Prompt</div>
+                  </div>
+                  <div class="search-result">
+                    <div class="result-text"><span style="background: rgba(224,175,104,0.3); color: var(--accent-yellow); padding: 0 2px;">MCP</span> <span style="background: rgba(224,175,104,0.3); color: var(--accent-yellow); padding: 0 2px;">consolidation</span> plan: knowledge, sessions, comms, workflow, filesystem</div>
+                    <div class="result-meta">14:31:12 &middot; Response</div>
+                  </div>
+                </div>
+                <div class="search-result-group">
+                  <h4>Memory &middot; Working Memory</h4>
+                  <div class="search-result">
+                    <div class="result-text">Slot 06 (Current Context): <span style="background: rgba(224,175,104,0.3); color: var(--accent-yellow); padding: 0 2px;">MCP consolidation</span> sprint in progress, 3/5 complete</div>
+                    <div class="result-meta">Updated: 2026-06-04 14:00</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Prompt Box -->
+          <div class="prompt-box">
+            <span class="session-indicator" id="promptTarget" title="Target session for prompts">&#9654; Relay</span>
+            <input type="text" placeholder="Send a prompt to this session..." title="Type a prompt to send to the active session" onkeydown="if(event.key==='Enter')sendPrompt()">
+            <button class="send-btn" onclick="sendPrompt()" title="Send the prompt to the target session">Send</button>
+          </div>
+        </div>
+
+        <!-- ==================== RIGHT PANEL ==================== -->
+        <div class="right-panel" id="rightPanel">
+          <div class="right-tabs-bar">
+            <div class="right-tab active" data-rtab="details" onclick="switchRightTab(this)" title="Session details and metadata">Details</div>
+            <div class="right-tab" data-rtab="context" onclick="switchRightTab(this)" title="Loaded context -- traits, roles, skills, briefs">Context</div>
+            <div class="right-tab" data-rtab="mcps" onclick="switchRightTab(this)" title="Connected MCP servers and tool counts">MCPs</div>
+            <div class="right-tab" data-rtab="prompts" onclick="switchRightTab(this)" title="Pending prompt queue for this session">Prompts</div>
+            <div class="right-tab" data-rtab="messages" onclick="switchRightTab(this)" title="Inter-session messages (inbox/outbox)">Messages</div>
+          </div>
+          <div class="right-panel-content">
+            <!-- Details -->
+            <div class="right-content-pane active" id="rtab-details">
+              <div id="detailsContent">
+                <div class="detail-row"><span class="label">Platform</span><span class="value">Claude CLI</span></div>
+                <div class="detail-row"><span class="label">Model</span><span class="value">claude-opus-4-6</span></div>
+                <div class="detail-row"><span class="label">Tracking ID</span><span class="value" style="font-size: 9px;">20260604_143022_a8b3c1d2_cla</span></div>
+                <div class="detail-row"><span class="label">Terminal</span><span class="value">tmux: relay</span></div>
+                <div class="detail-row"><span class="label">Status</span><span class="value" style="color: var(--accent-green);">Running</span></div>
+                <div class="detail-row"><span class="label">Context Used</span><span class="value">34%</span></div>
+                <div class="detail-row"><span class="label">Roles</span><span class="value">developer, architect</span></div>
+                <div class="detail-row"><span class="label">Created</span><span class="value">2026-06-04 14:30</span></div>
+                <div class="detail-row"><span class="label">Last Prompt</span><span class="value">3m ago</span></div>
+                <div style="margin-top: 12px;">
+                  <h4 style="font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px;">Notes</h4>
+                  <p style="font-size: 11px; color: var(--text-secondary); background: var(--bg-card); padding: 8px; border-radius: var(--radius);">Working on MCP consolidation sprint. 3 of 5 merges completed. Next: comms server merge (browser + chat + chrome-control).</p>
+                </div>
+              </div>
+            </div>
+
+            <!-- Context -->
+            <div class="right-content-pane" id="rtab-context">
+              <h4 style="font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px;">Roles (2 loaded / 8 available)</h4>
+              <div class="context-item"><span class="ctx-name">developer</span><span class="ctx-badge ctx-loaded">Loaded</span></div>
+              <div class="context-item"><span class="ctx-name">architect</span><span class="ctx-badge ctx-loaded">Loaded</span></div>
+              <div class="context-item"><span class="ctx-name">coordinator</span><span class="ctx-badge ctx-available">Available</span></div>
+              <div class="context-item"><span class="ctx-name">researcher</span><span class="ctx-badge ctx-available">Available</span></div>
+
+              <h4 style="font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin: 10px 0 6px;">Traits (4 loaded / 12 available)</h4>
+              <div class="context-item"><span class="ctx-name">cross-session-comms</span><span class="ctx-badge ctx-loaded">Loaded</span></div>
+              <div class="context-item"><span class="ctx-name">error-handling</span><span class="ctx-badge ctx-loaded">Loaded</span></div>
+              <div class="context-item"><span class="ctx-name">working-memory</span><span class="ctx-badge ctx-loaded">Loaded</span></div>
+              <div class="context-item"><span class="ctx-name">design-patterns</span><span class="ctx-badge ctx-loaded">Loaded</span></div>
+
+              <h4 style="font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin: 10px 0 6px;">Skills (1 loaded / 6 available)</h4>
+              <div class="context-item"><span class="ctx-name">mcp-development</span><span class="ctx-badge ctx-loaded">Loaded</span></div>
+              <div class="context-item"><span class="ctx-name">frontend-design</span><span class="ctx-badge ctx-available">Available</span></div>
+
+              <h4 style="font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin: 10px 0 6px;">Briefs (1 loaded)</h4>
+              <div class="context-item"><span class="ctx-name">mcp-consolidation-brief</span><span class="ctx-badge ctx-loaded">Loaded</span></div>
+            </div>
+
+            <!-- MCPs -->
+            <div class="right-content-pane" id="rtab-mcps">
+              <div class="mcp-item" onclick="showExplanation(null, 'MCP: Knowledge Server', 'Unified knowledge and guidance server. Provides access to the AI knowledge base, guidance system, working memory, and context management.', ['knowledge_search, knowledge_get_context','guidance search, get_role, get_skill, get_trait','Working memory read/write/search','Context listing and management','12 + 8 = 20 tools total'], 'The knowledge MCP server is the result of merging the original guidance and knowledge servers. It connects to the ai_traits and ai_memories filesystems and provides structured access to all stored knowledge.', this)">
+                <div class="mcp-name">knowledge</div>
+                <div class="mcp-tools">20 tools &middot; Connected &middot; <span style="color: var(--accent-green);">&#9679;</span></div>
+              </div>
+              <div class="mcp-item" onclick="showExplanation(null, 'MCP: Sessions Server', 'Session lifecycle management, OS automation, and terminal control. Manages launching, monitoring, and controlling AI CLI sessions across platforms.', ['Session launch, kill, attach, detach','State store (key-value per session)','Terminal send_keys and read_session','Screenshot capture and window listing','osascript execution for macOS automation','34 + 5 = 39 tools total'], 'The sessions MCP consolidates the original sessions, osascript, macos-tools, and screeny servers. It is the primary interface for session lifecycle operations in UAI.', this)">
+                <div class="mcp-name">sessions</div>
+                <div class="mcp-tools">39 tools &middot; Connected &middot; <span style="color: var(--accent-green);">&#9679;</span></div>
+              </div>
+              <div class="mcp-item" onclick="showExplanation(null, 'MCP: Communications Server', 'Cross-session messaging, browser automation, and notification delivery. Handles all communication between AI sessions and with web AI interfaces.', ['Message send, reply, broadcast','Prompt queue management','Browser/chat detection and interaction','Chrome tab control and JS execution','Lock/unlock sessions for exclusive access','28 + 20 = 48 tools total'], 'The comms MCP merges the original comms, browser, chat, and chrome-control servers. It provides a unified communication layer that the CommandBus uses for all inter-session messaging.', this)">
+                <div class="mcp-name">comms</div>
+                <div class="mcp-tools">48 tools &middot; Connected &middot; <span style="color: var(--accent-green);">&#9679;</span></div>
+              </div>
+              <div class="mcp-item" onclick="showExplanation(null, 'MCP: Workflow Server', 'Task management, development workflow, todo tracking, and playbook execution. Coordinates multi-session work through structured task assignments.', ['Todo CRUD with tags and flags','Task creation, assignment, and status tracking','Devtree (worktree) management for parallel git work','Playbook start/stop for multi-step workflows','Watcher management for file/event monitoring','22 tools'], 'The workflow MCP server remained unchanged during consolidation. It connects to the WorkflowStore in UAI and drives the task and todo management UI panels.', this)">
+                <div class="mcp-name">workflow</div>
+                <div class="mcp-tools">22 tools &middot; Connected &middot; <span style="color: var(--accent-green);">&#9679;</span></div>
+              </div>
+              <div class="mcp-item" onclick="showExplanation(null, 'MCP: Filesystem Server', 'File system operations and web fetching. Provides sandboxed file access within allowed directories and HTTP resource fetching.', ['File read, write, edit, move, delete','Directory listing and tree views','File search and info','Web page and resource fetching','Media file reading for vision models','11 + 1 = 12 tools total'], 'The filesystem MCP merges the original filesystem and fetch servers. It enforces directory sandboxing and provides the file operations that sessions use for code editing and content access.', this)">
+                <div class="mcp-name">filesystem</div>
+                <div class="mcp-tools">12 tools &middot; Connected &middot; <span style="color: var(--accent-green);">&#9679;</span></div>
+              </div>
+              <div class="mcp-item" style="opacity: 0.6;">
+                <div class="mcp-name">github</div>
+                <div class="mcp-tools">47 tools &middot; Connected &middot; <span style="color: var(--accent-green);">&#9679;</span> &middot; <span style="color: var(--text-muted);">(external, not consolidated)</span></div>
+              </div>
+            </div>
+
+            <!-- Prompts -->
+            <div class="right-content-pane" id="rtab-prompts">
+              <h4 style="font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px;">Pending Queue (2)</h4>
+              <div class="prompt-queue-item">
+                <div class="pq-target">&#8594; Relay</div>
+                <div class="pq-body">Review the comms server merge plan and identify breaking changes</div>
+                <div style="font-size: 9px; color: var(--text-muted); margin-top: 3px;">Queued 5m ago by Hamilton</div>
+              </div>
+              <div class="prompt-queue-item">
+                <div class="pq-target">&#8594; Relay</div>
+                <div class="pq-body">After comms merge, update all session configs in ai_profiles/</div>
+                <div style="font-size: 9px; color: var(--text-muted); margin-top: 3px;">Queued 3m ago by Hamilton</div>
+              </div>
+              <h4 style="font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin: 12px 0 8px;">Recently Sent (3)</h4>
+              <div class="prompt-queue-item" style="opacity: 0.6;">
+                <div class="pq-target">&#8594; Relay (delivered)</div>
+                <div class="pq-body">Consolidate MCP servers from 14 to 5</div>
+                <div style="font-size: 9px; color: var(--text-muted); margin-top: 3px;">Sent 8m ago</div>
+              </div>
+            </div>
+
+            <!-- Messages -->
+            <div class="right-content-pane" id="rtab-messages">
+              <h4 style="font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px;">Inbox (3)</h4>
+              <div class="message-item">
+                <div class="msg-from">From: Helix</div>
+                <div class="msg-body">Germany combat phase complete. Game state saved. Ready for non-combat movement when you are.</div>
+                <div class="msg-time">12 minutes ago</div>
+              </div>
+              <div class="message-item">
+                <div class="msg-from">From: Hamilton (broadcast)</div>
+                <div class="msg-body">Sprint standup: Report progress on current tasks. Reply with status.</div>
+                <div class="msg-time">45 minutes ago</div>
+              </div>
+              <div class="message-item">
+                <div class="msg-from">From: Meridian</div>
+                <div class="msg-body">WebGPU research complete. Full report in working memory slot 08. Terminal overlay work can proceed.</div>
+                <div class="msg-time">1 hour ago</div>
+              </div>
+              <h4 style="font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin: 12px 0 8px;">Outbox (1)</h4>
+              <div class="message-item" style="opacity: 0.6;">
+                <div class="msg-from" style="color: var(--accent-orange);">To: Canopy</div>
+                <div class="msg-body">Meridian's WebGPU research is done. You're unblocked on terminal overlay.</div>
+                <div class="msg-time">30 minutes ago &middot; Delivered</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ==================== BOTTOM DRAWER ==================== -->
+      <div class="bottom-drawer" id="bottomDrawer">
+        <div class="drawer-tabs-bar">
+          <div class="drawer-tab active" data-dtab="session-log" onclick="switchDrawerTab(this)" title="Session lifecycle events">Session Log</div>
+          <div class="drawer-tab" data-dtab="app-log" onclick="switchDrawerTab(this)" title="Application-level events and errors">App Log</div>
+          <div class="drawer-tab" data-dtab="prompts-log" onclick="switchDrawerTab(this)" title="History of all prompts sent across sessions">Prompts Log</div>
+          <div class="drawer-tab" data-dtab="performance" onclick="switchDrawerTab(this)" title="System performance metrics">Performance</div>
+          <span class="drawer-expand-label" onclick="toggleDrawer()">Bottom Panel</span>
+          <button class="drawer-toggle" onclick="toggleDrawer()" title="Collapse/expand the bottom drawer">&#9660;</button>
+        </div>
+        <div class="drawer-content">
+          <!-- Session Log -->
+          <div class="drawer-content-pane active" id="dtab-session-log">
+            <div class="log-entry"><span class="log-time">14:32:15</span><span class="log-session">system</span><span class="log-msg log-level-warn">Memory pipeline: 3 files pending processing</span></div>
+            <div class="log-entry"><span class="log-time">14:31:12</span><span class="log-session" style="color: var(--platform-claude)">Relay</span><span class="log-msg">Response received (1,247 tokens, 3.2s)</span></div>
+            <div class="log-entry"><span class="log-time">14:30:45</span><span class="log-session" style="color: var(--platform-claude)">Relay</span><span class="log-msg">Prompt dispatched: "Consolidate MCP servers..."</span></div>
+            <div class="log-entry"><span class="log-time">14:30:23</span><span class="log-session" style="color: var(--platform-claude)">Relay</span><span class="log-msg log-level-info">MCP servers connected: 5/5 (knowledge, sessions, comms, workflow, filesystem)</span></div>
+            <div class="log-entry"><span class="log-time">14:30:22</span><span class="log-session" style="color: var(--platform-claude)">Relay</span><span class="log-msg log-level-info">Session started: claude-opus-4-6</span></div>
+            <div class="log-entry"><span class="log-time">14:18:05</span><span class="log-session" style="color: var(--platform-claude)">Helix</span><span class="log-msg log-level-info">Session started: claude-opus-4-6</span></div>
+            <div class="log-entry"><span class="log-time">13:22:47</span><span class="log-session" style="color: var(--platform-gemini)">Meridian</span><span class="log-msg log-level-info">Session started: gemini-2.5-pro</span></div>
+            <div class="log-entry"><span class="log-time">12:44:18</span><span class="log-session" style="color: var(--platform-codex)">Noctis</span><span class="log-msg">Session stopped (user requested)</span></div>
+            <div class="log-entry"><span class="log-time">11:05:32</span><span class="log-session" style="color: var(--platform-codex)">Noctis</span><span class="log-msg log-level-info">Session started: codex-1</span></div>
+          </div>
+
+          <!-- App Log -->
+          <div class="drawer-content-pane" id="dtab-app-log">
+            <div class="log-entry"><span class="log-time">14:32:02</span><span class="log-session">build</span><span class="log-msg log-level-info">Build succeeded: viewport.ts (1.2s)</span></div>
+            <div class="log-entry"><span class="log-time">14:31:55</span><span class="log-session">ipc</span><span class="log-msg">ViewportStore: tab switched to relay</span></div>
+            <div class="log-entry"><span class="log-time">14:31:12</span><span class="log-session">command</span><span class="log-msg">CommandBus: session:prompt dispatched to relay</span></div>
+            <div class="log-entry"><span class="log-time">14:30:22</span><span class="log-session">store</span><span class="log-msg log-level-info">SessionStore: session relay created</span></div>
+            <div class="log-entry"><span class="log-time">14:30:22</span><span class="log-session">ipc</span><span class="log-msg">IPC: session:create handled (12ms)</span></div>
+            <div class="log-entry"><span class="log-time">14:28:15</span><span class="log-session">gc</span><span class="log-msg log-level-warn">GC pause: 45ms (heap: 312MB)</span></div>
+            <div class="log-entry"><span class="log-time">14:25:00</span><span class="log-session">store</span><span class="log-msg">WorkflowStore: task mcp-consolidation updated</span></div>
+          </div>
+
+          <!-- Prompts Log -->
+          <div class="drawer-content-pane" id="dtab-prompts-log">
+            <div class="log-entry"><span class="log-time">14:30:45</span><span class="log-session" style="color: var(--platform-claude)">Relay</span><span class="log-msg">Consolidate MCP servers from 14 to 5</span></div>
+            <div class="log-entry"><span class="log-time">14:18:10</span><span class="log-session" style="color: var(--platform-claude)">Helix</span><span class="log-msg">Update the A&amp;A game state after Germany's combat phase</span></div>
+            <div class="log-entry"><span class="log-time">13:22:50</span><span class="log-session" style="color: var(--platform-gemini)">Meridian</span><span class="log-msg">Research current state of WebGPU for ML inference</span></div>
+            <div class="log-entry"><span class="log-time">11:05:40</span><span class="log-session" style="color: var(--platform-codex)">Noctis</span><span class="log-msg">Benchmark Qwen3 8B vs Llama 3 8B on code completion</span></div>
+            <div class="log-entry"><span class="log-time">09:15:00</span><span class="log-session" style="color: var(--platform-claude)">Splice</span><span class="log-msg">Migrate chat history pipeline to new JSONL format</span></div>
+            <div class="log-entry"><span class="log-time">08:12:05</span><span class="log-session" style="color: var(--platform-claude)">Cadence</span><span class="log-msg">Implement purchase phase for A&amp;A game engine</span></div>
+          </div>
+
+          <!-- Performance -->
+          <div class="drawer-content-pane" id="dtab-performance">
+            <div class="perf-grid">
+              <div class="perf-card">
+                <div class="perf-value" style="color: var(--accent-green);">3</div>
+                <div class="perf-label">Active Sessions</div>
+              </div>
+              <div class="perf-card">
+                <div class="perf-value">6</div>
+                <div class="perf-label">Total Sessions</div>
+              </div>
+              <div class="perf-card">
+                <div class="perf-value" style="color: var(--accent-green);">5</div>
+                <div class="perf-label">MCP Servers</div>
+              </div>
+              <div class="perf-card">
+                <div class="perf-value">312<span style="font-size: 12px; color: var(--text-muted);"> MB</span></div>
+                <div class="perf-label">Heap Used</div>
+              </div>
+              <div class="perf-card">
+                <div class="perf-value">14.2<span style="font-size: 12px; color: var(--text-muted);"> %</span></div>
+                <div class="perf-label">CPU</div>
+              </div>
+              <div class="perf-card">
+                <div class="perf-value">2:14</div>
+                <div class="perf-label">Uptime (hrs)</div>
+              </div>
+              <div class="perf-card">
+                <div class="perf-value" style="color: var(--accent-yellow);">1</div>
+                <div class="perf-label">Warnings</div>
+              </div>
+              <div class="perf-card">
+                <div class="perf-value" style="color: var(--accent-green);">0</div>
+                <div class="perf-label">Errors</div>
+              </div>
+              <div class="perf-card">
+                <div class="perf-value">847</div>
+                <div class="perf-label">Transcripts</div>
+              </div>
+              <div class="perf-card">
+                <div class="perf-value">6</div>
+                <div class="perf-label">Prompts Today</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== EXPLANATION PANEL (RIGHT SIDE) ==================== -->
+  <div class="explanation-panel" id="explanationPanel">
+    <div class="explanation-panel-inner" id="epInner">
+      <!-- Empty state (shown by default) -->
+      <div class="ep-empty-state" id="epEmptyState">
+        <div class="ep-logo">&#9672;</div>
+        <div class="ep-hint">Hover over or click any element to learn about it</div>
+      </div>
+      <!-- Content state (shown when element is selected) -->
+      <div id="epContentState" style="display: none;">
+        <div class="ep-header">
+          <h2 id="epTitle"></h2>
+          <div class="ep-desc" id="epDesc"></div>
+        </div>
+        <h4>Key Features</h4>
+        <ul id="epFeatures"></ul>
+        <div class="arch-note" id="epArch"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ==================== DATA ====================
+var sessionData = {
+  relay: {
+    name: 'Relay', platform: 'Claude CLI', model: 'claude-opus-4-6',
+    trackingId: '20260604_143022_a8b3c1d2_cla', terminal: 'tmux: relay',
+    status: 'Running', statusColor: 'var(--accent-green)', contextUsed: '34%',
+    roles: 'developer, architect', created: '2026-06-04 14:30', lastPrompt: '3m ago',
+    uri: 'uai://session/claude/20260604_143022_a8b3c1d2_cla',
+    platformColor: 'var(--platform-claude)',
+    notes: 'Working on MCP consolidation sprint. 3 of 5 merges completed. Next: comms server merge.',
+    hasMemorex: true,
+    hasTranscript: true
+  },
+  helix: {
+    name: 'Helix', platform: 'Claude CLI', model: 'claude-opus-4-6',
+    trackingId: '20260604_141805_f2e9a7b3_cla', terminal: 'tmux: helix',
+    status: 'Running', statusColor: 'var(--accent-green)', contextUsed: '22%',
+    roles: 'developer, coordinator', created: '2026-06-04 14:18', lastPrompt: '12m ago',
+    uri: 'uai://session/claude/20260604_141805_f2e9a7b3_cla',
+    platformColor: 'var(--platform-claude)',
+    notes: 'A&A game coordination. Germany combat phase complete.',
+    hasMemorex: true,
+    hasTranscript: true
+  },
+  noctis: {
+    name: 'Noctis', platform: 'Codex CLI', model: 'codex-1',
+    trackingId: '20260604_110532_c4d8e1f6_cdx', terminal: 'tmux: noctis',
+    status: 'Stopped', statusColor: 'var(--text-muted)', contextUsed: 'N/A',
+    roles: 'researcher', created: '2026-06-04 11:05', lastPrompt: '2h ago',
+    uri: 'uai://session/codex/20260604_110532_c4d8e1f6_cdx',
+    platformColor: 'var(--platform-codex)',
+    notes: 'Local LLM benchmarking. Qwen3-8B recommended.',
+    hasMemorex: false,
+    hasTranscript: false
+  },
+  meridian: {
+    name: 'Meridian', platform: 'Gemini CLI', model: 'gemini-2.5-pro',
+    trackingId: '20260604_132247_b7a2c5d9_gem', terminal: 'tmux: meridian',
+    status: 'Running', statusColor: 'var(--accent-green)', contextUsed: '18%',
+    roles: 'researcher', created: '2026-06-04 13:22', lastPrompt: '1h ago',
+    uri: 'uai://session/gemini/20260604_132247_b7a2c5d9_gem',
+    platformColor: 'var(--platform-gemini)',
+    notes: 'WebGPU ML inference research. Do not interrupt.',
+    hasMemorex: false,
+    hasTranscript: false
+  },
+  splice: {
+    name: 'Splice', platform: 'Claude CLI', model: 'claude-sonnet-4',
+    trackingId: '20260604_081200_e3f7a9c1_cla', terminal: 'tmux: splice',
+    status: 'Stopped', statusColor: 'var(--text-muted)', contextUsed: 'N/A',
+    roles: 'developer', created: '2026-06-04 08:12', lastPrompt: '5h ago',
+    uri: 'uai://session/claude/20260604_081200_e3f7a9c1_cla',
+    platformColor: 'var(--platform-claude)',
+    notes: 'Chat history migration to JSONL complete. 847 files converted.',
+    hasMemorex: false,
+    hasTranscript: false
+  },
+  cadence: {
+    name: 'Cadence', platform: 'Claude CLI', model: 'claude-opus-4-6',
+    trackingId: '20260603_201500_d4c8b2a6_cla', terminal: 'tmux: cadence',
+    status: 'Stopped', statusColor: 'var(--text-muted)', contextUsed: 'N/A',
+    roles: 'developer', created: '2026-06-03 20:15', lastPrompt: '1d ago',
+    uri: 'uai://session/claude/20260603_201500_d4c8b2a6_cla',
+    platformColor: 'var(--platform-claude)',
+    notes: 'A&A purchase phase implementation complete. 24/24 tests passing.',
+    hasMemorex: false,
+    hasTranscript: false
+  }
+};
+
+var componentInfo = {
+  todo: {
+    title: 'Todo Manager',
+    desc: 'Central todo tracking system that aggregates todos across all sessions and the shared workspace. Todos support tags, flags, priorities, and kanban-style status tracking.',
+    features: ['Create, update, and complete todos', 'Tag-based filtering and search', 'Kanban board view with drag-and-drop', 'Cross-session todo visibility', 'Integration with workflow playbooks'],
+    arch: 'The Todo Manager is a viewport that reads from the WorkflowStore. Todos are persisted as YAML files in the todos/ directory and synced via the workflow MCP server. The command bus handles todo:create, todo:update, and todo:complete events.'
+  },
+  task: {
+    title: 'Task Manager',
+    desc: 'Coordinates multi-session work through structured task assignments. Tasks differ from todos in that they are assigned to specific sessions and tracked with sprint-level metadata.',
+    features: ['Task creation with session assignment', 'Priority and due date tracking', 'Sprint and milestone grouping', 'Dependency management between tasks', 'Status badges: Active, Pending, Done, Blocked'],
+    arch: 'Tasks are stored in the WorkflowStore and dispatched via the command bus. The TaskManager viewport renders task cards with status badges. Task state changes trigger notifications through the comms MCP server.'
+  },
+  context: {
+    title: 'Context Manager',
+    desc: 'Manages the loaded context for sessions including traits (behavioral directives), roles (capability profiles), skills (domain expertise), and briefs (task-specific context).',
+    features: ['View loaded vs available context per session', 'Load/unload traits and roles dynamically', 'Context budget tracking (token usage)', 'Cross-session context comparison', 'Bulk context operations'],
+    arch: 'Context is managed by the KnowledgeStore and delivered via the knowledge MCP server. The Context Manager viewport provides a UI for the knowledge:list_context and knowledge:get_context tools. Context changes propagate through the command bus.'
+  },
+  sched: {
+    title: 'Scheduled Tasks',
+    desc: 'Manages cron-based and timed task scheduling. Scheduled tasks can launch sessions, send prompts, run scripts, or trigger workflow playbooks on configurable intervals.',
+    features: ['Cron expression scheduling', 'One-shot and recurring schedules', 'Pause/resume individual schedules', 'Execution history and logs', 'Integration with session launcher'],
+    arch: 'Scheduled tasks use the CronStore in the main process. Cron expressions are evaluated against the system clock and trigger command bus events (schedule:fire) that dispatch the configured action. The UI viewport reads schedule state from the CronStore.'
+  },
+  store: {
+    title: 'Session Store Manager',
+    desc: 'Inspects and manages the key-value state stores for all sessions. Each session maintains its own state store for tracking variables, counters, and configuration.',
+    features: ['View all keys and values per session', 'Edit values in place', 'Compare state across sessions', 'State history and change tracking', 'Export/import state snapshots'],
+    arch: 'Session state is managed by the SessionStore via the sessions MCP server (sessions_state_* tools). The Store Manager viewport provides a read-only inspection UI by default, with edit capabilities gated behind a confirmation dialog.'
+  },
+  assigned: {
+    title: 'Assigned Tasks',
+    desc: 'Shows tasks assigned to the current session or to a selected session. This is a filtered view of the Task Manager focused on a single session\'s workload.',
+    features: ['Session-scoped task view', 'Quick status updates', 'Task acceptance/rejection', 'Inline task notes', 'Link to full Task Manager'],
+    arch: 'A filtered viewport of the WorkflowStore. Uses the active session\'s tracking ID to filter tasks. The command bus dispatches task:status events when tasks are updated from this view.'
+  },
+  folders: {
+    title: 'Folders Navigator',
+    desc: 'Organizes sessions into a hierarchical folder structure. Folders provide logical grouping for sessions by project, purpose, or status.',
+    features: ['Hierarchical folder tree with expand/collapse', 'Drag-and-drop session organization', 'Folder-level actions (start all, stop all)', 'Session count badges per folder', 'Quick session launch from folder context'],
+    arch: 'Folders are a virtual grouping layer in the NavigatorStore. They don\'t correspond to filesystem directories but are persisted as folder metadata in the app config. The folder tree is rendered in the left panel navigator.'
+  },
+  projects: {
+    title: 'Projects Navigator',
+    desc: 'Lists registered projects with their associated sessions, repositories, and status. Projects provide a high-level organizational view of ongoing work.',
+    features: ['Project card display with descriptions', 'Associated session listing per project', 'Repository path and branch info', 'Project-level metrics (commits, sessions, tasks)', 'Quick navigation to project detail view'],
+    arch: 'Projects are stored in the ProjectStore and rendered by the Projects navigator panel. Each project links to sessions via the session\'s project metadata field. The center pane project detail view is a separate viewport.'
+  },
+  webuis: {
+    title: 'Web UIs Navigator',
+    desc: 'Lists web-based AI chat interfaces that UAI can interact with. These are sandboxed webviews that UAI can inject prompts into and capture responses from.',
+    features: ['Embedded webview rendering', 'Prompt injection and response capture', 'Session-like interaction model', 'Message routing through comms MCP', 'Multiple web AI platforms supported'],
+    arch: 'Web UIs use Electron\'s BrowserView for sandboxed rendering. The chat and browser MCP servers provide tools for detecting active chats, sending messages, and reading responses. Web UIs appear as entity tabs alongside CLI sessions.'
+  },
+  terminals: {
+    title: 'Terminals Navigator',
+    desc: 'Lists standalone terminal sessions (tmux sessions) that are not AI CLI sessions. These are regular shell terminals used for development, building, log viewing, etc.',
+    features: ['tmux session listing', 'Terminal output viewing', 'Send keys to terminal', 'Terminal session creation', 'Integration with session launcher'],
+    arch: 'Terminal entities are discovered by scanning tmux sessions and filtering out those managed by the sessions MCP. The terminal viewport renders a read-only terminal view using the sessions:read_session tool.'
+  },
+  apps: {
+    title: 'Apps Navigator',
+    desc: 'Lists application and tool panes that are currently open or available. These include the built-in management tools (Todo, Task, Store managers) as well as custom app panes.',
+    features: ['App pane listing with status', 'Quick launch buttons', 'App-level configuration', 'Custom app pane registration', 'Integration with tab bar'],
+    arch: 'App entities are registered in the AppStore. Each app defines a viewport renderer and a set of command bus events it responds to. The navigator lists both active (open as tabs) and available (not currently open) apps.'
+  },
+  news: {
+    title: 'News Navigator',
+    desc: 'Displays a feed of news articles, reports, and announcements relevant to AI development. Sources include blog posts, release notes, internal reports, and curated technical content.',
+    features: ['Multi-source news aggregation', 'Article preview with metadata', 'Read/unread tracking', 'Category filtering', 'Internal report generation'],
+    arch: 'News items are fetched by a background service that polls configured RSS feeds and internal report directories. Items are stored in the NewsStore and rendered by the news navigator panel and news detail viewport.'
+  }
+};
+
+// ==================== STATE ====================
+var activeSession = 'relay';
+var currentViewMode = 'terminal'; // 'terminal', 'transcript', or 'memorex'
+var highlightedElement = null;
+var clickLocked = false; // true when a click-based explanation is showing
+
+// ==================== ZONE HOVER EXPLANATIONS ====================
+var zoneExplanations = {
+  'center-tab-bar': {
+    title: 'Entity Tab Bar',
+    desc: 'Open sessions, tools, projects, and other entities appear as tabs here. Each tab shows the entity type via color coding \u2014 orange for Claude, purple for Codex, cyan for Gemini. Click a tab to activate it; click \u00d7 to close. Drag to reorder. Right-click for context menu with options like duplicate, move to folder, or close others.',
+    features: ['Color-coded tabs by platform/entity type', 'Click to activate, \u00d7 to close', 'Drag-and-drop reordering', 'Right-click context menu', 'Overflow scroll for many tabs'],
+    arch: 'The tab bar is rendered by the ViewportStore which maintains the ordered list of open tabs. Tab switching dispatches viewport:activate events through the command bus. Tab state (order, active tab) is persisted across app restarts.'
+  },
+  'left-panel': {
+    title: 'Navigation Panel',
+    desc: 'The left sidebar for browsing and organizing your workspace. The Tools section at top provides quick access to managers (Todo, Task, Context, Scheduled Tasks, Session Store, Assigned Tasks). Below that, entity tabs let you browse different types: Folders organizes sessions in a tree hierarchy, Projects shows active project cards, Web UIs lists browser-based AI chats, Terminals shows standalone shells, Apps shows open tool panes, and News shows reports. Recent Sessions at the bottom provides quick access to recently active sessions.',
+    features: ['Tools grid with quick-launch buttons', 'Entity tabs: Folders, Projects, Web UIs, Terms, Apps, News', 'Hierarchical folder tree for session organization', 'Recent Sessions list with status indicators', 'Collapsible sections'],
+    arch: 'The navigator panel is rendered by the NavigatorStore. It maintains the folder tree, entity listings, and recent session list. Navigation actions dispatch viewport:navigate events through the command bus.'
+  },
+  'title-bar': {
+    title: 'Entity Title Bar',
+    desc: 'The title bar identifies the active entity and provides navigation and view controls. It displays the entity name, a URI address using the uai:// protocol (e.g. uai://session/claude/20260604_143022_a8b3c1d2_cla), and the session\'s CLI UUID. The URI scheme follows the pattern uai://{entity_type}/{platform}/{tracking_id} — making every entity in the system addressable via a stable, human-readable link that can be shared, bookmarked, or used in deep links from external tools.',
+    features: ['Back/Forward navigation arrows for tab history', 'Entity name and uai:// URI address (click to copy)', 'Session UUID display', 'TRANSCRIPT toggle: shows the conversation as a formatted read-only timeline with role badges (user/assistant/tool) and timestamps — like reading a structured log of the exchange', 'MEMOREX toggle: shows the conversation as rich styled message cards with tool use badges, expandable thinking blocks, and formatted code — like a polished document view of the interaction', 'Both toggles off = live terminal view (default)'],
+    arch: 'The title bar reads from the active viewport entity. The uai:// URI scheme is implemented as a deep link protocol registered with macOS — clicking a uai:// link anywhere on the system opens UAI and navigates to that entity. TRANSCRIPT and MEMOREX are mutually exclusive view modes that parse the session\'s JSONL transcript file into different visual representations. The terminal view reads directly from the PTY stream.'
+  },
+  'content-area': {
+    title: 'Content Area',
+    desc: 'The main workspace where the active tab\'s content is displayed. For session tabs, this shows the terminal view by default \u2014 a live view of the CLI session. Toggle TRANSCRIPT to see a formatted read-only view of the conversation. Toggle MEMOREX to see messages as styled cards with tool use badges and expandable thinking blocks. For tool/manager tabs, this shows the tool\'s interface (task lists, settings, search results, etc.).',
+    features: ['Terminal view: live CLI session output with blinking cursor', 'Transcript view: formatted read-only conversation timeline', 'Memorex view: styled message cards with tool badges', 'Manager views: task lists, settings, search interfaces', 'Scrollable with overflow handling'],
+    arch: 'The content area renders the active viewport from the ViewportStore. Each entity type has a registered renderer. Session viewports support three modes (terminal, transcript, memorex) toggled via the title bar. The terminal view reads from the PTY stream; transcript and memorex parse the session\'s JSONL transcript file.'
+  },
+  'right-panel': {
+    title: 'Session Details Panel',
+    desc: 'A collapsible panel on the right showing detailed information about the active session. Five tabs: Details shows metadata (platform, model, tracking ID, status, roles, notes). Context shows loaded traits, roles, skills, and briefs with load/unload controls. MCPs lists connected MCP servers and their available tools. Prompts shows the pending prompt queue. Messages shows the inter-session communication inbox and outbox.',
+    features: ['Details: session metadata and notes', 'Context: loaded traits, roles, skills, briefs', 'MCPs: connected servers with tool counts', 'Prompts: pending queue and sent history', 'Messages: inbox and outbox with delivery status'],
+    arch: 'The right panel reads from multiple stores (SessionStore, KnowledgeStore, CommsStore) depending on the active tab. It subscribes to the active viewport entity and updates when the entity changes. The panel can be collapsed to maximize the content area.'
+  },
+  'prompt-box': {
+    title: 'Prompt Input',
+    desc: 'Send prompts to the active CLI session. The session indicator on the left shows which session will receive the prompt. Type your message and press Enter or click Send. Supports multi-line input with Shift+Enter. The prompt is delivered to the session\'s tmux terminal via send-keys.',
+    features: ['Session indicator showing target', 'Text input with Enter to send', 'Shift+Enter for multi-line input', 'Delivery via tmux send-keys', 'Prompt history with up/down arrows'],
+    arch: 'Prompt submission dispatches a session:prompt event through the command bus. The comms MCP server\'s send_prompt tool handles delivery to the target session\'s tmux terminal. The prompt is also logged to the prompts log for audit.'
+  },
+  'bottom-drawer': {
+    title: 'Bottom Panel',
+    desc: 'A collapsible drawer showing diagnostic and monitoring information. Session Log shows timestamped events for the active session (prompts sent, tools used, errors). App Log shows application-level events (IPC calls, store changes, process lifecycle). Prompts Log shows a timeline of all prompts sent across all sessions. Performance shows system metrics: CPU, memory, heap usage, active session count, uptime, and error rates.',
+    features: ['Session Log: per-session event timeline', 'App Log: IPC, store, and command bus events', 'Prompts Log: cross-session prompt history', 'Performance: CPU, memory, heap, uptime metrics', 'Collapsible with toggle button'],
+    arch: 'The bottom drawer aggregates data from multiple sources: SessionStore events, the centralized logging service, the comms MCP prompt log, and the performance monitoring service. Each tab subscribes to its relevant data stream. The drawer can be collapsed to maximize vertical space.'
+  }
+};
+
+var currentHoveredZone = null;
+
+// ==================== EXPLANATION PANEL ====================
+
+function showExplanation(id, title, desc, features, arch, sourceEl) {
+  // Remove previous highlight
+  if (highlightedElement) {
+    highlightedElement.classList.remove('explain-highlight');
+  }
+
+  // Highlight the clicked element
+  if (sourceEl) {
+    sourceEl.classList.add('explain-highlight');
+    highlightedElement = sourceEl;
+  }
+
+  // Mark as click-locked
+  clickLocked = true;
+
+  populateExplanation(title, desc, features, arch);
+}
+
+function populateExplanation(title, desc, features, arch) {
+  // Hide empty state, show content
+  document.getElementById('epEmptyState').style.display = 'none';
+  document.getElementById('epContentState').style.display = 'block';
+
+  // Populate panel content
+  document.getElementById('epTitle').textContent = title;
+  document.getElementById('epDesc').textContent = desc;
+  var featuresList = document.getElementById('epFeatures');
+  while (featuresList.firstChild) {
+    featuresList.removeChild(featuresList.firstChild);
+  }
+  for (var i = 0; i < features.length; i++) {
+    var li = document.createElement('li');
+    li.textContent = features[i];
+    featuresList.appendChild(li);
+  }
+  document.getElementById('epArch').textContent = arch;
+}
+
+function showEmptyState() {
+  document.getElementById('epEmptyState').style.display = 'flex';
+  document.getElementById('epContentState').style.display = 'none';
+}
+
+function clearExplanation() {
+  if (highlightedElement) {
+    highlightedElement.classList.remove('explain-highlight');
+    highlightedElement = null;
+  }
+  clickLocked = false;
+  showEmptyState();
+}
+
+// ==================== ZONE HOVER ====================
+
+function setupZoneHover() {
+  var zones = [
+    { selector: '.center-tab-bar', key: 'center-tab-bar' },
+    { selector: '.title-bar', key: 'title-bar' },
+    { selector: '.left-panel', key: 'left-panel' },
+    { selector: '.content-area', key: 'content-area' },
+    { selector: '.right-panel', key: 'right-panel' },
+    { selector: '.prompt-box', key: 'prompt-box' },
+    { selector: '.bottom-drawer', key: 'bottom-drawer' }
+  ];
+
+  for (var i = 0; i < zones.length; i++) {
+    (function(zone) {
+      var el = document.querySelector(zone.selector);
+      if (!el) return;
+
+      el.addEventListener('mouseenter', function() {
+        currentHoveredZone = zone.key;
+        el.classList.add('zone-highlight');
+        if (!clickLocked) {
+          var info = zoneExplanations[zone.key];
+          populateExplanation(info.title, info.desc, info.features, info.arch);
+        }
+      });
+
+      el.addEventListener('mouseleave', function() {
+        currentHoveredZone = null;
+        el.classList.remove('zone-highlight');
+        if (!clickLocked) {
+          showEmptyState();
+        }
+      });
+    })(zones[i]);
+  }
+}
+
+// ==================== FUNCTIONS ====================
+
+function toggleCollapse(id) {
+  var el = document.getElementById(id);
+  var icon = document.getElementById(id + '-icon');
+  if (el.style.display === 'none') {
+    el.style.display = '';
+    if (icon) icon.classList.remove('rotated');
+  } else {
+    el.style.display = 'none';
+    if (icon) icon.classList.add('rotated');
+  }
+}
+
+function toggleFolder(header) {
+  var arrow = header.querySelector('.folder-arrow');
+  var children = header.nextElementSibling;
+  if (children && children.classList.contains('folder-children')) {
+    children.classList.toggle('open');
+    arrow.classList.toggle('open');
+  }
+}
+
+function switchEntityTab(tab) {
+  var allTabs = document.querySelectorAll('.entity-tab');
+  for (var i = 0; i < allTabs.length; i++) allTabs[i].classList.remove('active');
+  tab.classList.add('active');
+  var tabName = tab.getAttribute('data-tab');
+  var allPanes = document.querySelectorAll('.entity-pane');
+  for (var i = 0; i < allPanes.length; i++) allPanes[i].classList.remove('active');
+  document.getElementById('entity-' + tabName).classList.add('active');
+
+  var info = componentInfo[tabName];
+  if (info) {
+    showExplanation(tabName, info.title, info.desc, info.features, info.arch, tab);
+  }
+}
+
+function switchCenterTab(tab) {
+  var allTabs = document.querySelectorAll('.center-tab');
+  for (var i = 0; i < allTabs.length; i++) allTabs[i].classList.remove('active');
+  tab.classList.add('active');
+  var viewName = tab.getAttribute('data-view');
+  currentViewMode = 'terminal';
+  showView(viewName);
+}
+
+function showView(viewName) {
+  var allViews = document.querySelectorAll('.content-view');
+  for (var i = 0; i < allViews.length; i++) allViews[i].classList.remove('active');
+
+  var session = sessionData[viewName];
+  if (session) {
+    if (currentViewMode === 'memorex' && session.hasMemorex) {
+      var memorexView = document.getElementById('view-' + viewName + '-memorex');
+      if (memorexView) {
+        memorexView.classList.add('active');
+      } else {
+        var view = document.getElementById('view-' + viewName);
+        if (view) view.classList.add('active');
+      }
+    } else if (currentViewMode === 'transcript' && session.hasTranscript) {
+      var transcriptView = document.getElementById('view-' + viewName + '-transcript');
+      if (transcriptView) {
+        transcriptView.classList.add('active');
+      } else {
+        var view = document.getElementById('view-' + viewName);
+        if (view) view.classList.add('active');
+      }
+    } else {
+      // Terminal mode (default) or fallback
+      var view = document.getElementById('view-' + viewName);
+      if (view) view.classList.add('active');
+    }
+  } else {
+    var view = document.getElementById('view-' + viewName);
+    if (view) {
+      view.classList.add('active');
+    }
+  }
+
+  if (session) {
+    updateTitleBar(session.name, session.uri, true);
+    updateDetails(session);
+    updatePromptTarget(session.name);
+    activeSession = viewName;
+    // Update view toggle buttons
+    var allToggles = document.querySelectorAll('.view-toggle');
+    for (var i = 0; i < allToggles.length; i++) {
+      allToggles[i].classList.remove('active');
+      if ((currentViewMode === 'transcript' && allToggles[i].textContent === 'TRANSCRIPT') ||
+          (currentViewMode === 'memorex' && allToggles[i].textContent === 'MEMOREX')) {
+        allToggles[i].classList.add('active');
+      }
+    }
+  } else {
+    var titleMap = {
+      'assigned': { name: 'Assigned Tasks', uri: 'uai://tool/assigned-tasks' },
+      'todo': { name: 'Todo Manager', uri: 'uai://tool/todo-manager' },
+      'task': { name: 'Task Manager', uri: 'uai://tool/task-manager' },
+      'context': { name: 'Context Manager', uri: 'uai://tool/context-manager' },
+      'sched': { name: 'Scheduled Tasks', uri: 'uai://tool/scheduled-tasks' },
+      'store': { name: 'Session Store Manager', uri: 'uai://tool/store-manager' },
+      'search': { name: 'Search', uri: 'uai://search' },
+      'folder-active': { name: 'Active Work', uri: 'uai://folder/active-work' },
+      'project-uai': { name: 'UAI App', uri: 'uai://project/uai-app' },
+      'project-llm': { name: 'Local LLM', uri: 'uai://project/local-llm' },
+      'project-camera': { name: 'Camera Control', uri: 'uai://project/camera-control' },
+      'project-aa': { name: 'Axis & Allies', uri: 'uai://project/axis-allies' },
+      'webui-grok': { name: 'Grok', uri: 'uai://webui/grok' },
+      'webui-chatgpt': { name: 'ChatGPT', uri: 'uai://webui/chatgpt' },
+      'webui-gemini-web': { name: 'Gemini Web', uri: 'uai://webui/gemini-web' },
+      'webui-claude-web': { name: 'Claude Web', uri: 'uai://webui/claude-web' },
+      'terminal-main': { name: 'main-dev', uri: 'uai://terminal/main-dev' },
+      'terminal-build': { name: 'build-watch', uri: 'uai://terminal/build-watch' },
+      'terminal-logs': { name: 'log-tail', uri: 'uai://terminal/log-tail' },
+      'news-n1': { name: 'Claude Opus 4.6 Released', uri: 'uai://news/opus-4-6' },
+      'news-n2': { name: 'MCP Protocol v2 Spec', uri: 'uai://news/mcp-v2' },
+      'news-n3': { name: 'Weekly Dev Summary', uri: 'uai://news/weekly-summary' }
+    };
+    var info = titleMap[viewName];
+    if (info) {
+      updateTitleBar(info.name, info.uri, false);
+    }
+  }
+}
+
+function updateTitleBar(name, uri, isSession) {
+  document.querySelector('.title-bar .entity-name').textContent = name;
+  document.querySelector('.title-bar .entity-uri').textContent = uri;
+  document.getElementById('viewToggles').style.display = isSession ? 'flex' : 'none';
+}
+
+function updateDetails(session) {
+  var dc = document.getElementById('detailsContent');
+  while (dc.firstChild) dc.removeChild(dc.firstChild);
+
+  var fields = [
+    ['Platform', session.platform, null],
+    ['Model', session.model, null],
+    ['Tracking ID', session.trackingId, 'font-size: 9px;'],
+    ['Terminal', session.terminal, null],
+    ['Status', session.status, 'color: ' + session.statusColor + ';'],
+    ['Context Used', session.contextUsed, null],
+    ['Roles', session.roles, null],
+    ['Created', session.created, null],
+    ['Last Prompt', session.lastPrompt, null]
+  ];
+
+  for (var i = 0; i < fields.length; i++) {
+    var row = document.createElement('div');
+    row.className = 'detail-row';
+    var lbl = document.createElement('span');
+    lbl.className = 'label';
+    lbl.textContent = fields[i][0];
+    var val = document.createElement('span');
+    val.className = 'value';
+    val.textContent = fields[i][1];
+    if (fields[i][2]) val.style.cssText = fields[i][2];
+    row.appendChild(lbl);
+    row.appendChild(val);
+    dc.appendChild(row);
+  }
+
+  var notesSection = document.createElement('div');
+  notesSection.style.marginTop = '12px';
+  var notesHeader = document.createElement('h4');
+  notesHeader.style.cssText = 'font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px;';
+  notesHeader.textContent = 'Notes';
+  var notesBody = document.createElement('p');
+  notesBody.style.cssText = 'font-size: 11px; color: var(--text-secondary); background: var(--bg-card); padding: 8px; border-radius: var(--radius);';
+  notesBody.textContent = session.notes;
+  notesSection.appendChild(notesHeader);
+  notesSection.appendChild(notesBody);
+  dc.appendChild(notesSection);
+}
+
+function updatePromptTarget(name) {
+  var el = document.getElementById('promptTarget');
+  el.textContent = '';
+  el.appendChild(document.createTextNode('\u25B6 ' + name));
+}
+
+function ensureTab(viewName, label, color) {
+  var bar = document.getElementById('centerTabBar');
+  var existing = bar.querySelector('[data-view="' + viewName + '"]');
+  if (!existing) {
+    var tab = document.createElement('div');
+    tab.className = 'center-tab';
+    tab.setAttribute('data-view', viewName);
+    tab.style.borderLeftColor = color || 'var(--accent-blue)';
+    tab.onclick = function() { switchCenterTab(this); };
+    tab.title = label;
+
+    var span = document.createElement('span');
+    span.textContent = label;
+    tab.appendChild(span);
+
+    var closeSpan = document.createElement('span');
+    closeSpan.className = 'tab-close';
+    closeSpan.title = 'Close tab';
+    closeSpan.textContent = '\u00D7';
+    closeSpan.onclick = function(e) { e.stopPropagation(); closeTab(tab); };
+    tab.appendChild(closeSpan);
+
+    bar.appendChild(tab);
+    existing = tab;
+  }
+  var allTabs = document.querySelectorAll('.center-tab');
+  for (var i = 0; i < allTabs.length; i++) allTabs[i].classList.remove('active');
+  existing.classList.add('active');
+}
+
+function closeTab(tab) {
+  var viewName = tab.getAttribute('data-view');
+  var wasActive = tab.classList.contains('active');
+  tab.remove();
+  if (wasActive) {
+    var remaining = document.querySelectorAll('.center-tab');
+    if (remaining.length > 0) {
+      var last = remaining[remaining.length - 1];
+      last.classList.add('active');
+      showView(last.getAttribute('data-view'));
+    }
+  }
+}
+
+function openSession(name, sourceEl) {
+  var session = sessionData[name];
+  if (!session) return;
+  activeSession = name;
+  currentViewMode = 'terminal';
+  ensureTab(name, session.name, session.platformColor);
+  showView(name);
+  showExplanation('session-' + name, 'Session: ' + session.name,
+    session.platform + ' session running ' + session.model + '. Status: ' + session.status + '. ' + session.notes,
+    [
+      'Platform: ' + session.platform,
+      'Model: ' + session.model,
+      'Tracking ID: ' + session.trackingId,
+      'Context used: ' + session.contextUsed,
+      'Roles: ' + session.roles
+    ],
+    'Sessions are the core entity in UAI. Each session is managed by the SessionStore in the main process and rendered as a terminal viewport in the center pane. The command bus handles all session lifecycle events (create, start, stop, prompt, attach).',
+    sourceEl
+  );
+}
+
+function openTool(toolName, sourceEl) {
+  var info = componentInfo[toolName];
+  if (!info) return;
+  ensureTab(toolName, info.title, 'var(--accent-blue)');
+  showView(toolName);
+  showExplanation('tool-' + toolName, info.title, info.desc, info.features, info.arch, sourceEl);
+}
+
+function openProject(id, sourceEl) {
+  var names = { uai: 'UAI App', llm: 'Local LLM', camera: 'Camera Control', aa: 'Axis & Allies' };
+  var descs = {
+    uai: 'The Unified AI Interface desktop application. An Electron-based app for managing multi-platform AI sessions with a unified command bus architecture.',
+    llm: 'A stateless local reasoning service running quantized models on Apple Silicon for fast, private inference.',
+    camera: 'Reolink camera management system providing automated snapshot capture and integration with vision models.',
+    aa: 'Digital companion for Axis & Allies Classic 2nd Edition with camera-based board state detection and full game engine.'
+  };
+  ensureTab('project-' + id, names[id], 'var(--accent-purple)');
+  showView('project-' + id);
+  showExplanation('project-' + id, 'Project: ' + names[id], descs[id],
+    ['Dedicated project workspace with associated sessions', 'Repository tracking and branch management', 'Task and todo integration', 'Session launch templates per project'],
+    'Projects are stored in the ProjectStore and referenced by sessions via metadata. The project detail viewport shows associated sessions, repository info, and project-level metrics. Project navigation uses the command bus viewport:navigate event.',
+    sourceEl
+  );
+}
+
+function openWebUI(id, sourceEl) {
+  var names = { grok: 'Grok', chatgpt: 'ChatGPT', 'gemini-web': 'Gemini Web', 'claude-web': 'Claude Web' };
+  var colors = { grok: 'var(--text-primary)', chatgpt: 'var(--accent-green)', 'gemini-web': 'var(--accent-cyan)', 'claude-web': 'var(--accent-orange)' };
+  ensureTab('webui-' + id, names[id], colors[id]);
+  showView('webui-' + id);
+  showExplanation('webui-' + id, 'Web UI: ' + names[id],
+    'Embedded web AI chat interface. In the full UAI app, this renders as a sandboxed BrowserView that UAI can interact with programmatically.',
+    ['Sandboxed Electron BrowserView', 'Prompt injection via JavaScript bridge', 'Response capture and routing', 'Message integration with comms MCP', 'Session-like entity in the navigator'],
+    'Web UIs use Electron BrowserView instances managed by the WebUIStore. The browser and chat MCP servers provide the automation tools. Web UI entities appear alongside CLI sessions in the navigator and tab bar.',
+    sourceEl
+  );
+}
+
+function openTerminal(id, sourceEl) {
+  var names = { main: 'main-dev', build: 'build-watch', logs: 'log-tail' };
+  ensureTab('terminal-' + id, names[id], 'var(--accent-green)');
+  showView('terminal-' + id);
+  showExplanation('terminal-' + id, 'Terminal: ' + names[id],
+    'A standalone terminal session (tmux) used for development tasks. Not an AI CLI session, but viewable and controllable from UAI.',
+    ['Read-only terminal output viewing', 'Send keystrokes to terminal', 'Terminal session lifecycle management', 'Integration with session launcher', 'tmux session discovery'],
+    'Terminal entities are discovered by scanning tmux sessions and filtering out AI-managed ones. The terminal viewport uses the sessions:read_session tool to display output and sessions:send_keys for interaction.',
+    sourceEl
+  );
+}
+
+function openNews(id, sourceEl) {
+  var names = { n1: 'Claude Opus 4.6 Released', n2: 'MCP Protocol v2 Spec', n3: 'Weekly Dev Summary' };
+  ensureTab('news-' + id, names[id], 'var(--accent-yellow)');
+  showView('news-' + id);
+  showExplanation('news-' + id, 'News: ' + names[id],
+    'A news article or report in the UAI news feed. News items are aggregated from multiple sources and displayed in the navigator and detail viewports.',
+    ['Multi-source aggregation (blogs, GitHub, internal)', 'Read/unread state tracking', 'Category and source filtering', 'Related session linking', 'Bookmark and archive support'],
+    'News items are managed by the NewsStore which runs a background polling service. Each item is rendered as a list entry in the navigator and a full article viewport in the center pane.',
+    sourceEl
+  );
+}
+
+function switchRightTab(tab) {
+  var allTabs = document.querySelectorAll('.right-tab');
+  for (var i = 0; i < allTabs.length; i++) allTabs[i].classList.remove('active');
+  tab.classList.add('active');
+  var tabName = tab.getAttribute('data-rtab');
+  var allPanes = document.querySelectorAll('.right-content-pane');
+  for (var i = 0; i < allPanes.length; i++) allPanes[i].classList.remove('active');
+  document.getElementById('rtab-' + tabName).classList.add('active');
+
+  var rightInfo = {
+    details: { title: 'Details Panel', desc: 'Shows metadata for the active entity (session, project, tool). For sessions, displays platform, model, tracking ID, terminal, status, context usage, roles, and notes.', features: ['Session metadata display', 'Dynamic updates as active entity changes', 'Editable notes field', 'Status indicators with color coding', 'Quick-copy for tracking IDs and URIs'], arch: 'The Details panel reads from the SessionStore (for sessions) or the relevant entity store. It subscribes to the active viewport entity and re-renders on entity change events from the command bus.' },
+    context: { title: 'Context Panel', desc: 'Shows the loaded context (traits, roles, skills, briefs) for the active session. Displays both loaded and available items with counts.', features: ['Loaded vs available counts per category', 'Load/unload via click', 'Token budget tracking', 'Context comparison across sessions', 'Dependency visualization between traits'], arch: 'Reads from the KnowledgeStore via the knowledge MCP server. The knowledge:list_context tool provides the loaded/available breakdown. Context changes dispatch command bus events that update this panel in real-time.' },
+    mcps: { title: 'MCPs Panel', desc: 'Lists all MCP servers connected to the active session with their tool counts and connection status.', features: ['Server name, tool count, and status', 'Connection health monitoring', 'Tool listing per server on expand', 'Reconnect button for failed servers', 'Server configuration access'], arch: 'MCP connection state is tracked in the SessionStore. Each session maintains its own MCP server connections. The panel renders from the session\'s mcp_servers metadata field and polls for connection health.' },
+    prompts: { title: 'Prompts Panel', desc: 'Shows the pending prompt queue and recently sent prompts for the active session. Prompts can be queued by other sessions or by the user.', features: ['Pending queue with source attribution', 'Recently sent prompt history', 'Queue reordering via drag-and-drop', 'Prompt cancellation', 'Prompt template insertion'], arch: 'The prompt queue is managed by the comms MCP server (comms_list_pending, comms_send_prompt). The panel polls the queue and displays entries. Sending a prompt dispatches a session:prompt command bus event.' },
+    messages: { title: 'Messages Panel', desc: 'Shows the inbox and outbox for inter-session messaging. Sessions can send direct messages, replies, and broadcasts to other sessions.', features: ['Inbox with unread count', 'Outbox with delivery status', 'Reply and reply-all actions', 'Broadcast message support', 'Message search and filtering'], arch: 'Messages are routed through the comms MCP server (comms_message, comms_reply, comms_broadcast). The panel uses comms_check_messages for inbox and comms_message_list for history. Messages trigger notifications via the NotificationStore.' }
+  };
+  var info = rightInfo[tabName];
+  if (info) {
+    showExplanation('right-' + tabName, info.title, info.desc, info.features, info.arch, tab);
+  }
+}
+
+function switchDrawerTab(tab) {
+  var allTabs = document.querySelectorAll('.drawer-tab');
+  for (var i = 0; i < allTabs.length; i++) allTabs[i].classList.remove('active');
+  tab.classList.add('active');
+  var tabName = tab.getAttribute('data-dtab');
+  var allPanes = document.querySelectorAll('.drawer-content-pane');
+  for (var i = 0; i < allPanes.length; i++) allPanes[i].classList.remove('active');
+  document.getElementById('dtab-' + tabName).classList.add('active');
+
+  var drawerInfo = {
+    'session-log': { title: 'Session Log', desc: 'Timestamped log of all session lifecycle events including starts, stops, prompt dispatches, and response completions.', features: ['Color-coded session names by platform', 'Event type filtering', 'Timestamp precision to the second', 'Session-scoped filtering', 'Export log to file'], arch: 'Session events are emitted by the SessionStore and logged to an in-memory ring buffer (last 1000 events). The log drawer renders from this buffer and subscribes to new events via the command bus.' },
+    'app-log': { title: 'App Log', desc: 'Application-level events including IPC calls, store mutations, build events, command bus dispatches, and errors.', features: ['Log level filtering (info, warn, error)', 'Source-based grouping (ipc, store, command, build)', 'Error stack trace expansion', 'Performance timing annotations', 'Log export and search'], arch: 'App logs use a centralized logging service in the main process. Renderer logs are forwarded via IPC. The log drawer subscribes to the log stream and renders entries with level-appropriate styling.' },
+    'prompts-log': { title: 'Prompts Log', desc: 'Complete history of all prompts sent to all sessions with timestamps, session names, and platform indicators.', features: ['Full prompt text display', 'Platform color coding', 'Session filtering', 'Time range filtering', 'Prompt search and export'], arch: 'Prompts are logged by the comms MCP server\'s send_prompt handler. The prompt log drawer queries this log and renders a chronological list. It subscribes to new prompt events for real-time updates.' },
+    'performance': { title: 'Performance Dashboard', desc: 'System metrics dashboard showing active sessions, MCP servers, memory usage, CPU load, uptime, and error counts.', features: ['Real-time metric updates', 'Heap memory tracking', 'CPU usage monitoring', 'Session and MCP server counts', 'Warning and error counters'], arch: 'Performance metrics are collected by a background service in the main process that polls process.memoryUsage(), os.cpus(), and the various stores for counts. Metrics update every 5 seconds.' }
+  };
+  var info = drawerInfo[tabName];
+  if (info) {
+    showExplanation('drawer-' + tabName, info.title, info.desc, info.features, info.arch, tab);
+  }
+}
+
+function toggleDrawer() {
+  var drawer = document.getElementById('bottomDrawer');
+  drawer.classList.toggle('collapsed');
+  var btn = drawer.querySelector('.drawer-toggle');
+  var isCollapsed = drawer.classList.contains('collapsed');
+  btn.textContent = isCollapsed ? '\u25B2' : '\u25BC';
+  btn.title = isCollapsed ? 'Expand the bottom panel' : 'Collapse the bottom panel';
+}
+
+function toggleViewMode(btn, mode) {
+  // Mutually exclusive toggle logic
+  if (currentViewMode === mode) {
+    // Clicking an active toggle turns it OFF (back to terminal)
+    currentViewMode = 'terminal';
+    btn.classList.remove('active');
+  } else {
+    // Turn off all toggles, then activate the clicked one
+    var allToggles = document.querySelectorAll('.view-toggle');
+    for (var i = 0; i < allToggles.length; i++) allToggles[i].classList.remove('active');
+    btn.classList.add('active');
+    currentViewMode = mode;
+  }
+
+  // Re-render the current session view
+  if (activeSession && sessionData[activeSession]) {
+    showView(activeSession);
+  }
+}
+
+function sendPrompt() {
+  var input = document.querySelector('.prompt-box input');
+  var text = input.value.trim();
+  if (!text) return;
+  var sessionName = sessionData[activeSession] ? sessionData[activeSession].name : 'active session';
+  showExplanation(null, 'Prompt Sent',
+    'Prompt dispatched to ' + sessionName + ': "' + text + '"',
+    ['Prompt enters the session\'s prompt queue', 'Delivered via the comms MCP server', 'Execution begins when session is ready', 'Response streams back to the transcript viewport'],
+    'Prompts are dispatched through the command bus as session:prompt events. The comms MCP server\'s send_prompt tool handles delivery. The response streams back through the session\'s PTY and renders in the transcript viewport.',
+    null
+  );
+  input.value = '';
+}
+
+// Keyboard shortcuts
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Escape') clearExplanation();
+});
+
+// Click outside the app to close explanation panel
+document.addEventListener('click', function(e) {
+  var panel = document.getElementById('explanationPanel');
+
+  // If click is on the panel, do nothing
+  if (panel.contains(e.target)) return;
+
+  // Don't auto-close if the click was on an element that opens the panel
+  // (those handlers will update the panel content instead)
+});
+
+// Initial state
+showView('relay');
+setupZoneHover();
+</script>
+</body>
+</html>

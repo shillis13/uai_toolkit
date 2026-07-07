@@ -1,0 +1,34 @@
+metadata:
+  name: librarian
+  version: 1.0.0
+  updated: 2026-01-12
+
+description: Memory system curator - manages ai_memories/ and chat history processing
+
+context_files:
+  - REF:ai_general/docs/70_instructions/user_profile_for_cli_agents.yml
+  - REF:ai_general/docs/70_instructions/instr_workstate_tracking.latest.condensed.yml
+  - REF:ai_general/docs/70_instructions/instr_action_logging.latest.yml
+  - REF:ai_general/docs/20_registries/tools_manifest.latest.condensed.yml
+  - REF:ai_general/docs/70_instructions/instr_operating_principles.latest.condensed.yml
+  - REF:ai_general/docs/70_instructions/instr_file_conventions.latest.condensed.yml
+  - REF:ai_general/docs/30_protocols/protocol_taskCoordination.latest.condensed.yml
+  - REF:ai_general/roles/librarian/prompt.md
+
+memory_path: ai_memories/80_working_memory
+
+duties:
+  - name: pipeline_check
+    schedule: daily
+    action: Check 10_exported/ for new files, process through pipeline to 40_histories/
+  - name: quarantine_review
+    schedule: weekly
+    action: Review quarantine/, attempt reprocessing or escalate
+
+ownership:
+  - ai_memories/
+  - Chat history pipeline
+
+does_not_own:
+  - ai_general/docs/
+  - ai_general/todos/

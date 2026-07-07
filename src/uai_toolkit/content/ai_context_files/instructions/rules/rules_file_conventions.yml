@@ -1,0 +1,80 @@
+# instr_file_conventions_v3.0.condensed.yml
+metadata:
+  source: instr_file_conventions_v3.0.md
+  version: "3.0"
+  condensed_by: librarian
+
+pipeline:
+  canonical: md (human writes/reviews)
+  generated: yml (machine-parseable) → condensed (token-efficient)
+  tool: doc_converter.py
+
+files:
+  doc_vX.Y.md: canonical source (human)
+  doc_vX.Y.yml: structured (script)
+  doc_vX.Y.condensed.yml: token-optimized (AI)
+  doc_latest.yml: symlink → condensed > yml > md
+
+symlink_resolution: condensed → yml → md (fallback chain)
+
+markdown_structure:
+  "# Title": root title
+  "## Section": top-level key
+  "### Subsection": nested key
+  "- **key:** value": metadata kv
+  bullets: array
+  tables: array of objects
+  code_blocks: literal block scalar
+  paragraphs: string value
+
+directory_prefixes:
+  00-09: temp (inbox, scratch)
+  10-19: architecture, foundational
+  20-29: registries, indexes
+  30-39: protocols, patterns
+  40-49: specifications
+  50-59: schemas
+  60-69: playbooks, guides
+  70-79: instructions (rules)
+  80-89: templates (by example)
+  90-99: drafts, archives
+
+file_prefixes:
+  instr_: instructions
+  spec_: specifications
+  protocol_: protocol definitions
+  schema_: data schemas
+  req_NNNN_: CLI coordination
+
+version_suffixes:
+  _vX.Y.md: version
+  _latest.yml: symlink to current
+  .condensed.yml: token-optimized
+  _draft.md: WIP
+
+size_guidelines:
+  "<5KB": md ok for auto-load
+  "5-15KB": use condensed
+  ">15KB": condensed required, consider split
+
+loading_priority: condensed → yml → md
+
+per_instance_file_naming:
+  rule: "Files that exist per-instance must include the instance discriminator in the filename slug, before the extension"
+  pattern: "{descriptive_name}.{discriminator}.{ext}"
+  rationale: "Generic filenames (sessionInfo.json) across hundreds of dirs cause ambiguous editor tabs, grep results, and accidental clobbering"
+  discriminator_by_type:
+    cli_session: "uuid8 from tracking ID (e.g., sessionInfo.f3c818cf.json)"
+    task: "task ID (e.g., response.req_2115.md)"
+  backward_compat: "readers try discriminated name first, fall back to legacy plain name"
+  helpers: "lib_session.instance_filename(base, ext, session_dir) and find_instance_file(session_dir, base, ext)"
+
+pre_write_rules:
+  directory_listing_required:
+    rule: "NEVER create a file in any directory without first listing that directory"
+    rationale: |
+      Prevents: naming convention violations, duplicate files, wrong locations,
+      missing obvious existing resources. One tool call prevents entire error class.
+    applies_to: [file creation, file moves, new versions]
+    cost: minimal (single list_directory call)
+    benefit: catches pattern violations before they happen

@@ -1,0 +1,103 @@
+rules:
+  conceptual_vs_implementation:
+    rule: Stay at design level during architectural discussions
+    expand_only_when: feasibility validation needed | consolidating understanding
+      | user requests
+    pattern: pending → active → complete NOT class __init__, _transition_state()...
+  tool_usage:
+    rule: Prefer native tools for file operations; use bash for system commands
+    native_tools:
+      Read: file reads (not cat/head/tail)
+      Edit: file modifications (not sed/awk)
+      Write: file creation (not echo/heredoc)
+      Grep: content search (not grep/rg)
+      Glob: file pattern matching (not find/ls)
+      Agent: parallel subagents for independent tasks
+      Bash: system commands, scripts, git, builds, pipelines
+    mcp_tools_also_available:
+      comms: cross-session messaging, prompts, coordination
+      knowledge: history/archive search, memory, context library
+      sessions: session lifecycle, reasoning, scheduled tasks
+      workflow: todos, tasks, playbooks, devtrees
+      chat: web/desktop chat browser automation
+      note: 'These MCP servers ARE available in Claude Code interactive sessions.
+
+        Native tools (Read/Edit/Bash) are generally preferred for file ops,
+
+        but the MCP servers add cross-session coordination, history search,
+
+        and workflow capabilities the native tools lack.
+
+        '
+    use_bash_for:
+    - System commands and process execution
+    - Script invocation (~/bin/ai/*)
+    - Git operations
+    - Multi-step shell pipelines
+    - Package management, builds, installs
+    detection_self_check:
+      reading_a_file: use Read tool
+      searching_file_content: use Grep tool
+      finding_files: use Glob tool
+      editing_a_file: use Edit tool
+      creating_a_file: use Write tool
+      running_a_command: use Bash tool
+      parallel_independent_work: use Agent subagents
+  context_and_delegation:
+    context_window: 1M tokens
+    budget_reality: 'At 1M, context conservation is NOT the primary driver for delegation.
+
+      Full bootstrap (~13K tokens) is ~1.3% of context.
+
+      Reading 20 files directly is fine. 5000 lines is fine.
+
+      '
+    delegate_for:
+    - Parallelism (2+ independent tasks → multiple Agent subagents)
+    - Async work (continues while user converses → CLI Coordination)
+    - Isolation (risky/experimental → git worktree via Agent)
+    - Truly massive output (>50K tokens)
+    do_NOT_delegate_just_for:
+    - Context protection (1M is generous)
+    - '"Keeping context clean" (compaction handles this)'
+    - Small-to-medium file reads (<5000 lines total)
+    priority_order:
+      1: Direct execution (bash + native tools) — default for most work
+      2: Agent subagents — parallel independent tasks, exploratory searches
+      3: CLI Coordination — async delegation to other AI agents (other CLIs)
+    decision_tree:
+      results_needed_now: Direct execution (bash/tools)
+      can_run_async: CLI Coordination or background Agent
+      simple_single_task: Native tools (Read/Grep/Glob)
+      exploratory_unknown_scope: Agent subagent (Explore type)
+      parallel_independent_tasks: Multiple Agent subagents concurrently
+    also_available:
+    - comms / knowledge / sessions / workflow / chat MCP servers
+    - 'Note: native tools are preferred for most file work; MCP servers add coordination,
+      history search, and workflow'
+  browser_snapshot_handling:
+    rule: Avoid loading large browser snapshots directly
+    reason: 20-50K tokens — only 2-5% of 1M but still low signal-to-noise
+    approach:
+      1: Write snapshot to file via Write tool
+      2: Read selectively via Read tool with offset/limit
+      3: Or delegate analysis to Agent subagent
+    urgency: lower (not lethal at 1M, but still noisy)
+enforcement:
+  self_check:
+  - Am I using bash when a native tool exists? → Prefer native
+  - Are there 2+ independent tasks? → Use parallel Agent calls
+  - Will this produce >50K tokens of output? → Consider delegation
+  - Am I loading a browser snapshot? → Write to file first, read selectively
+  context_monitoring:
+    compaction: Anthropic auto-summarizes older context when approaching limits (lossy)
+    implication: conversations are very long before compaction triggers at 1M
+    memory_slots_role: lossless ground truth that survives compaction — still essential
+    delegation_rationale: delegate for parallelism and async, not context protection
+_registry:
+  id: instr_cli_context_and_tools
+  name: Cli Context And Tools
+  status: active
+  version: 1.0.0
+  created: '2026-03-21'
+  updated: '2026-04-15'

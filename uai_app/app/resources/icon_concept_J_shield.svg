@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="bgJ" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#1e293b"/>
+      <stop offset="100%" stop-color="#0f172a"/>
+    </linearGradient>
+    <linearGradient id="shieldBody" x1="0.5" y1="0" x2="0.5" y2="1">
+      <stop offset="0%" stop-color="#334155"/>
+      <stop offset="40%" stop-color="#1e293b"/>
+      <stop offset="100%" stop-color="#0f172a"/>
+    </linearGradient>
+    <linearGradient id="shieldEdge" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#fbbf24"/>
+      <stop offset="50%" stop-color="#d97706"/>
+      <stop offset="100%" stop-color="#92400e"/>
+    </linearGradient>
+    <linearGradient id="chevronGrad" x1="0.5" y1="0" x2="0.5" y2="1">
+      <stop offset="0%" stop-color="#fde68a"/>
+      <stop offset="100%" stop-color="#d97706"/>
+    </linearGradient>
+    <filter id="goldGlow">
+      <feGaussianBlur stdDeviation="12"/>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect x="12" y="12" width="1000" height="1000" rx="200" ry="200" fill="url(#bgJ)" stroke="#334155" stroke-width="2"/>
+
+  <!-- Shield outer glow -->
+  <path d="M 512 130 L 810 240 L 810 520 C 810 680, 680 800, 512 880 C 344 800, 214 680, 214 520 L 214 240 Z"
+        fill="#fbbf24" opacity="0.04" filter="url(#goldGlow)"/>
+
+  <!-- Shield body -->
+  <path d="M 512 150 L 790 252 L 790 520 C 790 670, 668 782, 512 858 C 356 782, 234 670, 234 520 L 234 252 Z"
+        fill="url(#shieldBody)"/>
+
+  <!-- Shield border — gold -->
+  <path d="M 512 150 L 790 252 L 790 520 C 790 670, 668 782, 512 858 C 356 782, 234 670, 234 520 L 234 252 Z"
+        fill="none" stroke="url(#shieldEdge)" stroke-width="8"/>
+
+  <!-- Inner border line -->
+  <path d="M 512 190 L 750 280 L 750 520 C 750 650, 644 748, 512 815 C 380 748, 274 650, 274 520 L 274 280 Z"
+        fill="none" stroke="#475569" stroke-width="2" opacity="0.5"/>
+
+  <!-- Central chevron / crest mark — a stylized upward "V" or "U" inverted -->
+  <!-- Represents the "unified" embrace -->
+  <path d="M 370 380 L 512 580 L 654 380"
+        stroke="url(#chevronGrad)" stroke-width="32" fill="none"
+        stroke-linecap="round" stroke-linejoin="round" opacity="0.9"/>
+
+  <!-- Chevron glow -->
+  <path d="M 370 380 L 512 580 L 654 380"
+        stroke="#fbbf24" stroke-width="50" fill="none"
+        stroke-linecap="round" stroke-linejoin="round" opacity="0.06"
+        filter="url(#goldGlow)"/>
+
+  <!-- Horizontal bar across shield — "standardization" -->
+  <line x1="310" y1="480" x2="714" y2="480" stroke="#fde68a" stroke-width="4" opacity="0.3"/>
+
+  <!-- Three subtle dots in the chevron — the agents being protected -->
+  <circle cx="440" cy="460" r="10" fill="#94a3b8" opacity="0.5"/>
+  <circle cx="512" cy="520" r="10" fill="#94a3b8" opacity="0.5"/>
+  <circle cx="584" cy="460" r="10" fill="#94a3b8" opacity="0.5"/>
+</svg>

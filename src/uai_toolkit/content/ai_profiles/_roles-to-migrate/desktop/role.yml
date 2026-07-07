@@ -1,0 +1,195 @@
+metadata:
+  name: desktop
+  version: 1.0.0
+  updated: 2026-02-02
+  description: |
+    Desktop Claude (claude.ai / Desktop App) bootstrap configuration.
+    Uses tiered load_sequence - CLI agents flatten to auto tier.
+
+# Unified schema: load_sequence with tiers
+# - auto: Load before first response (mandatory)
+# - topic: Load when triggers match conversation content
+# - demand: Load only when explicitly needed
+# - execution: Load when depends_on references or performing related operation
+
+load_sequence:
+  auto:
+    instruction: |
+      BEFORE responding to the user's first message, use desktop-commander:read_file
+      to load each file below. This is not optional. Do not skip for context conservation.
+    files:
+      - pointer: REF:ai_general/docs/20_registries/glossary_knowledge_index.latest.condensed.yml
+        tokens: ~1316
+        purpose: "Term→file mapping for bootstrap problem. Load FIRST to recognize domain vocabulary."
+
+      - pointer: REF:ai_general/docs/20_registries/tools_manifest.latest.condensed.yml
+        tokens: ~60
+        purpose: "Tool paths - where CLI wrappers, python tools live"
+
+      - pointer: REF:ai_general/docs/20_registries/directory_structure_reference.latest.condensed.yml
+        tokens: ~275
+        purpose: "Directory layout - know the filesystem structure"
+
+      - pointer: REF:ai_general/docs/20_registries/INVENTORY.latest.condensed.yml
+        tokens: ~155
+        purpose: "What exists where - high-level asset inventory"
+
+      - pointer: REF:ai_general/docs/20_registries/document_registry.latest.condensed.yml
+        tokens: ~310
+        purpose: "Document index - where docs live by category"
+
+      - pointer: REF:ai_general/docs/70_instructions/instr_operating_principles.latest.condensed.yml
+        tokens: ~1037
+        purpose: "Core operating principles - partnership, communication, feedback"
+
+      - pointer: REF:ai_general/docs/70_instructions/claude/instr_claude_context_conservations.latest.condensed.yml
+        tokens: ~742
+        purpose: "Context preservation rules - delegation, bash_tool prohibition"
+
+      - pointer: REF:ai_general/docs/70_instructions/claude/instr_environment_overview.latest.condensed.yml
+        tokens: ~349
+        purpose: "Platform capabilities, filesystem access, workspace layout"
+
+      - pointer: REF:ai_general/docs/40_specs/spec_response_footer.latest.condensed.yml
+        tokens: ~350
+        purpose: "Response footer format - Claude MUST include on every response"
+
+      - pointer: REF:ai_general/docs/40_specs/spec_message_insert.latest.condensed.yml
+        tokens: ~500
+        purpose: "Message insertion protocol - cross-chat communication handling"
+
+      - pointer: REF:ai_general/docs/70_instructions/claude/instr_claude_use_of_ai_agents.latest.condensed.yml
+        tokens: ~900
+        purpose: "CLI/Codex delegation patterns - when/how to delegate"
+
+      - pointer: REF:ai_general/docs/70_instructions/instr_workstate_tracking.latest.condensed.yml
+        tokens: ~450
+        purpose: "Workstate tracking - session start protocol, task state logging via mcp-tasks"
+
+      - pointer: REF:ai_general/docs/70_instructions/instr_action_logging.latest.yml
+        tokens: ~180
+        purpose: "Action logging protocol - log before acting, enable interruption recovery"
+
+  topic:
+    instruction: |
+      When conversation touches triggers listed for a file, load that file before responding.
+    files:
+      - pointer: REF:ai_general/docs/10_architecture/architecture_overview.latest.condensed.yml
+        tokens: ~1226
+        triggers: [architecture, system design, component overview]
+
+      - pointer: REF:ai_general/docs/10_architecture/architectural_layer_model.latest.condensed.yml
+        tokens: ~1268
+        triggers: [layers, abstraction, directory tiers]
+
+      - pointer: REF:ai_general/docs/70_instructions/claude/claude_context_quick_notes.latest.condensed.yml
+        tokens: ~219
+        triggers: [quick notes, gotchas, learnings]
+
+      - pointer: REF:ai_general/docs/70_instructions/claude/instr_claude_specific.latest.condensed.yml
+        tokens: ~54
+        triggers: [claude-specific, unique to claude]
+
+      - pointer: REF:ai_general/docs/70_instructions/claude/instr_pointer_loading.latest.condensed.yml
+        tokens: ~724
+        triggers: [pointer, REF:, loading docs]
+        depends_on:
+          - ai_general/docs/50_schemas/schema_pointer_syntax.latest.condensed.yml
+
+      - pointer: REF:ai_general/docs/70_instructions/claude/know_codex_mcp.latest.condensed.yml
+        tokens: ~941
+        triggers: [codex, mcp, synchronous execution]
+
+      - pointer: REF:ai_general/docs/70_instructions/instr_development.latest.condensed.yml
+        tokens: ~771
+        triggers: [coding, development, PR, code review]
+
+      - pointer: REF:ai_general/docs/70_instructions/instr_file_conventions.latest.condensed.yml
+        tokens: ~1126
+        triggers: [file naming, versioning, symlinks, yaml vs markdown]
+
+      - pointer: REF:ai_general/docs/70_instructions/instr_writing.latest.condensed.yml
+        tokens: ~1150
+        triggers: [writing, documentation, prose style]
+
+      - pointer: REF:ai_general/docs/70_instructions/instr_chat_condensation.latest.condensed.yml
+        tokens: ~350
+        triggers: [condensation, condense, chat history, librarian wave, semantic summary]
+        abstract: |
+          Guidelines for condensing chat history chunks to semantic summaries.
+          Target: 70-90% reduction. Output: .condensed.yml alongside source.
+
+      - pointer: REF:ai_general/docs/70_instructions/instr_feedback.latest.condensed.yml
+        tokens: ~180
+        triggers: [feedback, suggestion, observation, issue, improvement, log observation]
+
+      - pointer: REF:ai_general/docs/70_instructions/instr_todo.latest.condensed.yml
+        tokens: ~280
+        triggers: [todo, out-of-scope, discovered work, todo_mgr, create todo]
+
+  demand:
+    instruction: |
+      Load these only when user explicitly requests or task requires the specific content.
+    files:
+      - pointer: REF:ai_general/docs/60_playbooks/MAINTENANCE_PLAYBOOK.md
+        tokens: ~1067
+
+      - pointer: REF:ai_general/docs/60_playbooks/playbook.directory_watcher_guide.latest.md
+        tokens: ~2061
+
+      - pointer: REF:ai_general/docs/60_playbooks/parallel_orchestration_case_study.yml
+        tokens: ~950
+        triggers: [codex validation, iterative review, parallel workers, quality loop]
+
+      - pointer: REF:ai_general/docs/60_playbooks/cli_agent_operations.latest.condensed.yml
+        tokens: ~430
+
+      - pointer: REF:ai_general/docs/60_playbooks/playbook.cli_browser_automation_guide.latest.md
+        tokens: ~3029
+
+      - pointer: REF:ai_general/docs/60_playbooks/playbook.gemini_canvas_automation.latest.condensed.yml
+        tokens: ~350
+        triggers: [gemini, canvas, artifact download, monaco editor]
+
+      - pointer: REF:ai_general/docs/60_playbooks/playbook.chatgpt_browser_automation.latest.condensed.yml
+        tokens: ~400
+        triggers: [chatgpt, browser automation, cross-platform test]
+
+      - pointer: REF:ai_general/docs/60_playbooks/playbook.documentation_maintenance.latest.condensed.yml
+        tokens: ~400
+        triggers: [documentation, versioning, symlinks, doc maintenance, create playbook]
+
+      - pointer: REF:ai_general/docs/60_playbooks/playbook.ai_orchestration.md
+        tokens: ~650
+        triggers: [orchestration, parallel workers, spawn agents, tmux]
+
+      - pointer: REF:ai_general/docs/50_schemas/schema.playbook.latest.condensed.yml
+        tokens: ~250
+        triggers: [playbook structure, playbook schema, playbook format]
+
+      - pointer: REF:ai_general/docs/50_schemas/schema_pointer_syntax.latest.condensed.yml
+        tokens: ~582
+
+      - pointer: REF:ai_general/docs/50_schemas/schema_taskFile.latest.condensed.yml
+        tokens: ~575
+        triggers: [task file, task schema, req_ format]
+
+      - pointer: REF:ai_general/docs/30_protocols/protocol_ai_chat_orchestration.latest.condensed.yml
+        tokens: ~1143
+
+      - pointer: REF:ai_general/docs/30_protocols/protocol_reference_pointers.latest.condensed.yml
+        tokens: ~891
+
+      - pointer: REF:ai_general/docs/30_protocols/protocol_taskCoordination.latest.condensed.yml
+        tokens: ~2969
+
+# Desktop-specific settings
+memory_path: ai_memories/80_working_memory
+
+# No duties for desktop - it's interactive, not scheduled
+duties: []
+
+ownership:
+  - Interactive conversation with PianoMan
+  - Delegating to CLI agents and Codex
+  - Context window stewardship

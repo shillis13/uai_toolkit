@@ -1,0 +1,145 @@
+/* UAI Themes — curated palettes (todo_0384)
+ *
+ * Each block overrides ONLY the CORE design tokens (backgrounds, borders, text,
+ * accents, accent fills, overlay surfaces). Every tokenized surface in the app
+ * (styles.css classes + inline-var components) recolors for free — themes are
+ * data, not code.
+ *
+ * Default theme = the base `:root` in styles.css (no override needed here).
+ * Applied at runtime via `document.documentElement.dataset.theme = '<name>'`,
+ * persisted under localStorage key `uai:theme`. Picker lives in SettingsPanel
+ * (Cmd+,) → "Theme".
+ *
+ * Selectors use [data-theme="…"] (matches <html> = :root, same specificity path
+ * as the demo blocks that previously lived in styles.css).
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Dawn ──────────────────────────────────────────────────────────────────
+   Warm light theme — dark ink on parchment. High legibility; accents are
+   darkened so they stay readable as text/lines on light surfaces. */
+[data-theme="dawn"] {
+  /* Backgrounds */
+  --bg-deep: #ece6da;
+  --bg-panel: #f4efe6;
+  --bg-card: #fbf8f2;
+  --bg-hover: #e6ddcc;
+  --bg-active: rgba(47, 109, 240, 0.12);
+
+  /* Borders */
+  --border: #d3c7b2;
+  --border-strong: #b9a986;
+  --border-bright: #8f7d59;
+
+  /* Text — #2b2620 on #ece6da ≈ 12:1 */
+  --text: #2b2620;
+  --text-sec: #5f574a;
+  --text-muted: #837968;
+
+  /* Accents — darkened for contrast on light surfaces */
+  --accent-blue: #2f6df0;
+  --accent-green: #2f8f4e;
+  --accent-yellow: #b5820a;
+  --accent-red: #c8384f;
+  --accent-purple: #7c4ddb;
+  --accent-orange: #c86a1f;
+  --accent-cyan: #1f8fa8;
+  --status-green: #1a9e6f;
+
+  /* Accent fills */
+  --accent-blue-bg: #d9e4fb;
+  --accent-blue-solid: #2f6df0;
+  --accent-purple-solid: #7c4ddb;
+
+  /* Overlay/dialog surfaces */
+  --overlay-note-bg: #e7eefc;
+  --overlay-note-border: #2f6df0;
+  --overlay-hamilton-bg: #efe7fb;
+  --overlay-hamilton-border: #7c4ddb;
+}
+
+/* ── Midnight ──────────────────────────────────────────────────────────────
+   Cool deep-blue theme — bluer and darker than the default slate. Accents are
+   brightened a touch so they pop against the saturated navy fields. */
+[data-theme="midnight"] {
+  /* Backgrounds */
+  --bg-deep: #060b1a;
+  --bg-panel: #0b1327;
+  --bg-card: #121d3a;
+  --bg-hover: #1a2748;
+  --bg-active: rgba(122, 176, 255, 0.14);
+
+  /* Borders */
+  --border: #24345e;
+  --border-strong: #375089;
+  --border-bright: #5670a8;
+
+  /* Text — #dce8ff on #060b1a ≈ 16:1 */
+  --text: #dce8ff;
+  --text-sec: #93a6d0;
+  --text-muted: #6076a0;
+
+  /* Accents — brightened for the darker field */
+  --accent-blue: #7ab0ff;
+  --accent-green: #6fd58a;
+  --accent-yellow: #f0c06a;
+  --accent-red: #ff7d97;
+  --accent-purple: #c4a5ff;
+  --accent-orange: #ffab6e;
+  --accent-cyan: #7fd8ff;
+  --status-green: #1fd39a;
+
+  /* Accent fills */
+  --accent-blue-bg: #1c2f57;
+  --accent-blue-solid: #2f6df0;
+  --accent-purple-solid: #7c4ddb;
+
+  /* Overlay/dialog surfaces */
+  --overlay-note-bg: #12224a;
+  --overlay-note-border: #5b8bff;
+  --overlay-hamilton-bg: #201947;
+  --overlay-hamilton-border: #a586f0;
+}
+
+/* ── High Contrast ─────────────────────────────────────────────────────────
+   Accessible high-contrast theme — pure-black field, bright white text, vivid
+   accents, strong light borders. All text/accent pairs clear WCAG AAA on the
+   near-black backgrounds. */
+[data-theme="contrast"] {
+  /* Backgrounds */
+  --bg-deep: #000000;
+  --bg-panel: #0a0a0a;
+  --bg-card: #161616;
+  --bg-hover: #262626;
+  --bg-active: rgba(77, 159, 255, 0.22);
+
+  /* Borders — deliberately strong/bright for clear separation */
+  --border: #5a5a5a;
+  --border-strong: #8a8a8a;
+  --border-bright: #c8c8c8;
+
+  /* Text — #ffffff on #000 = 21:1; muted #b0b0b0 ≈ 10:1 */
+  --text: #ffffff;
+  --text-sec: #e6e6e6;
+  --text-muted: #b0b0b0;
+
+  /* Accents — vivid, high-luminance */
+  --accent-blue: #4d9fff;
+  --accent-green: #3ee06a;
+  --accent-yellow: #ffd23e;
+  --accent-red: #ff5470;
+  --accent-purple: #c07bff;
+  --accent-orange: #ff9d3e;
+  --accent-cyan: #3ee0ff;
+  --status-green: #00e88f;
+
+  /* Accent fills */
+  --accent-blue-bg: #10305c;
+  --accent-blue-solid: #1e6dff;
+  --accent-purple-solid: #8a3fff;
+
+  /* Overlay/dialog surfaces */
+  --overlay-note-bg: #0a1a33;
+  --overlay-note-border: #4d9fff;
+  --overlay-hamilton-bg: #1a0a33;
+  --overlay-hamilton-border: #c07bff;
+}

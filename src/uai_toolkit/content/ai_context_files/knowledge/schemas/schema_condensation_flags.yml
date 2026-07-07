@@ -1,0 +1,208 @@
+# Condensation Flags Schema v1.0
+# Orthogonal flags controlling what content survives condensation
+# Flags are REMOVAL directives - true = remove that content type
+
+metadata:
+  title: Condensation Flags Schema
+  version: 1.0.0
+  created: 2026-01-17
+  maintainer: PianoMan
+  status: active
+
+# === FLAG DEFINITIONS ===
+flags:
+
+  strip_conversational:
+    description: Remove conversational overhead while preserving substance
+    removes:
+      - Greetings, thanks, acknowledgments ("Hi!", "Thanks!", "Great question!")
+      - Fillers ("Let me think...", "Well,", "So,")
+      - Caveats and hedging ("I think", "probably", "might be", "I'm not sure but")
+      - Disclaimers ("I should note that", "Keep in mind")
+      - Permission seeking ("Would you like me to", "Should I", "Do you want")
+      - Validation statements ("That's a great approach", "Good thinking")
+      - Feeling protectors ("I hope this helps", "Feel free to ask")
+      - Process narration ("I'll now", "Let me", "I'm going to")
+    preserves:
+      - Direct statements of fact
+      - Actual answers and content
+      - Questions that drove the conversation forward
+    default: false
+    typical_reduction: 15-30%
+
+  strip_explanatory:
+    description: Remove teaching/illustration content, keep conclusions
+    removes:
+      - Speculations ("It might be because", "Perhaps")
+      - Examples ("For example", "For instance", "such as X, Y, Z")
+      - Analogies ("Think of it like", "It's similar to")
+      - Metaphors
+      - "Here's why it matters" blocks
+      - Background context that was provided for understanding
+      - ELI5-style explanations
+    preserves:
+      - Conclusions reached
+      - Decisions made
+      - Facts stated
+      - Technical specifications
+    default: false
+    typical_reduction: 20-40%
+
+  summarize_failures:
+    description: Collapse failed attempts to one-line learnings
+    behavior: |
+      Multi-message failure sequences become:
+      - tried: "what was attempted"
+        failed_because: "root cause"
+        led_to: "what worked instead" (if applicable)
+    preserves:
+      - The learning/insight from the failure
+      - What eventually worked
+    default: false
+    typical_reduction: 10-25%
+
+  summarize_rationales:
+    description: Compress multi-paragraph reasoning to bullet points
+    behavior: |
+      Long reasoning chains become:
+      - decision: "what was decided"
+        key_factors:
+          - "factor 1"
+          - "factor 2"
+    preserves:
+      - The decision itself
+      - Critical factors that influenced it
+      - Tradeoffs considered (compressed)
+    default: false
+    typical_reduction: 15-35%
+
+  strip_meta:
+    description: Remove meta-commentary about the conversation itself
+    removes:
+      - "Good question"
+      - "Let me think about this"
+      - "That's interesting"
+      - Process narration ("Now I'll", "Next we should")
+      - Reflections on the conversation ("We've covered a lot")
+      - Self-corrections ("Actually, let me reconsider")
+    preserves:
+      - Actual answers
+      - Content being discussed
+    default: false
+    typical_reduction: 5-15%
+
+  strip_redundant:
+    description: Remove repeated/superseded content
+    removes:
+      - Earlier versions when final version exists
+      - Repeated explanations of same concept
+      - Restated conclusions
+      - "As I mentioned earlier" references
+    preserves:
+      - Final/latest version of everything
+      - First statement of each concept
+    default: true  # Usually safe default
+    typical_reduction: 10-30%
+
+  preserve_quotes:
+    description: INVERSE flag - keep verbatim quotes even when summarizing
+    behavior: |
+      When other flags would remove content, quoted material survives.
+      Useful for: relationship content, evidence gathering, legal/compliance
+    use_when:
+      - Emotional/relationship conversations
+      - Evidence extraction
+      - Anything where exact wording matters
+    default: false
+
+  preserve_artifacts:
+    description: INVERSE flag - keep code, diagrams, ASCII art intact
+    behavior: |
+      Code blocks, ASCII art, diagrams survive even aggressive condensation.
+      Only final/working versions - drafts still removed.
+    default: true  # Usually want to keep artifacts
+
+# === PRESET COMBINATIONS ===
+presets:
+
+  import_continuation:
+    description: Bring chat forward for continuation - moderate condensation
+    flags:
+      strip_conversational: true
+      strip_meta: true
+      strip_redundant: true
+      summarize_failures: true
+      strip_explanatory: false  # Keep context for continuation
+      summarize_rationales: false  # Keep decision context
+      preserve_quotes: false
+      preserve_artifacts: true
+    typical_reduction: 40-60%
+
+  archival:
+    description: Maximum compression for knowledge base storage
+    flags:
+      strip_conversational: true
+      strip_explanatory: true
+      strip_meta: true
+      strip_redundant: true
+      summarize_failures: true
+      summarize_rationales: true
+      preserve_quotes: false
+      preserve_artifacts: true
+    typical_reduction: 70-90%
+
+  relationship_preservation:
+    description: Keep emotional texture, compress technical overhead
+    flags:
+      strip_conversational: false  # Keep the texture
+      strip_explanatory: true
+      strip_meta: true
+      strip_redundant: true
+      summarize_failures: true
+      summarize_rationales: true
+      preserve_quotes: true  # Exact words matter
+      preserve_artifacts: false
+    typical_reduction: 30-50%
+
+  technical_extraction:
+    description: Extract decisions and code, discard discussion
+    flags:
+      strip_conversational: true
+      strip_explanatory: true
+      strip_meta: true
+      strip_redundant: true
+      summarize_failures: true
+      summarize_rationales: true
+      preserve_quotes: false
+      preserve_artifacts: true
+    typical_reduction: 70-90%
+
+  minimal:
+    description: Light touch - just remove obvious noise
+    flags:
+      strip_conversational: false
+      strip_explanatory: false
+      strip_meta: true
+      strip_redundant: true
+      summarize_failures: false
+      summarize_rationales: false
+      preserve_quotes: true
+      preserve_artifacts: true
+    typical_reduction: 15-30%
+
+# === USAGE ===
+usage:
+  in_prompt: |
+    Condense this conversation with flags:
+    - strip_conversational: true
+    - strip_meta: true
+    - preserve_artifacts: true
+    
+  in_api: |
+    knowledge_condense_history
+      file_path: "path/to/chat.yml"
+      flags:
+        strip_conversational: true
+        strip_meta: true
+      # OR use preset:
+      preset: import_continuation
