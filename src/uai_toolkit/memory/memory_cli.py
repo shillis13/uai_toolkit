@@ -22,7 +22,9 @@ from pathlib import Path
 # --- Path setup (mirrors knowledge/server.py) ---
 AI_ROOT = Path(os.environ.get("AI_ROOT", Path(__file__).resolve().parents[3]))
 SCRIPTS = AI_ROOT / "ai_general" / "scripts"
-from uai_toolkit.memory import memory_lib
+sys.path.insert(0, str(SCRIPTS / "memories"))
+
+from uai_toolkit.memory import memory_lib  # noqa: E402
 
 
 # === Subcommand handlers ===

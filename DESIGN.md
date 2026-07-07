@@ -1,8 +1,17 @@
 # uai-toolkit — Design (work repo; public counterpart = ai-toolkit)
 
 Portable distribution of AI tooling (ported from `~/bin/ai`). First consumer:
-PianoMan on **Windows 11 at work**. Targets Linux (near-zero) and Windows 11
-with native Python (no WSL). Authored by the **Portage** session, 2026-06-20.
+PianoMan on **Windows 11 at work**. Authored by the **Portage** session, 2026-06-20.
+
+**Porting target — two phases (locked 2026-07-06):**
+- **Phase 1 — WSL** (Ubuntu-on-Windows = Linux). The larger set. The macOS→Linux
+  axis is near-zero and the tmux/zellij/fcntl/pty/signal substrate all work, so
+  most of `~/bin/ai` is an ordinary mechanical port here. This is the near-term
+  target; the WSL portability gaps are macOS-isms (osascript, BSD `date/sed/stat`,
+  `pbcopy`), not substrate.
+- **Phase 2 — native Windows, no WSL**. A deliberately *smaller* subset of
+  cross-platform essentials. This is where the real `platform_compat` work lives
+  (msvcrt locking, no-fork/ConPTY, `schtasks`, path semantics, no POSIX signals).
 
 ## Terms
 - **Package** — the shipped, versioned code + read-only assets. Replaced wholesale on upgrade.
@@ -82,6 +91,35 @@ The MCP servers invoke their backing domain CLIs via `python -m uai_toolkit.<dom
    ships handlers as console_scripts and `ai-toolkit init` writes them straight
    into `settings.json` (idempotent merge). The dir-scanning dispatcher is a
    deferred, optional power-user feature.
+
+## Sync from source — `tools/materialize.py` (source-authoritative)
+
+The package is a **derived artifact**. Source of truth stays in the live tree
+(`~/bin/ai` == `ai_general/scripts/`, `~/bin/all_languages/python/src`,
+`ai_general/apps/mcps`); `tools/manifest.py` maps source→package and
+`tools/materialize.py` regenerates the curated subset so drift is a reviewable
+`git diff`, not silent rot. (Mirrors the UAI app: `work/projects/…` source →
+`apps/` build artifact via `uai.sh`.)
+
+Workflow: edit source → `python3 tools/materialize.py` (dry run) → `--apply` →
+review `git diff` → commit. Provenance class per file (manifest `kind`):
+- **clean** — copy + mechanical import rewrite (`common_utils.`→`uai_toolkit.…`,
+  etc.) + machine-path scrub; written in place. The drift-prone bulk (this is
+  how `lib_logging` silently went stale).
+- **curated** — source was semantically trimmed here (stripped optional deps,
+  `file_utils`→`discovery` shim, hand-wired MCP subsets). Materialize writes a
+  `<file>.materialized` sidecar (gitignored) for manual diff — never clobbers.
+- **forked** — toolkit improvement absent from source (`file_access/tracker.py`
+  SQLite/WAL). Skipped; back-porting to source is the real fix.
+- **native** — no source (`discovery.py`, `platform_compat/*`, `install.py`,
+  `paths.py`, `__init__.py`). Never touched.
+
+Manifest corrections vs the layout table above: `todo/todo_mgr.py` ←
+`pylib:todo_mgr/` (NOT `ai:tasks/`); `jsonl/standardized_session.py` ←
+`lib_standardized_session.py` (rename); `file_access/tracker.py` ←
+`file_access_tracker.py` (rename, and forked); `file_access/hooks.py` merges 3
+source hook scripts. The MCP SDK imports (`from mcp.server`/`mcp.types`) are
+deliberately NOT rewritten — only internal `from shared.`/`from tools` patterns.
 
 ## Min Python: 3.10 (pervasive `X | Y` unions). Target 3.11+.
 

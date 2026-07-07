@@ -17,7 +17,7 @@ from mcp.types import Tool, TextContent
 
 # === Configuration ===
 AI_ROOT = Path(os.environ.get("AI_ROOT", os.path.expanduser("~/AI/ai_root")))
-READ_JSONL_MODULE = "uai_toolkit.jsonl.read_jsonl"
+READ_JSONL_SCRIPT = AI_ROOT / "ai_general" / "scripts" / "jsonl" / "read_jsonl.py"
 
 # Formats whose stdout should be parsed as JSON before returning
 JSON_FORMATS = {"json", "structured", "raw"}
@@ -25,9 +25,11 @@ JSON_FORMATS = {"json", "structured", "raw"}
 
 def _run_read_jsonl(args: list[str], timeout: int = 30) -> tuple[int, str, str]:
     """Run read_jsonl.py with given args. Returns (returncode, stdout, stderr)."""
+    if not READ_JSONL_SCRIPT.exists():
+        return (1, "", f"read_jsonl.py not found at {READ_JSONL_SCRIPT}")
     try:
         result = subprocess.run(
-            [sys.executable, "-m", READ_JSONL_MODULE] + args,
+            [sys.executable, str(READ_JSONL_SCRIPT)] + args,
             capture_output=True, text=True, timeout=timeout,
             cwd=str(AI_ROOT), env={**os.environ, "NO_COLOR": "1"},
         )

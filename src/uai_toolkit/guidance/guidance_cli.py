@@ -24,10 +24,13 @@ import subprocess
 import sys
 from pathlib import Path
 
-# --- paths ---
-AI_ROOT = Path(os.environ.get("AI_ROOT", os.path.expanduser("~/AI/ai_root")))
+# --- sys.path setup ---
+_SCRIPT_DIR = Path(__file__).resolve().parent
+AI_ROOT = Path(os.environ.get("AI_ROOT", _SCRIPT_DIR.parents[2]))
+sys.path.insert(0, str(AI_ROOT / "ai_general" / "scripts" / "context_files"))
+sys.path.insert(0, str(Path.home() / "bin" / "ai"))
 
-from uai_toolkit.guidance import guidance_lib
+from uai_toolkit.guidance import guidance_lib  # noqa: E402
 
 SESSION_TRAITS = AI_ROOT / "ai_general" / "scripts" / "session_mgmt" / "session_traits.py"
 BRIEFS_DIR = AI_ROOT / "ai_general" / "data" / "session_briefs"
@@ -209,9 +212,12 @@ def _colorize_list_output(text):
 # ── Unified get_context command ──────────────────────────────────────
 
 def cmd_get_context(args):
-    """Load one or more context references. Auto-resolves type via registry."""
+    """Load one or more context references. Auto-resolves type via registry.
+    The --load level controls reference expansion uniformly for any item type."""
     db = _get_db()
+    load = getattr(args, 'load', None) or guidance_lib.LOAD_RECURSIVE
     refs = args.references if hasattr(args, 'references') else [args.name] if hasattr(args, 'name') else []
+    seen = set()  # shared across refs so a shared context file loads once
     outputs = []
     for ref in refs:
         # Globals: "globals" loads all, "globals/<name>" loads one
@@ -235,18 +241,10 @@ def cmd_get_context(args):
             continue
 
         _track_knowledge_request(ref, db)
-        # Resolve to determine type, then dispatch to correct handler
+        # Uniform: resolve + walk the reference graph to the requested depth.
         item = guidance_lib.resolve_item(db, ref) if db else None
-        comp_type = (item.get("composition_type") or "").lower() if item else ""
-        if comp_type == "role":
-            outputs.append(guidance_lib.handle_get_role({"name": item["id"]}, guidance_lib.get_db()))
-        elif comp_type == "skill":
-            outputs.append(guidance_lib.handle_get_skill({"name": item["id"]}, guidance_lib.get_db()))
-        elif comp_type == "profile":
-            outputs.append(guidance_lib.handle_get_profile({"name": item["id"]}, guidance_lib.get_db()))
-        elif item:
-            # Trait or knowledge that resolved in the registry
-            outputs.append(guidance_lib.handle_get_knowledge({"topics": [ref]}, guidance_lib.get_db()))
+        if item:
+            outputs.append(guidance_lib.assemble_context(ref, db, load, _seen=seen))
         else:
             # Registry miss — try a file-based brief by name, else knowledge search
             if not _emit_brief(ref, outputs):
@@ -443,6 +441,8 @@ def build_parser():
     # ── get_context <ref> [<ref> ...] ───────────────────────────────
     p = sub.add_parser("get_context", help="Load context by reference (auto-resolves type).")
     p.add_argument("references", nargs="+", help="Context references to load")
+    p.add_argument("--load", choices=["none", "direct", "recursive"], default="recursive",
+                   help="Reference expansion: none=item only, direct=+one hop, recursive=+full closure (default)")
 
     # ── list_context [--type TYPE] [--category CAT] ─────────────────
     p = sub.add_parser("list_context", help="List available context items.")

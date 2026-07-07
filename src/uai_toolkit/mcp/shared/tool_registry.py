@@ -10,7 +10,7 @@ the AI client refreshes its tool list.
 
 Usage in a server:
 
-    from shared.tool_registry import ToolRegistry
+    from uai_toolkit.mcp.shared.tool_registry import ToolRegistry
 
     registry = ToolRegistry(server_dir=Path(__file__).parent, server=mcp_server)
 
@@ -254,7 +254,7 @@ def generate_registry(server_dir, output_file="tools.yml"):
     tools() functions. After that, the YAML file becomes the source of truth.
 
     Usage:
-        python -c "from shared.tool_registry import generate_registry; generate_registry('/path/to/server')"
+        python -c "from uai_toolkit.mcp.shared.tool_registry import generate_registry; generate_registry('/path/to/server')"
     """
     import importlib
     import pkgutil

@@ -42,3 +42,7 @@ venv/
 # Project-local instance/runtime; never commit a populated instance
 /ai_root/
 config.toml
+
+# Materialize sidecars — transient source snapshots of curated files for manual
+# diff/merge review (tools/materialize.py). Not shipped, not committed.
+*.materialized

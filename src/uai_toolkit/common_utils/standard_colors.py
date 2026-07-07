@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""standard_colors — shared ANSI color library.
+"""standard_colors — shared ANSI color library for ~/bin/ai/ scripts.
 
 Zero dependencies. Respects NO_COLOR, --no-color, and non-TTY stdout.
 

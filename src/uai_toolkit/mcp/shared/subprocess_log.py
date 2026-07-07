@@ -5,13 +5,13 @@ Appends one JSONL line per call to ai_general/logs/mcp/<server_name>.jsonl.
 Always-on, lightweight (no parsing, just append).
 
 Usage in a tool module:
-    from shared.subprocess_log import logged_run
+    from uai_toolkit.mcp.shared.subprocess_log import logged_run
 
     result = logged_run("comms", cmd, capture_output=True, text=True, timeout=30)
     # Same interface as subprocess.run, returns CompletedProcess
 
 Or wrap an existing _run function:
-    from shared.subprocess_log import log_call
+    from uai_toolkit.mcp.shared.subprocess_log import log_call
 
     log_call("comms", cmd, returncode, stderr_snippet)
 """
@@ -23,9 +23,8 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from uai_toolkit.paths import ai_root
-
-LOG_DIR = ai_root() / "logs" / "mcp"
+AI_ROOT = Path(os.environ.get("AI_ROOT", Path.home() / "AI" / "ai_root"))
+LOG_DIR = AI_ROOT / "ai_general" / "logs" / "mcp"
 
 
 def _ensure_log_dir():

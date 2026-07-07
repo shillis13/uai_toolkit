@@ -13,12 +13,13 @@ from pathlib import Path
 
 from mcp.types import Tool, TextContent
 
-SEARCH_MODULE = "uai_toolkit.history.search_cli"
+AI_ROOT = Path(os.environ.get("AI_ROOT", Path(__file__).resolve().parents[5]))
+SEARCH_CLI = AI_ROOT / "ai_general" / "scripts" / "histories" / "search_cli.py"
 
 
 def _run_cli(subcommand, args=None, timeout=30):
     """Run search_cli.py and return stdout."""
-    cmd = [sys.executable, "-m", SEARCH_MODULE, subcommand] + (args or [])
+    cmd = [sys.executable, str(SEARCH_CLI), subcommand] + (args or [])
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     if result.returncode != 0:
         return json.dumps({"error": result.stderr.strip() or "exit %d" % result.returncode})

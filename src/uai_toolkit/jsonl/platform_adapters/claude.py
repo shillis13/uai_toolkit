@@ -80,14 +80,23 @@ def from_file(path: str | Path) -> StandardizedSession:
             raw_content = message.get("content", "")
 
             def classify_user_type(raw_entry: dict[str, Any]) -> str:
-                origin = raw_entry.get("origin")
-                if isinstance(origin, dict) and origin.get("kind") == "task-notification":
-                    return "agent_result"
-                if raw_entry.get("isMeta", False):
-                    if raw_entry.get("sourceToolUseID"):
-                        return "skill"
-                    return "injected"
-                return "user"
+                # Delegate to the ONE canonical record classifier
+                # (lib_jsonl_archive.classify_user_record) so read_jsonl's SKILL /
+                # INJECTED / AGENT_RESULT tagging is byte-for-byte the same decision
+                # that lib_context_analysis + chain_skip make. The inline fallback
+                # preserves the original rules verbatim if that lib isn't importable.
+                try:
+                    from lib_jsonl_archive import classify_user_record
+                    return classify_user_record(raw_entry)
+                except Exception:
+                    origin = raw_entry.get("origin")
+                    if isinstance(origin, dict) and origin.get("kind") == "task-notification":
+                        return "agent_result"
+                    if raw_entry.get("isMeta", False):
+                        if raw_entry.get("sourceToolUseID"):
+                            return "skill"
+                        return "injected"
+                    return "user"
 
             if isinstance(raw_content, str):
                 if raw_content:

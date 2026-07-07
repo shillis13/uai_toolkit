@@ -14,12 +14,13 @@ import sys
 from pathlib import Path
 from mcp.types import Tool, TextContent
 
-MEMORY_MODULE = "uai_toolkit.memory.memory_cli"
+AI_ROOT = Path(os.environ.get("AI_ROOT", Path(__file__).resolve().parents[5]))
+MEMORY_CLI = AI_ROOT / "ai_general" / "scripts" / "memories" / "memory_cli.py"
 
 
 def _run_cli(subcommand: str, args: list = None) -> str:
     """Run memory_cli.py and return stdout on success, or an error JSON string."""
-    cmd = [sys.executable, "-m", MEMORY_MODULE, subcommand] + (args or [])
+    cmd = [sys.executable, str(MEMORY_CLI), subcommand] + (args or [])
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
     if result.returncode != 0:
         # CLI writes JSON errors to stderr; fall back to generic message

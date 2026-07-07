@@ -14,13 +14,14 @@ from pathlib import Path
 
 from mcp.types import Tool, TextContent
 
-GUIDANCE_MODULE = "uai_toolkit.guidance.guidance_cli"
+AI_ROOT = Path(os.environ.get("AI_ROOT", Path(__file__).resolve().parents[5]))
+GUIDANCE_CLI = AI_ROOT / "ai_general" / "scripts" / "context_files" / "guidance_cli.py"
 
 
 def _run_cli(subcommand, args=None):
     """Run guidance_cli.py and return stdout."""
     from uai_toolkit.mcp.shared.subprocess_log import logged_run
-    cmd = [sys.executable, "-m", GUIDANCE_MODULE, subcommand] + (args or [])
+    cmd = [sys.executable, str(GUIDANCE_CLI), subcommand] + (args or [])
     result = logged_run("knowledge", cmd, capture_output=True, text=True, timeout=30)
     if result.returncode != 0:
         return result.stderr.strip() or f"Error (exit {result.returncode})"
@@ -32,14 +33,20 @@ def tools() -> list:
         Tool(name="knowledge_get_context",
              description=(
                  "Load context by reference. Resolves any identifier: role name, skill name, "
-                 "trait id/name/alias, profile name, knowledge topic, or 'globals' (all global context files) "
+                 "context-file id/name/alias, profile name, knowledge topic, or 'globals' (all global context files) "
                  "or 'globals/<name>' (specific global). "
                  "Resolution order: id -> alias -> name -> path -> FTS. "
-                 "Pass one or more references to load."
+                 "The 'load' parameter uniformly controls reference expansion for ANY item type: "
+                 "'none' returns the item's own content only (role definition, profile's role list, or a "
+                 "context file's text); 'direct' adds the items it directly references (one hop); "
+                 "'recursive' (default) adds the full transitive closure, deduped — e.g. a profile expands "
+                 "to its roles and all their context files. Pass one or more references to load."
              ),
              inputSchema={"type": "object", "properties": {
                  "references": {"type": "array", "items": {"type": "string"},
-                                "description": "Context references to load (role names, skill names, trait ids, profile names, knowledge topics)"},
+                                "description": "Context references to load (role names, skill names, context-file ids, profile names, knowledge topics)"},
+                 "load": {"type": "string", "enum": ["none", "direct", "recursive"], "default": "recursive",
+                          "description": "Reference-expansion depth: none (item only), direct (one hop), recursive (full closure, default)"},
              }, "required": ["references"]}),
         Tool(name="knowledge_list_context",
              description=(
@@ -119,7 +126,11 @@ def _build_cli_args(subcommand, arguments, original_name=""):
                 refs = [arguments["identifier"]]
             elif arguments.get("topics"):
                 refs = list(arguments["topics"])
-        return refs
+        cli = list(refs)
+        load = arguments.get("load")
+        if load in ("none", "direct", "recursive"):
+            cli += ["--load", load]
+        return cli
     elif subcommand == "list_context":
         args = []
         # Determine type from arguments or legacy tool name
