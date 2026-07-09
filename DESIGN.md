@@ -25,17 +25,37 @@ Flat-by-domain — no generic `scripts/` bucket, one shared-utils home.
 
 ```
 install.py            the `uai-toolkit install` command (create AI_ROOT, wire hooks + MCP)
-paths.py              AI_ROOT discovery + config.toml
-jsonl/                read_jsonl + j-tools (catjsonl) + platform_adapters
-file_access/          SQLite anti-clobber tracker + hook handlers
-guidance/             guidance_cli/lib  (was scripts/context_files) — backs knowledge MCP
-memory/               memory_cli/lib    (was scripts/memories)
-history/              search_cli/lib    (was scripts/histories)
-todo/                 todo_mgr          (was scripts/tasks)
-mcp/                  shared/ framework + knowledge/ + workflow/ servers
-common_utils/         shared CLI libs (incl. standard_colors, folded in from utils/)
-platform_compat/      OS-divergence adapters (locking, process)
+install.py            the `uai-toolkit install` command (create AI_ROOT, seed content, wire hooks+MCP)
+paths.py              AI_ROOT discovery + config.toml (→ merging into the shared env-var resolver)
+jsonl/                read_jsonl (faithful, +archive/engram) + j-tools (catjsonl) + platform_adapters + deps
+file_access/          SQLite anti-clobber tracker (forked) + hook handlers
+guidance/             guidance_cli/lib + scan_registry (was scripts/context_files) — backs knowledge MCP
+memory/  history/     memory_cli/lib, search_cli/lib (was scripts/memories, histories)
+todo/    tasks/       todo_mgr (CRUD) ; task_coord (coordination, was scripts/tasks)
+context_files/        context_mgr + trait_mgr + generate_frontmatter (authoring/index side)
+session_mgmt/         session_store + substrate + ops + registry (~34 files)
+messages/  callbacks/ messaging_mgr + comms libs (~24) ; callback_lib
+cli/                  launcher (ai_launch/orchestrator) + agent-ops + fork/resume (~27)
+prompting/  session_bounce/  send_prompt + isBusy + lib_send_prompt ; bounce/offload/resume
+scheduling/           (macOS launchd — port deferred; schtasks backend later)
+git_guardian/  audit/  coordination/   git_guardian ; lib_audit ; feed_lib/identity
+hooks/                live dispatch.py + common/ libs + 49 per-event handlers + hook_exclusions
+mcp/                  shared/ framework + knowledge/ workflow/ comms/ sessions/ servers (all 4)
+common_utils/         shared CLI libs (lib_logging, standard_colors, repl_base, lib_clean_text, ...)
+content/              ai_context_files + ai_profiles (shipped knowledge base; install seeds AI_ROOT)
+platform_compat/      OS-divergence adapters (locking msvcrt/fcntl, process)
 ```
+(above src/uai_toolkit/; plus repo-root sibling `uai_app/` = vendored UAI Electron source, and `tools/` = manifest.py + materialize.py.)
+
+**Materialize keystone** (`tools/`): source-authoritative regeneration. `manifest.py`
+declares MODULES (per-file) + MODULE_DIRS (dir-glob w/ exclude/include_only/overrides)
++ CONTENT + APP_TREES; `materialize.py` copies + rewrites imports (incl. an auto-derived
+intra-package sibling index) + scrubs, dry-run/`--apply`/`--dirs`/`--content`/`--app`.
+Provenance `kind`: clean (mechanical, invertible) / curated (`.materialized` sidecar,
+lossy) / forked / native. **Direction: minimize curation, port faithfully → most files
+clean/invertible.** Curated-file triage: path-curated (dissolve after the env-var
+migration) vs platform-curated (launchd/osascript/playwright — stay) vs semantic-shim
+(catjsonl→discovery, hooks 3→1 — stay). ~240 files; import tail closed.
 
 Naming: **repo == package each** — work repo `uai_toolkit` / package `uai_toolkit`;
 public repo `ai_toolkit` / package `ai_toolkit` (conventional; see decision 6).
