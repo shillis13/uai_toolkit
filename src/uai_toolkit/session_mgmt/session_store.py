@@ -61,7 +61,7 @@ _UTILS_DIR = AI_ROOT / "ai_general" / "scripts" / "utils"
 if str(_UTILS_DIR) not in sys.path:
     sys.path.insert(0, str(_UTILS_DIR))
 
-from standard_colors import c, format_help, bold, dim, heading
+from uai_toolkit.common_utils.standard_colors import c, format_help, bold, dim, heading
 
 # Structured logging — best-effort; must never break the store if unavailable.
 _SCRIPTS_DIR = _SCRIPT_DIR.parent

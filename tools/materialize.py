@@ -46,10 +46,38 @@ def _resolve_source(spec: str) -> Path:
     return _resolve_root(root_key) / rel
 
 
+_MODULE_INDEX: dict = {}  # module stem -> its uai_toolkit package (built in main)
+
+
+def build_module_index() -> dict:
+    """Map every vendored module stem -> its package (e.g. session_store ->
+    uai_toolkit.session_mgmt). Lets us auto-rewrite intra-package sibling imports
+    (bare `import gemini_memory_lock`, `from resume_marker import ...`) that aren't
+    worth hand-listing in IMPORT_REWRITES. First definition wins on collision.
+    """
+    idx: dict = {}
+    for e in list(MODULES) + expand_module_dirs():
+        dest = e["dest"]
+        if not dest.endswith(".py"):
+            continue
+        p = Path(dest)
+        if p.stem == "__init__" or not p.parent.parts:
+            continue
+        pkg = "uai_toolkit." + ".".join(p.parent.parts)
+        idx.setdefault(p.stem, pkg)
+    return idx
+
+
 def apply_rewrites(text: str, mcp_pkg: str | None) -> str:
     for pattern, repl in IMPORT_REWRITES:
         # MULTILINE so `^`-anchored `import X` rules match per-line, not just file start.
         text = re.sub(pattern, repl, text, flags=re.MULTILINE)
+    # Auto-derived intra-package sibling rewrites (residual not in IMPORT_REWRITES).
+    # Word-boundary + line-anchored so it never touches already-`uai_toolkit.`-prefixed
+    # lines or stdlib names embedded in longer identifiers.
+    for stem, pkg in _MODULE_INDEX.items():
+        text = re.sub(rf"^(\s*)from {stem} import ", rf"\1from {pkg}.{stem} import ", text, flags=re.MULTILINE)
+        text = re.sub(rf"^(\s*)import {stem}(\s|$|\s+as\s)", rf"\1from {pkg} import {stem}\2", text, flags=re.MULTILINE)
     # mcp packages: `from tools import X` -> `from uai_toolkit.mcp.<pkg>.tools import X`
     if mcp_pkg:
         text = re.sub(r"\bfrom tools\b", f"from uai_toolkit.mcp.{mcp_pkg}.tools", text)
@@ -248,7 +276,8 @@ def expand_module_dirs():
                 continue
             if include_only and parts[0] not in include_only:
                 continue
-            if any(p in ("__pycache__", "archive", "_archive", "_backups", "_shelved") for p in parts):
+            if any(p in ("__pycache__", "archive", "_shelved", "tests", "test_files")
+                   or p.startswith(("_backup", "_archive")) for p in parts):
                 continue
             kind = overrides.get(relstr, overrides.get(rel.name, default_kind))
             entry = {"dest": f"{spec['dest']}/{relstr}", "source": f"{spec['source'].split(':')[0]}:{src.relative_to(_resolve_root(spec['source'].split(':')[0]))}", "kind": kind}
@@ -267,6 +296,9 @@ def main(argv=None) -> int:
     ap.add_argument("--app", action="store_true", help="also materialize app source trees (uai_app)")
     ap.add_argument("--dirs", action="store_true", help="also materialize MODULE_DIRS dir-globs (session_mgmt, messages, ...)")
     args = ap.parse_args(argv)
+
+    global _MODULE_INDEX
+    _MODULE_INDEX = build_module_index()  # for auto-derived sibling import rewrites
 
     all_modules = list(MODULES)
     if args.dirs:

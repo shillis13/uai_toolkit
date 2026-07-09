@@ -7,7 +7,7 @@ influencing their context, they acquire this lock. The file is hidden when
 the first process acquires, restored when the last releases.
 
 Usage:
-    from gemini_memory_lock import GeminiMemoryLock
+    from uai_toolkit.cli.gemini_memory_lock import GeminiMemoryLock
     
     with GeminiMemoryLock():
         # GEMINI.md is hidden during this block

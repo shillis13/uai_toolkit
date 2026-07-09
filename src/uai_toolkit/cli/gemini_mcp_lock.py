@@ -7,7 +7,7 @@ and avoid initialization delays), they acquire this lock. The mcpServers
 config is cleared when the first process acquires, restored when the last releases.
 
 Usage:
-    from gemini_mcp_lock import GeminiMCPLock
+    from uai_toolkit.cli.gemini_mcp_lock import GeminiMCPLock
     
     with GeminiMCPLock():
         # MCP servers are disabled during this block

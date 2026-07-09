@@ -356,7 +356,7 @@ def main(platform: str, argv: list[str]) -> int:
                     _sb_dir = str(AI_ROOT / 'ai_general' / 'scripts' / 'session_bounce')
                     if _sb_dir not in sys.path:
                         sys.path.insert(0, _sb_dir)
-                    import resume_marker as _rm
+                    from uai_toolkit.session_bounce import resume_marker as _rm
                     _muid = _rm.write_passive_resume_marker(
                         _tp, cli_uuid=cli_uuid, tracking_id=tracking_id,
                         platform=platform, cwd=workdir)

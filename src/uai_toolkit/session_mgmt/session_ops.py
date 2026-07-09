@@ -802,7 +802,7 @@ def _audit_emit_session_write(session_name, text, delivery, press_enter, success
         _src = str(Path.home() / "bin" / "ai")
         if _src not in _sys.path:
             _sys.path.insert(0, _src)
-        from audit import lib_audit
+        from uai_toolkit.audit import lib_audit
         lib_audit.emit(
             category="comms",
             action="session_write",
@@ -1082,7 +1082,7 @@ def repl() -> int:
       q / quit / exit                Exit REPL
     """
     from uai_toolkit.common_utils.lib_readline import setup_readline, make_session_completer
-    from standard_colors import c, bold, dim, heading, format_help
+    from uai_toolkit.common_utils.standard_colors import c, bold, dim, heading, format_help
 
     setup_readline(history_file=HISTORY_FILE, history_length=200,
                    completer=make_session_completer())

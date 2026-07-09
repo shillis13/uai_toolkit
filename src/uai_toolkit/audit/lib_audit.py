@@ -1,7 +1,7 @@
 """Audit logging for AI communications and operations.
 
 Usage:
-    from audit import lib_audit as audit
+    from uai_toolkit.audit import lib_audit as audit
     audit.emit(category="comms", action="session_write",
                target={...}, details={...})
 """
@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from audit.lib_audit_store import AuditStore
+from uai_toolkit.audit.lib_audit_store import AuditStore
 
 # Resolved lazily from AI_ROOT env var or default
 _AI_ROOT: Path | None = None

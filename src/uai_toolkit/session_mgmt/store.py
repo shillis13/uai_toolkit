@@ -37,8 +37,8 @@ _REGISTRY_BY_NS = None       # type: Optional[Dict[str, List[str]]]
 # Path to the main ai_root's reserved key registry (never the devTree copy)
 _AI_ROOT_MAIN = Path.home() / "AI" / "ai_root"
 _REGISTRY_PATH = (
-    _AI_ROOT_MAIN / "ai_general" / "ai_traits" / "knowledge"
-    / "50_schemas" / "schema_session_state_keys.latest.yml"
+    _AI_ROOT_MAIN / "ai_general" / "ai_context_files" / "knowledge"
+    / "schemas" / "schema_session_state_keys.yml"
 )
 
 

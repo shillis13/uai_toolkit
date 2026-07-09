@@ -113,7 +113,7 @@ IMPORT_REWRITES = [
     (r"^(\s*)import (lib_hook_base|lib_stop_hooks|lib_context_load|lib_hook_scripts|lib_offload_metrics|dump_stdin)\b",
      r"\1from uai_toolkit.hooks.common import \2"),
     # out-of-scope-but-required deps pulled in as siblings
-    (r"\bfrom audit\.lib_audit\b", "from uai_toolkit.audit.lib_audit"),
+    (r"\bfrom audit\.", "from uai_toolkit.audit."),
     (r"\bfrom audit import lib_audit\b", "from uai_toolkit.audit import lib_audit"),
     (r"\bfrom coordination\.(feed_lib|feed_identity)\b", r"from uai_toolkit.coordination.\1"),
 ]
@@ -205,6 +205,7 @@ MODULES = [
     {"dest": "common_utils/colors.py",          "source": "ai:utils/colors.py",              "kind": "clean"},
     # required-but-out-of-scope deps (session_ops + hooks import these) — pulled as siblings
     {"dest": "audit/lib_audit.py",              "source": "ai:audit/lib_audit.py",           "kind": "clean"},
+    {"dest": "audit/lib_audit_store.py",        "source": "ai:audit/lib_audit_store.py",     "kind": "clean"},
     {"dest": "coordination/feed_lib.py",        "source": "ai:coordination/feed_lib.py",     "kind": "clean"},
     {"dest": "coordination/feed_identity.py",   "source": "ai:coordination/feed_identity.py","kind": "clean"},
     # mcp shared framework piece needed by comms+sessions servers

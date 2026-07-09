@@ -1563,10 +1563,26 @@ class ContextIndex:
 
         rel_file = src["path"]
         abs_file = self.ai_root / rel_file
-        # The ref string to drop. dst may be missing from items (dangling), so
-        # fall back to deriving it from the dst id when no item row exists.
+        # The ref string to drop.
         dst = items.get(dst_id)
-        ref = self._ref_for_dst(dst) if dst is not None else self._ref_for_dst_id(dst_id)
+        if dst is not None:
+            ref = self._ref_for_dst(dst)
+        else:
+            # Dangling dst: its id may NOT round-trip to the on-disk ref path —
+            # e.g. a ref into a `_`-skipped dir (`_drafts/`) whose segment the id
+            # normalization drops, so a reconstructed ref would miss the real
+            # YAML line. Find the ACTUAL declared ref whose resolved id == dst_id.
+            ref = self._ref_for_dst_id(dst_id)  # fallback if not found on disk
+            try:
+                _data = yaml.safe_load(abs_file.read_text(encoding="utf-8")) if yaml else None
+            except Exception:
+                _data = None
+            if isinstance(_data, dict):
+                for _ref_str in _iter_ref_strings(_data):
+                    _resolved = self._resolve_ref(_ref_str)
+                    if _resolved and "{}:{}".format(*_resolved) == dst_id:
+                        ref = _ref_str
+                        break
 
         if dry_run:
             return {

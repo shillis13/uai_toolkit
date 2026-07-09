@@ -286,7 +286,7 @@ def _recipient_is_busy(target: str, terminal: str) -> bool:
     try:
         if str(_PROMPTING_DIR) not in sys.path:
             sys.path.insert(0, str(_PROMPTING_DIR))
-        from lib_send_prompt import is_busy_cli
+        from uai_toolkit.prompting.lib_send_prompt import is_busy_cli
         return bool(is_busy_cli(target, terminal, double_check=True))
     except Exception:
         return True
