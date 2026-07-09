@@ -17,7 +17,8 @@ dependencies = [
 
 [project.optional-dependencies]
 # Heavier features (archive/engram/REPL) and Windows shims, opt-in.
-full = ["psutil>=5.9"]
+# httpx/websockets: local-LLM quality gate + session tools; tqdm: progress bars.
+full = ["psutil>=5.9", "httpx>=0.27", "websockets>=12", "tqdm>=4"]
 dev = ["pytest>=7"]
 # MCP servers (knowledge, ...) — the skill surface. Opt-in: pip install uai-toolkit[mcp]
 mcp = ["mcp>=1.0", "jsonschema>=4"]
@@ -46,7 +47,7 @@ where = ["src"]
 # The knowledge base (ai_context_files) + composition layer (ai_profiles) ship
 # as package data; `uai-toolkit install` copies them into AI_ROOT and builds the
 # guidance registry from them on a fresh box.
-"uai_toolkit" = ["py.typed", "content/**/*"]
+"uai_toolkit" = ["py.typed", "content/**/*", "ai_env.sh"]
 # Registry schema ships with the package so a fresh AI_ROOT (no
 # scripts/context_files/schema.sql) can still build its guidance registry.
 "uai_toolkit.guidance" = ["schema.sql"]

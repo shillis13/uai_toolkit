@@ -129,6 +129,12 @@ SCRUB_PATTERNS = [
 # dest is relative to src/uai_toolkit/. source is "<root_key>:<relpath>".
 # rename is implicit (source basename may differ from dest basename).
 MODULES = [
+    # ---- shared env-var path resolver (source-authoritative in ai_general;
+    #      Noctis + Portage merged model: env>config.toml>default, platform-aware
+    #      discovery, ai_root()/config()/get() accessors + AI_* constants) ----
+    {"dest": "paths.py",  "source": "ai:utils/paths.py",  "kind": "clean"},
+    {"dest": "ai_env.sh", "source": "ai:utils/ai_env.sh", "kind": "clean"},
+
     # ---- common_utils (all clean; lib_logging is a clean SUPERSET re-port) ----
     {"dest": "common_utils/compile_check.py",         "source": "pylib:common_utils/compile_check.py",         "kind": "clean"},
     {"dest": "common_utils/lib_argparse_registry.py", "source": "pylib:common_utils/lib_argparse_registry.py", "kind": "clean"},
