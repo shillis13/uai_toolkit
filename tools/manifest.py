@@ -64,6 +64,9 @@ IMPORT_REWRITES = [
     (r"\bfrom lib_outputColors\b", "from uai_toolkit.common_utils.lib_outputColors"),
     (r"\bfrom lib_dryrun\b", "from uai_toolkit.common_utils.lib_dryrun"),
     (r"\bfrom read_jsonl\b", "from uai_toolkit.jsonl.read_jsonl"),
+    (r"^(\s*)import read_jsonl\b", r"\1from uai_toolkit.jsonl import read_jsonl"),
+    (r"\bfrom (lib_jsonl_archive|lib_engram)\b", r"from uai_toolkit.jsonl.\1"),
+    (r"^(\s*)import (lib_jsonl_archive|lib_engram)\b", r"\1from uai_toolkit.jsonl import \2"),
     (r"\bfrom lib_standardized_session\b", "from uai_toolkit.jsonl.standardized_session"),
     (r"\bfrom platform_adapters\b", "from uai_toolkit.jsonl.platform_adapters"),
     (r"\bimport guidance_lib\b", "from uai_toolkit.guidance import guidance_lib"),
@@ -111,6 +114,7 @@ IMPORT_REWRITES = [
      r"\1from uai_toolkit.hooks.common import \2"),
     # out-of-scope-but-required deps pulled in as siblings
     (r"\bfrom audit\.lib_audit\b", "from uai_toolkit.audit.lib_audit"),
+    (r"\bfrom audit import lib_audit\b", "from uai_toolkit.audit import lib_audit"),
     (r"\bfrom coordination\.(feed_lib|feed_identity)\b", r"from uai_toolkit.coordination.\1"),
 ]
 
@@ -145,13 +149,26 @@ MODULES = [
     {"dest": "jsonl/platform_adapters/claude.py",     "source": "ai:jsonl/platform_adapters/claude.py",        "kind": "clean"},
     {"dest": "jsonl/platform_adapters/codex.py",      "source": "ai:jsonl/platform_adapters/codex.py",         "kind": "clean"},
     {"dest": "jsonl/platform_adapters/gemini.py",     "source": "ai:jsonl/platform_adapters/gemini.py",        "kind": "clean"},
-    {"dest": "jsonl/read_jsonl.py",                   "source": "ai:jsonl/read_jsonl.py",                      "kind": "curated"},
+    # read_jsonl ported FAITHFULLY (2026-07-07): was curated/trimmed (archive+engram
+    # amputated -858 lines); now clean+complete with its deps ported alongside, so
+    # it round-trips. (PianoMan: minimize curation, port faithfully.)
+    {"dest": "jsonl/read_jsonl.py",                   "source": "ai:jsonl/read_jsonl.py",                      "kind": "clean"},
+    {"dest": "jsonl/lib_jsonl_archive.py",            "source": "ai:jsonl/lib_jsonl_archive.py",               "kind": "clean"},
+    {"dest": "jsonl/lib_engram.py",                   "source": "ai:jsonl/lib_engram.py",                      "kind": "clean"},
+    {"dest": "jsonl/scrub_files.py",                  "source": "ai:jsonl/scrub_files.py",                     "kind": "clean"},
+    {"dest": "jsonl/deferred_self_compact.py",        "source": "ai:jsonl/deferred_self_compact.py",           "kind": "clean"},
+    {"dest": "jsonl/resume_note.py",                  "source": "ai:jsonl/resume_note.py",                     "kind": "clean"},
+    {"dest": "jsonl/summarizer.py",                   "source": "ai:jsonl/summarizer.py",                      "kind": "clean"},
     {"dest": "jsonl/catjsonl.py",                     "source": "ai:jsonl/catjsonl.py",                        "kind": "curated"},
     # jsonl/discovery.py = native shim (no source) — omitted.
 
     # ---- guidance / memory / history ----
     {"dest": "guidance/guidance_cli.py",              "source": "ai:context_files/guidance_cli.py",            "kind": "clean"},
-    {"dest": "guidance/guidance_lib.py",              "source": "ai:context_files/guidance_lib.py",            "kind": "curated"},
+    # guidance_lib: was curated but carries NO toolkit-unique edits — the in-place
+    # was stale 06-24 source. Flipped to clean (faithful current source, consistent
+    # with its clean siblings). todo_mgr stays curated (has a TODO_ROOT path edit
+    # that Noctis's env-var migration will dissolve, then it flips too).
+    {"dest": "guidance/guidance_lib.py",              "source": "ai:context_files/guidance_lib.py",            "kind": "clean"},
     # scan_registry.py = ported with semantic rewiring (packaged schema, mcps/git
     # guards); curated so a source change surfaces as a sidecar, never clobbers.
     {"dest": "guidance/scan_registry.py",             "source": "ai:context_files/scan_traits_registry.py",    "kind": "curated"},
@@ -231,4 +248,11 @@ MODULE_DIRS = [
     {"dest": "hooks/handlers",     "source": "aigen:data/hooks",    "kind": "clean",
      "include_only": ["Notification", "PostCompact", "PostToolUse", "PreCompact", "PreToolUse",
                       "SessionStart", "Stop", "UserPromptSubmit"]},
+    # transitively-required dirs surfaced by the import-tail scan (port faithfully)
+    {"dest": "session_bounce", "source": "ai:session_bounce", "kind": "clean"},
+    {"dest": "prompting",      "source": "ai:prompting",      "kind": "clean",
+     # scheduling trio set aside (crontab redesign); macOS desktop/webui senders -> curated (Tier-C)
+     "exclude": ["set_scheduled_prompt.py", "send_scheduled_prompt.py", "scheduled_prompts_daemon.py"],
+     "overrides": {"lib_send_prompt_desktop.py": "curated", "lib_send_prompt_webui.py": "curated",
+                   "check_desktop_busy.py": "curated", "poll_desktop_busy.py": "curated"}},
 ]

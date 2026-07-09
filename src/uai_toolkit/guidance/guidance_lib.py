@@ -4,15 +4,39 @@ Guidance library — business logic for the Guidance MCP server.
 Provides trait/role/skill/profile resolution, assembly, search, and reminders.
 All functions are synchronous and return plain strings or dicts.
 The MCP server.py is a thin wrapper that imports from here.
+
+Backing index (todo_0319 migration)
+------------------------------------
+The delivery path now reads the authoritative typed graph index
+``ai_general/data/context.db`` via ``context_mgr.ContextIndex`` — NOT the legacy
+``context_files_registry.db``. ``get_db()`` returns a ``ContextIndex`` (the
+``db``/``idx`` argument throughout is that instance). Files on disk are the
+source of truth; context.db is a rebuildable index over them.
+
+Edge rule (enforced): a **composition** (role/profile/skill/global) cascades to
+what it composes (profile → role → file) — these are the outbound edges in
+context.db. A **context file**'s references to other files are *see-also only*
+and are NEVER cascade-loaded. context.db only builds edges for composition
+kinds, so a leaf item has no outbound edges: ``ContextIndex.children()`` of a
+leaf is empty, which enforces the rule structurally.
 """
 
 import os
 import re
-import sqlite3
+import sys
 import yaml
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
+
+# Make src/ importable so "uai_toolkit" resolves when this module is
+# imported directly from the repo checkout.
+_SRC_DIR = Path(__file__).resolve().parents[2]
+if str(_SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(_SRC_DIR))
+
+from uai_toolkit.context_files import context_mgr  # noqa: E402
+from uai_toolkit.context_files.context_mgr import ContextIndex  # noqa: E402
 
 
 # === Path configuration ===
@@ -22,25 +46,40 @@ AI_GENERAL = AI_ROOT / "ai_general"
 TRAITS_DIR = AI_GENERAL / "ai_context_files"  # was the ai_traits symlink (now removed)
 PROFILES_DIR = AI_GENERAL / "ai_profiles"
 GLOBALS_DIR = AI_GENERAL / "ai_context_files" / "globals"
-DB_PATH = AI_GENERAL / "data" / "context_files" / "context_files_registry.db"
+
+# The authoritative index. DB_PATH kept as an alias for any external referrer;
+# it now points at context.db (NOT the legacy registry).
+CONTEXT_DB_PATH = AI_GENERAL / "data" / "context.db"
+DB_PATH = CONTEXT_DB_PATH
+
+# Kinds that compose others vs. leaf content kinds (mirrors context_mgr).
+COMPOSITION_KINDS = frozenset({"role", "profile", "skill", "global"})
+ALL_KINDS = frozenset({"brief", "memory", "knowledge", "instruction",
+                       "role", "profile", "skill", "global"})
 
 
 # === Database access ===
 
-def get_db() -> Optional[sqlite3.Connection]:
-    """Get a fresh SQLite connection. Returns None if DB doesn't exist."""
-    if not DB_PATH.exists():
+def get_db() -> Optional[ContextIndex]:
+    """Return a ``ContextIndex`` over context.db, or None if the DB is absent.
+
+    Signature preserved for guidance_cli/server compatibility; the returned
+    object is now a ContextIndex (not a raw sqlite3.Connection). ContextIndex
+    opens/closes a connection per query, so callers do NOT close it.
+    """
+    if not CONTEXT_DB_PATH.exists():
         return None
-    db = sqlite3.connect(str(DB_PATH))
-    db.row_factory = sqlite3.Row
-    return db
+    try:
+        return ContextIndex()
+    except Exception:
+        return None
 
 
 def db_missing_msg() -> str:
     return (
-        "Registry database not found. Run:\n"
-        "  python3 scripts/context_files/scan_traits_registry.py --full\n"
-        "from ai_general/ to build it."
+        "Context index not found. Run:\n"
+        "  python3 scripts/context_files/context_mgr.py reindex\n"
+        "from ai_general/ to build data/context.db."
     )
 
 
@@ -58,8 +97,12 @@ def read_file_content(path: Path) -> str:
 
 
 def read_trait(rel_path: str) -> str:
-    """Read a trait file by path relative to ai_general/."""
+    """Read a context file by path relative to ai_general/ (or a bare stem)."""
     text = str(rel_path or "").strip()
+    # context.db paths are AI_ROOT-relative (start with 'ai_general/'); accept
+    # those too by stripping the leading segment.
+    if text.startswith("ai_general/"):
+        text = text[len("ai_general/"):]
     if text.startswith("ai_traits/") or text.startswith("ai_context_files/"):
         return read_file_content(AI_GENERAL / text)
 
@@ -109,6 +152,9 @@ def _trait_base_name(filename: str) -> str:
 
 def normalize_trait_identifier(identifier: str) -> str:
     text = str(identifier or "").strip().replace("\\", "/")
+    for _pfx in ("ai_general/", ):
+        if text.startswith(_pfx):
+            text = text[len(_pfx):]
     for _pfx in ("ai_context_files/", "ai_traits/"):
         if text.startswith(_pfx):
             text = text[len(_pfx):]
@@ -126,88 +172,182 @@ def normalize_trait_identifier(identifier: str) -> str:
     return f"{category}/{_trait_base_name(parts[-1])}"
 
 
-# === Resolution: id -> path ===
+# === Resolution: id -> item (context.db) ===
 
-def resolve_item(db: sqlite3.Connection, identifier: str) -> Optional[dict]:
-    """Resolve an identifier to an item using the resolution order:
-    1. Exact id
-    2. Exact alias
-    3. Exact path match (in content_files)
-    4. Name match (case-insensitive)
-    5. FTS-ranked match
-    Returns dict with id, name, category, preferred path, or None.
+def _basename_noext(s: str) -> str:
+    base = (s or "").rstrip("/").split("/")[-1]
+    return re.sub(r"\.(md|ya?ml|json)$", "", re.sub(r"\.condensed$", "", base))
+
+
+def _strip_ai_general(path: Optional[str]) -> Optional[str]:
+    if path and path.startswith("ai_general/"):
+        return path[len("ai_general/"):]
+    return path
+
+
+def _ref_to_id(ref: str) -> Optional[str]:
+    """Map a reference-style path (ai_context_files/..., ai_profiles/...) to a
+    context.db item id ``kind:name``. Returns None if it doesn't match a known
+    prefix."""
+    r = re.sub(r"\.(md|ya?ml|json)$", "", (ref or "").strip().replace("\\", "/"))
+    if r.startswith("ai_general/"):
+        r = r[len("ai_general/"):]
+    prefixes = (
+        ("knowledge", "ai_context_files/knowledge/"),
+        ("instruction", "ai_context_files/instructions/"),
+        ("instruction", "ai_context_files/platforms/"),
+        ("global", "ai_profiles/globals/"),
+        ("skill", "ai_profiles/skills/"),
+        ("role", "ai_profiles/roles/"),
+    )
+    for kind, pfx in prefixes:
+        if r.startswith(pfx):
+            name = r[len(pfx):]
+            if kind == "skill":
+                name = name.replace("-", "_")
+            return f"{kind}:{name}"
+    if r.startswith("ai_context_files/"):
+        return f"instruction:{r.split('/', 2)[-1]}"
+    if r.startswith("ai_profiles/"):
+        return f"profile:{r[len('ai_profiles/'):]}"
+    return None
+
+
+def _item_to_legacy(row: dict) -> dict:
+    """Convert a context.db item/row into the legacy-shaped dict the delivery
+    code + guidance_cli consume.
+
+    Keys:
+      _ctx_id        : the context.db qualified id (kind:name) — INTERNAL, used
+                       for graph ops (edges/dedup). Never surfaced to users.
+      id             : bare id — compositions keep their flat name; leaves use
+                       the basename (parity with the legacy registry ids).
+      disk_name      : kind-relative, extension-less slug for on-disk lookups.
+      composition_type: role/profile/skill/global, else None (leaf).
+      name/category/status/version/description/preferred_path: legacy fields.
     """
-    # 1. Exact id
-    row = db.execute("SELECT * FROM content_items WHERE id = ?", (identifier,)).fetchone()
-    if row:
-        pref = db.execute(
-            "SELECT path FROM content_files WHERE item_id = ? ORDER BY is_preferred DESC LIMIT 1",
-            (row["id"],)
-        ).fetchone()
-        return {**dict(row), "preferred_path": pref["path"] if pref else None}
+    kind = row.get("kind")
+    slug = row.get("name") or ""
+    comp = kind if kind in COMPOSITION_KINDS else None
+    category = slug.split("/", 1)[0] if "/" in slug else (kind or "")
+    prov = row.get("provenance")
+    version = ""
+    if isinstance(prov, dict):
+        version = prov.get("version", "") or ""
+    bare = slug if comp else _basename_noext(slug)
+    return {
+        "_ctx_id": row.get("id"),
+        "id": bare,
+        "kind": kind,
+        "disk_name": slug,
+        "composition_type": comp,
+        "name": row.get("title") or bare,
+        "category": category,
+        "status": row.get("status", "") or "",
+        "version": version,
+        "description": row.get("summary", "") or "",
+        "preferred_path": _strip_ai_general(row.get("path")),
+    }
 
-    # 2. Exact alias
-    alias_row = db.execute("SELECT item_id FROM item_aliases WHERE alias = ?", (identifier,)).fetchone()
-    if alias_row:
-        row = db.execute("SELECT * FROM content_items WHERE id = ?", (alias_row["item_id"],)).fetchone()
+
+def _match_by_name(idx: ContextIndex, ident: str) -> Optional[dict]:
+    """Best-effort name match over active items: exact slug, then slug
+    basename, then title. Returns a full get_item row or None."""
+    low = ident.lower()
+    stem = _basename_noext(ident).lower()
+    rows = idx.list_items(status="active")
+    for r in rows:  # exact full-slug name
+        if (r.get("name") or "").lower() == low:
+            return idx.get_item(r["id"])
+    for r in rows:  # slug basename
+        if _basename_noext(r.get("name") or "").lower() == stem:
+            return idx.get_item(r["id"])
+    for r in rows:  # display title
+        if (r.get("title") or "").lower() == low:
+            return idx.get_item(r["id"])
+    return None
+
+
+def resolve_item(idx: Optional[ContextIndex], identifier: str) -> Optional[dict]:
+    """Resolve an identifier to a context.db item (legacy-shaped dict) or None.
+
+    Resolution order (adapted from the legacy registry order):
+      1. qualified id ``kind:name``
+      2. reference-style path (ai_context_files/…, ai_profiles/…)
+      3. bare name against composition then leaf kinds (exact id)
+      4. name / basename / title match across active items
+      5. FTS-ranked match
+    """
+    if not idx:
+        return None
+    ident = str(identifier or "").strip()
+    if not ident:
+        return None
+
+    # 1. qualified id
+    if ":" in ident and ident.split(":", 1)[0] in ALL_KINDS:
+        row = idx.get_item(ident)
         if row:
-            pref = db.execute(
-                "SELECT path FROM content_files WHERE item_id = ? ORDER BY is_preferred DESC LIMIT 1",
-                (row["id"],)
-            ).fetchone()
-            return {**dict(row), "preferred_path": pref["path"] if pref else None}
+            return _item_to_legacy(row)
 
-    # 3. Exact path match
-    file_row = db.execute("SELECT item_id FROM content_files WHERE path = ?", (identifier,)).fetchone()
-    if file_row:
-        row = db.execute("SELECT * FROM content_items WHERE id = ?", (file_row["item_id"],)).fetchone()
+    # 2. reference-style path
+    rid = _ref_to_id(ident)
+    if rid:
+        row = idx.get_item(rid)
         if row:
-            return {**dict(row), "preferred_path": identifier}
+            return _item_to_legacy(row)
 
-    # 4. Name match (case-insensitive)
-    row = db.execute("SELECT * FROM content_items WHERE LOWER(name) = LOWER(?)", (identifier,)).fetchone()
-    if row:
-        pref = db.execute(
-            "SELECT path FROM content_files WHERE item_id = ? ORDER BY is_preferred DESC LIMIT 1",
-            (row["id"],)
-        ).fetchone()
-        return {**dict(row), "preferred_path": pref["path"] if pref else None}
-
-    # 5. FTS match
-    try:
-        fts_row = db.execute(
-            "SELECT item_id FROM content_fts WHERE content_fts MATCH ? LIMIT 1",
-            (identifier,)
-        ).fetchone()
-        if fts_row:
-            row = db.execute("SELECT * FROM content_items WHERE id = ?", (fts_row["item_id"],)).fetchone()
+    # 3. bare name -> try each kind (compositions first)
+    stem = _basename_noext(ident)
+    for kind in ("role", "profile", "skill", "global",
+                 "instruction", "knowledge", "brief", "memory"):
+        row = idx.get_item(f"{kind}:{stem}")
+        if row:
+            return _item_to_legacy(row)
+        if kind == "skill" and "-" in stem:
+            row = idx.get_item(f"skill:{stem.replace('-', '_')}")
             if row:
-                pref = db.execute(
-                    "SELECT path FROM content_files WHERE item_id = ? ORDER BY is_preferred DESC LIMIT 1",
-                    (row["id"],)
-                ).fetchone()
-                return {**dict(row), "preferred_path": pref["path"] if pref else None}
+                return _item_to_legacy(row)
+
+    # 4. name / basename / title match
+    hit = _match_by_name(idx, ident)
+    if hit:
+        return _item_to_legacy(hit)
+
+    # 5. FTS
+    try:
+        res = idx.search(ident, limit=1)
+        if res:
+            row = idx.get_item(res[0]["id"])
+            if row:
+                return _item_to_legacy(row)
     except Exception:
-        pass  # FTS query syntax errors are non-fatal
+        pass
 
     return None
 
 
-def render_trait_content(identifier: str, db: Optional[sqlite3.Connection], include_header: bool = True) -> str:
-    """Resolve and render a trait/knowledge item using the same logic as get_trait."""
+def _render_leaf(item: dict, include_header: bool = True) -> str:
+    """Render a leaf context file's content from its resolved item dict."""
+    content = read_trait(item.get("preferred_path") or item.get("_ctx_id") or item["id"])
+    if include_header:
+        header = (
+            f"# {item['name']}\n"
+            f"**Category:** {item.get('category', '')} | "
+            f"**Status:** {item.get('status', '')} | "
+            f"**Version:** {item.get('version', '')}\n\n"
+        )
+        return header + content
+    return content
+
+
+def render_trait_content(identifier: str, db: Optional[ContextIndex],
+                         include_header: bool = True) -> str:
+    """Resolve and render a context/knowledge item (same logic as get_trait)."""
     if db:
         item = resolve_item(db, identifier)
         if item and item.get("preferred_path"):
-            content = read_trait(item["preferred_path"])
-            if include_header:
-                header = (
-                    f"# {item['name']}\n"
-                    f"**Category:** {item.get('category', '')} | "
-                    f"**Status:** {item.get('status', '')} | "
-                    f"**Version:** {item.get('version', '')}\n\n"
-                )
-                return header + content
-            return content
+            return _render_leaf(item, include_header=include_header)
 
     normalized = normalize_trait_identifier(identifier)
     if normalized:
@@ -219,8 +359,8 @@ def render_trait_content(identifier: str, db: Optional[sqlite3.Connection], incl
 
 # === Role/skill/profile assembly ===
 
-def assemble_role(role_name: str, db: Optional[sqlite3.Connection] = None) -> str:
-    """Assemble a role definition with its referenced trait content."""
+def assemble_role(role_name: str, db: Optional[ContextIndex] = None) -> str:
+    """Assemble a role definition with its referenced context-file content."""
     role_path = PROFILES_DIR / "roles" / f"{role_name}.yml"
     if not role_path.exists():
         return f"[Role not found: {role_name}]"
@@ -261,8 +401,7 @@ def assemble_role(role_name: str, db: Optional[sqlite3.Connection] = None) -> st
                 lines.append(f"- {n}")
             lines.append("")
 
-    # Referenced context files (key renamed traits -> context_files; accept both
-    # during the todo_0319 transition).
+    # Referenced context files (key renamed traits -> context_files; accept both).
     traits = role.get("context_files", role.get("traits", {}))
     if isinstance(traits, list):
         trait_paths = traits
@@ -290,6 +429,9 @@ def assemble_role(role_name: str, db: Optional[sqlite3.Connection] = None) -> st
 
 def assemble_skill(skill_name: str) -> str:
     """Load a skill definition and return formatted content."""
+    # Tolerate a qualified context.db id.
+    if skill_name.startswith("skill:"):
+        skill_name = skill_name.split(":", 1)[1]
     skill_path = PROFILES_DIR / "skills" / f"{skill_name}.yml"
     if not skill_path.exists():
         skill_path = PROFILES_DIR / "skills" / f"{skill_name.replace('-', '_')}.yml"
@@ -298,128 +440,258 @@ def assemble_skill(skill_name: str) -> str:
     return read_file_content(skill_path)
 
 
+# === Uniform context assembly (todo_0319) ===
+# One depth-controlled walk over the context.db reference graph. Composition
+# edges cascade; leaf items have no edges (see-also is not cascaded).
+
+LOAD_NONE, LOAD_DIRECT, LOAD_RECURSIVE = "none", "direct", "recursive"
+LOAD_LEVELS = (LOAD_NONE, LOAD_DIRECT, LOAD_RECURSIVE)
+
+
+def _role_definition(role_name: str) -> str:
+    """A role's OWN content (header/duties/ownership) WITHOUT inlining its context
+    files — those are reached via the reference walk."""
+    role_path = PROFILES_DIR / "roles" / f"{role_name}.yml"
+    if not role_path.exists():
+        return f"[Role not found: {role_name}]"
+    role = load_yaml_file(role_path)
+    lines = [f"# Role: {role.get('name', role_name)}", ""]
+    if role.get("description"):
+        lines += [role["description"].strip(), ""]
+    resp = role.get("responsibilities", {}) or {}
+    for key, title in (("duties", "## Duties"), ("ownership", "## Ownership"),
+                       ("does_not_own", "## Does Not Own")):
+        vals = resp.get(key, [])
+        if vals:
+            lines.append(title)
+            for v in vals:
+                if isinstance(v, dict):
+                    lines.append(f"- **{v.get('name', '')}** ({v.get('schedule', '')}): {v.get('action', '')}")
+                else:
+                    lines.append(f"- {v}")
+            lines.append("")
+    return "\n".join(lines).rstrip()
+
+
+def render_own_content(item: dict, db: Optional[ContextIndex]) -> str:
+    """Render an item's OWN content only (no reference expansion)."""
+    ct = (item.get("composition_type") or "").lower()
+    disk = item.get("disk_name") or item.get("id")
+    if ct == "role":
+        return _role_definition(disk)
+    if ct == "profile":
+        p = PROFILES_DIR / f"{disk}.yml"
+        return read_file_content(p) if p.exists() else f"[Profile not found: {disk}]"
+    if ct == "skill":
+        return assemble_skill(disk)
+    if ct == "global":
+        p = PROFILES_DIR / "globals" / f"{disk}.yml"
+        return read_file_content(p) if p.exists() else ""
+    # leaf content file
+    return _render_leaf(item, include_header=True)
+
+
+def _curated_refs(item: dict, db: ContextIndex) -> list:
+    """The item's cascade targets — its direct outbound edges in context.db.
+
+    For a composition this is what it composes (profile→roles, role→context
+    files/skills), in edge order. For a leaf content file this is EMPTY
+    (context.db builds no outbound edges for leaves), which enforces the rule
+    that file→file references are see-also only and never cascade-loaded.
+    """
+    if not db:
+        return []
+    ctx_id = item.get("_ctx_id") or item.get("id")
+    try:
+        kids = db.children(ctx_id)
+    except Exception:
+        return []
+    return [_item_to_legacy(k) for k in kids]
+
+
+def assemble_context(ref: str, db: Optional[ContextIndex],
+                     load: str = LOAD_RECURSIVE, _seen: Optional[set] = None) -> str:
+    """Resolve ``ref`` and render its content, expanding references per ``load``:
+      none      -> own content only
+      direct    -> own content + directly composed items (one hop, own content)
+      recursive -> own content + transitive composition closure (deduped, cycle-safe)
+    Uniform across roles, profiles, skills, globals, and context files. Cascades
+    follow composition edges only; leaf see-also refs are never expanded."""
+    if load not in LOAD_LEVELS:
+        load = LOAD_RECURSIVE
+    if _seen is None:
+        _seen = set()
+    item = resolve_item(db, ref) if db else None
+    if not item:
+        return f"[Not found: {ref}]"
+    iid = item["_ctx_id"]
+    if iid in _seen:
+        return ""
+    _seen.add(iid)
+    parts = [render_own_content(item, db)]
+    if load == LOAD_NONE:
+        return parts[0]
+    for tgt in _curated_refs(item, db):
+        if tgt["_ctx_id"] in _seen:
+            continue
+        if load == LOAD_RECURSIVE:
+            sub = assemble_context(tgt["_ctx_id"], db, LOAD_RECURSIVE, _seen)
+        else:  # direct: one hop, own content only
+            _seen.add(tgt["_ctx_id"])
+            sub = render_own_content(tgt, db)
+        if sub and sub.strip():
+            parts.append(sub)
+    return "\n\n".join(p for p in parts if p and p.strip())
+
+
 # === Reminders ===
 
-def resolve_reminders() -> str:
-    """Load all reminder files and resolve dynamic variables."""
-    reminders_dir = TRAITS_DIR / "reminders"
-    if not reminders_dir.exists():
+def _reminder_files_from_index(idx: ContextIndex) -> list:
+    """Return (name, body) for active reminder context files via context.db.
+
+    Reminders are instruction items under ``reminders/`` (id
+    ``instruction:reminders/<name>``). Falls back to a filesystem scan of
+    ai_context_files/instructions/reminders/ if the index yields none.
+    """
+    out = []
+    try:
+        rows = [r for r in idx.list_items(kind="instruction", status="active")
+                if (r.get("name") or "").startswith("reminders/")]
+        rows.sort(key=lambda r: r.get("name") or "")
+        for r in rows:
+            payload = idx.content(r["id"]) or {}
+            body = payload.get("content")
+            if body is not None:
+                out.append((r["id"], body))
+    except Exception:
+        out = []
+    return out
+
+
+def resolve_reminders(idx: Optional[ContextIndex] = None) -> str:
+    """Load all reminder context files (via context.db) and resolve dynamic
+    variables. Kept arg-optional so handle_remind_me can call it directly."""
+    idx = idx or get_db()
+    now = datetime.now(timezone.utc)
+
+    pairs = _reminder_files_from_index(idx) if idx else []
+
+    # Filesystem fallback: the correct on-disk location for reminder content.
+    if not pairs:
+        reminders_dir = TRAITS_DIR / "instructions" / "reminders"
+        if reminders_dir.exists():
+            for f in sorted(reminders_dir.glob("*.md")):
+                pairs.append((f.stem, f.read_text()))
+
+    if not pairs:
         return "No reminders configured."
 
     lines = []
-    now = datetime.now(timezone.utc)
-
-    for f in sorted(reminders_dir.glob("*.md")):
-        content = f.read_text()
+    for _name, content in pairs:
         if content.startswith("---"):
             parts = content.split("---", 2)
             if len(parts) >= 3:
                 content = parts[2].strip()
-
         content = content.replace("{timestamp}", now.strftime("%Y-%m-%d %H:%M:%S UTC"))
         content = content.replace("{date}", now.strftime("%Y-%m-%d"))
         content = content.replace("{time}", now.strftime("%H:%M"))
-
         lines.append(content)
         lines.append("")
 
     return "\n".join(lines) if lines else "No reminders found."
 
 
-# === Tool handler functions (called by server.py) ===
+# === Tool handler functions (called by server.py / guidance_cli.py) ===
+# NOTE: ContextIndex opens/closes a connection per query — handlers must NOT
+# attempt to close the passed idx (it is not a raw sqlite3 connection).
 
-def handle_test(db: Optional[sqlite3.Connection]) -> str:
+def _kind_counts(idx: ContextIndex) -> dict:
+    counts = {}
+    for r in idx.list_items(status=None):
+        counts[r["kind"]] = counts.get(r["kind"], 0) + 1
+    return counts
+
+
+def handle_test(db: Optional[ContextIndex]) -> str:
     """Handle the 'test' tool."""
     if db:
-        item_count = db.execute("SELECT COUNT(*) FROM content_items").fetchone()[0]
-        file_count = db.execute("SELECT COUNT(*) FROM content_files").fetchone()[0]
-        ref_count = db.execute("SELECT COUNT(*) FROM content_references").fetchone()[0]
-        mcp_count = db.execute("SELECT COUNT(*) FROM mcps").fetchone()[0]
-        meta = {r["key"]: r["value"] for r in db.execute("SELECT key, value FROM registry_meta")}
-        db.close()
+        counts = _kind_counts(db)
+        total = sum(counts.values())
+        try:
+            edge_n = len(db.graph().get("edges", []))
+        except Exception:
+            edge_n = "?"
+        by_kind = ", ".join(f"{k}:{v}" for k, v in sorted(counts.items()))
         return (
-            f"Guidance MCP server OK.\n"
-            f"Registry: {item_count} items, {file_count} files, {ref_count} refs, {mcp_count} MCPs\n"
-            f"Last scan: {meta.get('generated_at', 'unknown')}\n"
-            f"Git commit: {meta.get('git_commit', 'unknown')}\n"
+            f"Guidance MCP server OK (context.db).\n"
+            f"Index: {total} items ({by_kind}), {edge_n} edges\n"
+            f"DB: {CONTEXT_DB_PATH}\n"
             f"AI_ROOT: {AI_ROOT}"
         )
-    return f"Guidance MCP server OK (no registry DB).\nAI_ROOT: {AI_ROOT}"
+    return f"Guidance MCP server OK (no context index).\nAI_ROOT: {AI_ROOT}"
 
 
-def handle_get_role(arguments: dict, db: Optional[sqlite3.Connection]) -> str:
-    """Handle the 'get_role' tool."""
-    result = assemble_role(arguments.get("name", ""), db)
-    if db:
-        db.close()
-    return result
+def handle_get_role(arguments: dict, db: Optional[ContextIndex]) -> str:
+    """Handle the 'get_role' tool. Recursively assembles role + its context files."""
+    return assemble_context(arguments.get("name", ""), db, LOAD_RECURSIVE)
 
 
-def handle_get_skill(arguments: dict, db: Optional[sqlite3.Connection]) -> str:
+def handle_get_skill(arguments: dict, db: Optional[ContextIndex]) -> str:
     """Handle the 'get_skill' tool."""
-    result = assemble_skill(arguments.get("name", ""))
+    name = arguments.get("name", "")
     if db:
-        db.close()
-    return result
+        item = resolve_item(db, name)
+        if item and item.get("composition_type") == "skill":
+            return assemble_skill(item["disk_name"])
+    return assemble_skill(name)
 
 
-def handle_get_trait(arguments: dict, db: Optional[sqlite3.Connection]) -> str:
+def handle_get_trait(arguments: dict, db: Optional[ContextIndex]) -> str:
     """Handle the 'get_trait' tool."""
     identifier = arguments.get("identifier", arguments.get("path", ""))
     result = render_trait_content(identifier, db, include_header=True)
-    if db:
-        db.close()
     if result.startswith("[Trait not found:"):
         return f"{result}. Use get_knowledge_topics to browse."
     return result
 
 
-def handle_get_profile(arguments: dict, db: Optional[sqlite3.Connection]) -> str:
-    """Handle the 'get_profile' tool."""
-    profile_name = arguments.get("name", "")
-    profile_path = PROFILES_DIR / f"{profile_name}.yml"
-    if not profile_path.exists():
-        if db:
-            db.close()
-        return f"[Profile not found: {profile_name}]"
-    content = read_file_content(profile_path)
-    if db:
-        db.close()
-    return content
+def handle_get_profile(arguments: dict, db: Optional[ContextIndex]) -> str:
+    """Handle the 'get_profile' tool. Recursively assembles profile -> roles -> context files."""
+    return assemble_context(arguments.get("name", ""), db, LOAD_RECURSIVE)
 
 
-def handle_get_knowledge_topics(arguments: dict, db: Optional[sqlite3.Connection]) -> str:
-    """Handle the 'get_knowledge_topics' tool."""
+def handle_get_knowledge_topics(arguments: dict, db: Optional[ContextIndex]) -> str:
+    """Handle the 'get_knowledge_topics' tool — browse leaf content files."""
     if not db:
         return db_missing_msg()
-    category_filter = arguments.get("category", "")
-    status_filter = arguments.get("status", "active")
+    category_filter = (arguments.get("category", "") or "").lower()
+    status_filter = arguments.get("status", "active") or "active"
 
-    query = "SELECT id, name, category, subcategory, description, status FROM content_items WHERE 1=1"
-    params = []
+    rows = []
+    for kind in ("knowledge", "instruction"):
+        rows.extend(db.list_items(kind=kind, status=status_filter))
+
+    def cat_of(r):
+        slug = r.get("name") or ""
+        return slug.split("/", 1)[0] if "/" in slug else r.get("kind", "")
+
     if category_filter:
-        query += " AND LOWER(category) = LOWER(?)"
-        params.append(category_filter)
-    if status_filter:
-        query += " AND LOWER(status) = LOWER(?)"
-        params.append(status_filter)
-    query += " ORDER BY category, subcategory, name"
-
-    rows = db.execute(query, params).fetchall()
-    db.close()
+        rows = [r for r in rows if cat_of(r).lower() == category_filter]
+    rows.sort(key=lambda r: (cat_of(r), r.get("name") or ""))
 
     lines = [f"# Available Topics ({len(rows)} items)\n"]
     current_cat = ""
     for r in rows:
-        cat = f"{r['category']}/{r['subcategory']}" if r["subcategory"] else (r["category"] or "uncategorized")
+        cat = cat_of(r)
         if cat != current_cat:
             lines.append(f"\n## {cat}")
             current_cat = cat
-        lines.append(f"- **{r['name']}** (`{r['id']}`): {r['description'] or ''}")
+        bare = _basename_noext(r.get("name") or "")
+        lines.append(f"- **{r.get('title') or bare}** (`{bare}`): {r.get('summary') or ''}")
     return "\n".join(lines)
 
 
-def handle_get_knowledge(arguments: dict, db: Optional[sqlite3.Connection]) -> str:
+def handle_get_knowledge(arguments: dict, db: Optional[ContextIndex]) -> str:
     """Handle the 'get_knowledge' tool."""
     topic_names = arguments.get("topics", [])
     lines = []
@@ -430,81 +702,60 @@ def handle_get_knowledge(arguments: dict, db: Optional[sqlite3.Connection]) -> s
                 lines.append(f"# {item['name']}")
                 lines.append(f"Category: {item.get('category', '')} | ID: {item['id']}")
                 lines.append("")
-                lines.append(render_trait_content(item["preferred_path"], db, include_header=False))
+                lines.append(_render_leaf(item, include_header=False))
                 lines.append("\n---\n")
                 continue
 
-        # Fallback
         lines.append(f"# {requested}")
         lines.append("[Not found. Use get_knowledge_topics to browse.]")
         lines.append("")
 
-    if db:
-        db.close()
     return "\n".join(lines)
 
 
-def handle_how_to(arguments: dict, db: Optional[sqlite3.Connection]) -> str:
+def handle_how_to(arguments: dict, db: Optional[ContextIndex]) -> str:
     """Handle the 'how_to' tool."""
     query = arguments.get("query", "")
     lines = []
 
     if db:
-        # FTS search
-        try:
-            fts_rows = db.execute(
-                "SELECT item_id, name, description, category FROM content_fts WHERE content_fts MATCH ? LIMIT 10",
-                (query,)
-            ).fetchall()
-        except Exception:
-            # FTS query syntax error -- fall back to LIKE
-            words = query.lower().split()
-            like_clauses = " OR ".join(["LOWER(name) LIKE ? OR LOWER(description) LIKE ?"] * len(words))
-            like_params = []
-            for w in words:
-                like_params.extend([f"%{w}%", f"%{w}%"])
-            fts_rows = db.execute(
-                f"SELECT id as item_id, name, description, category FROM content_items WHERE {like_clauses} LIMIT 10",
-                like_params
-            ).fetchall()
-
-        # Also check skills
-        skill_rows = db.execute(
-            "SELECT id, name, description FROM content_items WHERE item_type = 'skill'"
-        ).fetchall()
+        # Relevant skill (word-overlap over skill items).
         skill_matches = []
-        for sr in skill_rows:
-            text = f"{sr['name']} {sr['description'] or ''}".lower()
+        for sr in db.list_items(kind="skill", status="active"):
+            text = f"{sr.get('title') or sr.get('name')} {sr.get('summary') or ''}".lower()
             score = sum(1 for w in query.lower().split() if w in text)
             if score > 0:
                 skill_matches.append((score, sr))
         skill_matches.sort(key=lambda x: -x[0])
-
         if skill_matches:
             best = skill_matches[0][1]
-            lines.append(f"## Relevant Skill: {best['name']}")
+            best_name = _basename_noext(best.get("name") or "")
+            lines.append(f"## Relevant Skill: {best.get('title') or best_name}")
             lines.append("")
             lines.append(assemble_skill(best["id"]))
             lines.append("")
 
-        if fts_rows:
-            lines.append(f"## Relevant Knowledge ({len(fts_rows)} matches)")
+        # Relevant knowledge/instruction via FTS.
+        try:
+            hits = [h for h in db.search(query, limit=10)
+                    if h.get("kind") in ("knowledge", "instruction")]
+        except Exception:
+            hits = []
+        if hits:
+            lines.append(f"## Relevant Knowledge ({len(hits)} matches)")
             lines.append("")
-            for r in fts_rows:
-                lines.append(f"- **{r['name']}** ({r['category']}): {r['description'] or ''}")
+            for h in hits:
+                bare = _basename_noext(h.get("name") or "")
+                cat = (h.get("name") or "").split("/", 1)[0] if "/" in (h.get("name") or "") else h.get("kind", "")
+                lines.append(f"- **{h.get('title') or bare}** ({cat}): {h.get('summary') or ''}")
             lines.append("")
-            # Auto-load top match
-            top = fts_rows[0]
-            pref = db.execute(
-                "SELECT path FROM content_files WHERE item_id = ? ORDER BY is_preferred DESC LIMIT 1",
-                (top["item_id"],)
-            ).fetchone()
-            if pref:
-                lines.append(f"### {top['name']}")
+            # Auto-load the top match's body.
+            top = hits[0]
+            payload = db.content(top["id"]) or {}
+            if payload.get("content"):
+                lines.append(f"### {top.get('title') or _basename_noext(top.get('name') or '')}")
                 lines.append("")
-                lines.append(read_trait(pref["path"]))
-
-        db.close()
+                lines.append(payload["content"])
 
     if not lines:
         lines.append(f"No matches found for: {query}")
@@ -513,204 +764,188 @@ def handle_how_to(arguments: dict, db: Optional[sqlite3.Connection]) -> str:
     return "\n".join(lines)
 
 
-def handle_remind_me(db: Optional[sqlite3.Connection]) -> str:
+def handle_remind_me(db: Optional[ContextIndex]) -> str:
     """Handle the 'remind_me' tool."""
-    if db:
-        db.close()
-    return resolve_reminders()
+    return resolve_reminders(db)
 
 
-def handle_get_references(arguments: dict, db: Optional[sqlite3.Connection]) -> str:
+def handle_get_references(arguments: dict, db: Optional[ContextIndex]) -> str:
     """Handle the 'get_references' tool."""
     if not db:
         return db_missing_msg()
-    item_id = arguments.get("id", "")
+    requested = arguments.get("id", "")
+    item = resolve_item(db, requested)
+    ctx_id = item["_ctx_id"] if item else requested
 
-    outgoing = db.execute(
-        "SELECT target_path, target_type, target_name, target_id FROM content_references WHERE source_id = ?",
-        (item_id,)
-    ).fetchall()
+    try:
+        outgoing = db.refs(ctx_id, direction="out")
+        incoming = db.refs(ctx_id, direction="in")
+    except Exception:
+        outgoing, incoming = [], []
 
-    incoming = db.execute(
-        "SELECT source_id, target_type FROM content_references WHERE target_id = ?",
-        (item_id,)
-    ).fetchall()
-
-    db.close()
-
-    lines = [f"# References for: {item_id}\n"]
+    lines = [f"# References for: {ctx_id}\n"]
     lines.append(f"## Outgoing ({len(outgoing)})")
     for r in outgoing:
-        resolved = f" -> `{r['target_id']}`" if r["target_id"] else " (unresolved)"
-        lines.append(f"- [{r['target_type']}] `{r['target_path']}`{resolved}")
+        marker = "" if r.get("resolved") else " (unresolved)"
+        lines.append(f"- [{r['edge_type']}] `{r['dst_id']}`{marker}")
 
     lines.append(f"\n## Incoming ({len(incoming)})")
     for r in incoming:
-        lines.append(f"- [{r['target_type']}] from `{r['source_id']}`")
+        lines.append(f"- [{r['edge_type']}] from `{r['src_id']}`")
 
     return "\n".join(lines)
 
 
-def handle_get_stale(arguments: dict, db: Optional[sqlite3.Connection]) -> str:
+def handle_get_stale(arguments: dict, db: Optional[ContextIndex]) -> str:
     """Handle the 'get_stale' tool."""
     if not db:
         return db_missing_msg()
-    days = arguments.get("days", 90)
-    category_filter = arguments.get("category", "")
+    days = arguments.get("days", 90) or 90
+    category_filter = (arguments.get("category", "") or "").lower()
+    cutoff = datetime.now().timestamp() - int(days) * 86400
 
-    query = "SELECT id, name, category, status, updated FROM content_items WHERE updated < date('now', ?)"
-    params = [f"-{days} days"]
-    if category_filter:
-        query += " AND LOWER(category) = LOWER(?)"
-        params.append(category_filter)
-    query += " AND status = 'active' ORDER BY updated ASC"
+    rows = db.list_items(status="active")
 
-    rows = db.execute(query, params).fetchall()
-    db.close()
+    def cat_of(r):
+        slug = r.get("name") or ""
+        return slug.split("/", 1)[0] if "/" in slug else r.get("kind", "")
 
-    lines = [f"# Stale Items (not updated in {days}+ days): {len(rows)}\n"]
+    stale = []
     for r in rows:
-        lines.append(f"- **{r['name']}** (`{r['id']}`) -- {r['category']} -- last updated: {r['updated']}")
+        upd = r.get("updated_at")
+        if not upd:
+            continue
+        try:
+            ts = datetime.fromisoformat(upd).timestamp()
+        except ValueError:
+            continue
+        if ts >= cutoff:
+            continue
+        if category_filter and cat_of(r).lower() != category_filter:
+            continue
+        stale.append(r)
+    stale.sort(key=lambda r: r.get("updated_at") or "")
+
+    lines = [f"# Stale Items (not updated in {days}+ days): {len(stale)}\n"]
+    for r in stale:
+        bare = _basename_noext(r.get("name") or "")
+        lines.append(f"- **{r.get('title') or bare}** (`{bare}`) -- {cat_of(r)} -- last updated: {r.get('updated_at')}")
 
     return "\n".join(lines)
 
 
-def handle_search(arguments: dict, db: Optional[sqlite3.Connection]) -> str:
+def handle_search(arguments: dict, db: Optional[ContextIndex]) -> str:
     """Handle the 'search' tool."""
     if not db:
         return db_missing_msg()
 
     query_text = arguments.get("query", "")
-    category_filter = arguments.get("category", "")
+    category_filter = (arguments.get("category", "") or "").lower()
     status_filter = arguments.get("status", "")
-    type_filter = arguments.get("item_type", "")
+    type_filter = (arguments.get("item_type", "") or "").lower() or None
+
+    def cat_of(r):
+        slug = r.get("name") or ""
+        return slug.split("/", 1)[0] if "/" in slug else r.get("kind", "")
 
     if query_text:
         try:
-            rows = db.execute(
-                "SELECT item_id, name, description, category FROM content_fts WHERE content_fts MATCH ? LIMIT 20",
-                (query_text,)
-            ).fetchall()
+            rows = db.search(query_text, kind=type_filter, limit=20)
         except Exception:
-            words = query_text.lower().split()
-            like_parts = []
-            params = []
-            for w in words:
-                like_parts.append("(LOWER(name) LIKE ? OR LOWER(description) LIKE ?)")
-                params.extend([f"%{w}%", f"%{w}%"])
-            rows = db.execute(
-                f"SELECT id as item_id, name, description, category FROM content_items WHERE {' AND '.join(like_parts)} LIMIT 20",
-                params
-            ).fetchall()
+            rows = []
     else:
-        sql = "SELECT id as item_id, name, description, category, status, item_type FROM content_items WHERE 1=1"
-        params = []
-        if category_filter:
-            sql += " AND LOWER(category) = LOWER(?)"
-            params.append(category_filter)
-        if status_filter:
-            sql += " AND LOWER(status) = LOWER(?)"
-            params.append(status_filter)
-        if type_filter:
-            sql += " AND LOWER(item_type) = LOWER(?)"
-            params.append(type_filter)
-        sql += " ORDER BY name LIMIT 50"
-        rows = db.execute(sql, params).fetchall()
+        rows = db.list_items(kind=type_filter, status=(status_filter or "active"), limit=50)
 
-    db.close()
+    if category_filter:
+        rows = [r for r in rows if cat_of(r).lower() == category_filter]
 
     lines = [f"# Search Results ({len(rows)} items)\n"]
     for r in rows:
-        lines.append(f"- **{r['name']}** (`{r['item_id']}`) [{r['category'] or ''}]: {r['description'] or ''}")
+        bare = _basename_noext(r.get("name") or "")
+        lines.append(f"- **{r.get('title') or bare}** (`{bare}`) [{cat_of(r)}]: {r.get('summary') or ''}")
 
     return "\n".join(lines)
 
 
-def handle_list_roles(db: Optional[sqlite3.Connection]) -> str:
+def _list_compositions(db: Optional[ContextIndex], kind: str, fs_glob: str,
+                       fs_render, heading: str) -> str:
+    if db:
+        rows = db.list_items(kind=kind, status="active")
+        lines = [f"# {heading}\n"]
+        for r in rows:
+            bare = _basename_noext(r.get("name") or "")
+            lines.append(f"- **{r.get('title') or bare}** (`{bare}`): {r.get('summary') or ''}")
+        return "\n".join(lines)
+    lines = [f"# {heading}\n"]
+    for p in sorted(fs_glob):
+        lines.append(fs_render(p))
+    return "\n".join(lines)
+
+
+def handle_list_roles(db: Optional[ContextIndex]) -> str:
     """Handle the 'list_roles' tool."""
     if db:
-        rows = db.execute(
-            "SELECT id, name, description FROM content_items WHERE composition_type = 'role' ORDER BY name"
-        ).fetchall()
-        db.close()
-        lines = ["# Available Roles\n"]
-        for r in rows:
-            lines.append(f"- **{r['name']}** (`{r['id']}`): {r['description'] or ''}")
-    else:
-        lines = ["# Available Roles\n"]
-        for rp in sorted(PROFILES_DIR.glob("roles/*.yml")):
-            role = load_yaml_file(rp)
-            lines.append(f"- **{role.get('name', rp.stem)}** (`{rp.stem}`): {role.get('description', '').strip().split(chr(10))[0][:100]}")
+        return _list_compositions(db, "role", [], None, "Available Roles")
+    lines = ["# Available Roles\n"]
+    for rp in sorted(PROFILES_DIR.glob("roles/*.yml")):
+        role = load_yaml_file(rp)
+        lines.append(f"- **{role.get('name', rp.stem)}** (`{rp.stem}`): {role.get('description', '').strip().split(chr(10))[0][:100]}")
     return "\n".join(lines)
 
 
-def handle_list_skills(db: Optional[sqlite3.Connection]) -> str:
+def handle_list_skills(db: Optional[ContextIndex]) -> str:
     """Handle the 'list_skills' tool."""
     if db:
-        rows = db.execute(
-            "SELECT id, name, description FROM content_items WHERE composition_type = 'skill' ORDER BY name"
-        ).fetchall()
-        db.close()
-        lines = ["# Available Skills\n"]
-        for r in rows:
-            lines.append(f"- **{r['name']}** (`{r['id']}`): {r['description'] or ''}")
-    else:
-        lines = ["# Available Skills\n"]
-        for sp in sorted(PROFILES_DIR.glob("skills/*.yml")):
-            skill = load_yaml_file(sp)
-            meta = skill.get("metadata", {})
-            lines.append(f"- **{meta.get('name', sp.stem)}**: {meta.get('description', '').strip().split(chr(10))[0][:100]}")
+        return _list_compositions(db, "skill", [], None, "Available Skills")
+    lines = ["# Available Skills\n"]
+    for sp in sorted(PROFILES_DIR.glob("skills/*.yml")):
+        skill = load_yaml_file(sp)
+        meta = skill.get("metadata", {})
+        lines.append(f"- **{meta.get('name', sp.stem)}**: {meta.get('description', '').strip().split(chr(10))[0][:100]}")
     return "\n".join(lines)
 
 
-def handle_list_traits(db: Optional[sqlite3.Connection], category: Optional[str] = None) -> str:
-    """Handle the 'list_traits' tool."""
+def handle_list_traits(db: Optional[ContextIndex], category: Optional[str] = None) -> str:
+    """Handle the 'list_traits' tool — leaf content files (knowledge/instruction)."""
     if db:
-        # Traits are content_items with NULL composition_type (roles/skills/profiles have explicit types)
+        rows = []
+        for kind in ("knowledge", "instruction"):
+            rows.extend(db.list_items(kind=kind, status="active"))
+
+        def cat_of(r):
+            slug = r.get("name") or ""
+            return slug.split("/", 1)[0] if "/" in slug else r.get("kind", "")
+
         if category:
-            rows = db.execute(
-                "SELECT id, name, category, description FROM content_items "
-                "WHERE composition_type IS NULL AND category LIKE ? ORDER BY category, name",
-                (f"%{category}%",)
-            ).fetchall()
-        else:
-            rows = db.execute(
-                "SELECT id, name, category, description FROM content_items "
-                "WHERE composition_type IS NULL ORDER BY category, name"
-            ).fetchall()
-        db.close()
+            cl = category.lower()
+            rows = [r for r in rows if cl in cat_of(r).lower()]
+        rows.sort(key=lambda r: (cat_of(r), r.get("name") or ""))
+
         lines = ["# Available Traits\n"]
         current_cat = None
         for r in rows:
-            cat = r['category'] or 'uncategorized'
+            cat = cat_of(r) or "uncategorized"
             if cat != current_cat:
                 current_cat = cat
                 lines.append(f"\n## {cat}")
-            desc = (r['description'] or '').strip().split('\n')[0][:120]
-            lines.append(f"- **{r['name']}** (`{r['id']}`): {desc}")
-    else:
-        lines = ["# Available Traits\n", "(No database — listing from filesystem not implemented for traits)"]
-    return "\n".join(lines)
+            bare = _basename_noext(r.get("name") or "")
+            desc = (r.get("summary") or "").strip().split("\n")[0][:120]
+            lines.append(f"- **{r.get('title') or bare}** (`{bare}`): {desc}")
+        return "\n".join(lines)
+    return "# Available Traits\n\n(No index — listing from filesystem not implemented for traits)"
 
 
-def handle_list_profiles(db: Optional[sqlite3.Connection]) -> str:
+def handle_list_profiles(db: Optional[ContextIndex]) -> str:
     """Handle the 'list_profiles' tool."""
     if db:
-        rows = db.execute(
-            "SELECT id, name, description FROM content_items WHERE composition_type = 'profile' ORDER BY name"
-        ).fetchall()
-        db.close()
-        lines = ["# Available Profiles\n"]
-        for r in rows:
-            lines.append(f"- **{r['name']}** (`{r['id']}`): {r['description'] or ''}")
-    else:
-        lines = ["# Available Profiles\n"]
-        for pp in sorted(PROFILES_DIR.glob("*.yml")):
-            profile = load_yaml_file(pp)
-            roles = profile.get("roles", [])
-            role_names = [Path(r).stem for r in roles] if roles else []
-            role_str = f" [{', '.join(role_names)}]" if role_names else ""
-            lines.append(f"- **{profile.get('name', pp.stem)}** (`{pp.stem}`){role_str}: {profile.get('description', '').strip().split(chr(10))[0][:100]}")
+        return _list_compositions(db, "profile", [], None, "Available Profiles")
+    lines = ["# Available Profiles\n"]
+    for pp in sorted(PROFILES_DIR.glob("*.yml")):
+        profile = load_yaml_file(pp)
+        roles = profile.get("roles", [])
+        role_names = [Path(r).stem for r in roles] if roles else []
+        role_str = f" [{', '.join(role_names)}]" if role_names else ""
+        lines.append(f"- **{profile.get('name', pp.stem)}** (`{pp.stem}`){role_str}: {profile.get('description', '').strip().split(chr(10))[0][:100]}")
     return "\n".join(lines)
 
 
@@ -719,7 +954,7 @@ def handle_list_profiles(db: Optional[sqlite3.Connection]) -> str:
 _GLOBAL_SUFFIXES = (".md", ".yml", ".txt")
 
 
-def _list_global_files() -> list[Path]:
+def _list_global_files() -> list:
     """Return sorted list of global context files."""
     if not GLOBALS_DIR.exists():
         return []
@@ -741,7 +976,7 @@ def read_global(name: str) -> str:
     return f"[Global not found: {name}]"
 
 
-def handle_list_globals(db: Optional[sqlite3.Connection]) -> str:
+def handle_list_globals(db: Optional[ContextIndex]) -> str:
     """List available global context files."""
     files = _list_global_files()
     if not files:
@@ -752,7 +987,7 @@ def handle_list_globals(db: Optional[sqlite3.Connection]) -> str:
     return "\n".join(lines)
 
 
-def handle_get_globals(arguments: dict, db: Optional[sqlite3.Connection]) -> str:
+def handle_get_globals(arguments: dict, db: Optional[ContextIndex]) -> str:
     """Load global context files. If a specific name is given, load that one; otherwise load all."""
     name = arguments.get("name")
     if name:
