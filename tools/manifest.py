@@ -273,14 +273,18 @@ MODULE_DIRS = [
      "exclude": ["guidance_cli.py", "guidance_lib.py", "scan_traits_registry.py",
                  "test_registry.py", "trait_mgr.py", "generate_frontmatter.py"]},
     {"dest": "cli",          "source": "ai:cli",          "kind": "clean",
-     "exclude": ["archive"],
+     # gemini_*_lock: gemini SHARD subsystem, retired 2026-07-12 (source archived).
+     # gemini PARSING/data-model is kept elsewhere (jsonl/platform_adapters/gemini).
+     "exclude": ["archive", "gemini_mcp_lock.py", "gemini_memory_lock.py"],
      "overrides": {"capture_uuid_playwright.py": "curated"}},          # heavy playwright dep -> optional
     {"dest": "mcp/comms/tools",    "source": "mcps:comms/tools",    "kind": "clean", "mcp_pkg": "comms"},
     {"dest": "mcp/sessions/tools", "source": "mcps:sessions/tools", "kind": "clean", "mcp_pkg": "sessions"},
     {"dest": "hooks/common",       "source": "aigen:data/hooks/common", "kind": "clean"},
     {"dest": "hooks/handlers",     "source": "aigen:data/hooks",    "kind": "clean",
      "include_only": ["Notification", "PostCompact", "PostToolUse", "PreCompact", "PreToolUse",
-                      "SessionStart", "Stop", "UserPromptSubmit"]},
+                      "SessionStart", "Stop", "UserPromptSubmit"],
+     # 10_force_mcp_for_context_sync: hook RETIRED in source 2026-07-11.
+     "exclude": ["10_force_mcp_for_context_sync.py"]},
     # transitively-required dirs surfaced by the import-tail scan (port faithfully)
     {"dest": "session_bounce", "source": "ai:session_bounce", "kind": "clean"},
     # added 2026-07-12 (PianoMan): devTrees (git-worktree mgmt), notes, prompts, work.
