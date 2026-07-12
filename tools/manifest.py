@@ -276,6 +276,13 @@ MODULE_DIRS = [
                       "SessionStart", "Stop", "UserPromptSubmit"]},
     # transitively-required dirs surfaced by the import-tail scan (port faithfully)
     {"dest": "session_bounce", "source": "ai:session_bounce", "kind": "clean"},
+    # added 2026-07-12 (PianoMan): devTrees (git-worktree mgmt), notes, prompts, work.
+    # projects/ deferred ("soon, not yet"). work_summarize's lllm_prompt import is
+    # lazy (degrades if lllm/ absent — not vendored).
+    {"dest": "devTrees", "source": "ai:devTrees", "kind": "clean"},
+    {"dest": "notes",    "source": "ai:notes",    "kind": "clean"},
+    {"dest": "prompts",  "source": "ai:prompts",  "kind": "clean"},
+    {"dest": "work",     "source": "ai:work",     "kind": "clean"},
     {"dest": "prompting",      "source": "ai:prompting",      "kind": "clean",
      # scheduling trio set aside (crontab redesign); macOS desktop/webui senders -> curated (Tier-C)
      "exclude": ["set_scheduled_prompt.py", "send_scheduled_prompt.py", "scheduled_prompts_daemon.py"],
