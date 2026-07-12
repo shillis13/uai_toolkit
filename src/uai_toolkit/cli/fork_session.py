@@ -58,7 +58,6 @@ def _get_wrapper(platform: str) -> Path:
     wrappers = {
         "claude": AI_ROOT / "ai_general/scripts/cli/claudeCli",
         "codex": AI_ROOT / "ai_general/scripts/cli/codexCli",
-        "gemini": AI_ROOT / "ai_general/scripts/cli/geminiCli",
     }
     wrapper = wrappers.get(platform)
     if not wrapper or not wrapper.exists():
@@ -105,7 +104,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
     # Platform and identity
     parser.add_argument(
-        "--platform", choices=["claude", "codex", "gemini"],
+        "--platform", choices=["claude", "codex"],
         default="claude",
         help="AI platform (default: claude)",
     )

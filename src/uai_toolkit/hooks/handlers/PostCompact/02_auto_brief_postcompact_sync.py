@@ -86,27 +86,11 @@ def handler(hook_input, context):
         except OSError as e:
             return HookResult.allow(f"compact.end set, no brief; catch-up staging failed: {e}")
 
-    # Stage the brief as a .ref POINTER (not a symlink) into context_to_load/.
-    # A .ref is opaque to a raw read or a naive directory scan — only the
-    # knowledge loader (guidance_cli get_context / knowledge_get_context)
-    # resolves it to content, with load-tracking. UserPromptSubmit/06 routes the
-    # "briefs" type through guidance; on resume, SessionStart/02 does the same.
-    inbox = Path(session_dir) / "context_to_load"
-    inbox.mkdir(exist_ok=True)
-
-    brief_path = Path(brief_file).resolve()
-    ref = {"type": "briefs", "name": brief_path.stem, "path": str(brief_path)}
-    ref_file = inbox / f"{brief_path.stem}.ref"
-    try:
-        # Remove any stale entry (incl. a legacy symlink of the same stem)
-        legacy = inbox / brief_path.name
-        for stale in (ref_file, legacy):
-            if stale.exists() or stale.is_symlink():
-                stale.unlink()
-        ref_file.write_text(json.dumps(ref, indent=2))
-        return HookResult.allow(f"compact.end set, brief ref staged: {ref_file.name}")
-    except OSError as e:
-        return HookResult.allow(f"compact.end set, brief ref staging failed: {e}")
+    # A brief WAS registered pre-compaction. Its .ref is staged at registration
+    # time by register_self_brief.py (the creator owns delivery staging), so there
+    # is nothing to stage here — the .ref already survives the compaction and drains
+    # on the next turn (UserPromptSubmit/06) or on resume (SessionStart/02).
+    return HookResult.allow("compact.end set, brief registered (ref staged at registration)")
 
 
 if __name__ == "__main__":

@@ -4,7 +4,7 @@ from __future__ import annotations
 fork_into_dir.py — Fork a CLI session into a different project directory.
 
 Copies the session transcript to a new project dir and optionally launches
-there via ai_launch.py. Supports Claude, Codex, and Gemini.
+there via ai_launch.py. Supports Claude and Codex.
 
 Usage:
   fork_into_dir.py <uuid> <old_dir> <new_dir> --platform <platform> [--no-launch]
@@ -13,7 +13,7 @@ Args:
   uuid        Session UUID to fork
   old_dir     Original project directory (absolute path)
   new_dir     Target project directory (absolute path)
-  --platform  claude_cli | codex_cli | gemini_cli
+  --platform  claude_cli | codex_cli
   --no-launch Copy the transcript but don't launch
 """
 
@@ -37,11 +37,6 @@ PLATFORM_SESSION_DIRS = {
         "base": Path.home() / ".codex/sessions",
         "slug_fn": "date",  # uses date-based dirs
         "ext": ".jsonl",
-    },
-    "gemini_cli": {
-        "base": Path.home() / ".gemini/tmp",
-        "slug_fn": "sanitize",
-        "ext": ".json",
     },
 }
 
@@ -86,15 +81,6 @@ def find_session_file(uuid: str, project_dir: str, platform: str) -> Path | None
         if matches:
             return Path(matches[0])
 
-    elif platform == "gemini_cli":
-        # Gemini: ~/.gemini/tmp/{project_slug}/chats/{session}.json
-        for project_slug in base.iterdir():
-            chats = project_slug / "chats"
-            if chats.exists():
-                f = chats / f"{uuid}{ext}"
-                if f.exists():
-                    return f
-
     return None
 
 
@@ -114,12 +100,6 @@ def compute_target_path(uuid: str, new_dir: str, platform: str, ext: str) -> Pat
         # The session file location doesn't change with project dir
         return None  # Codex doesn't need file relocation
 
-    elif platform == "gemini_cli":
-        slug = sanitize_project_dir(new_dir)
-        target_dir = base / slug / "chats"
-        target_dir.mkdir(parents=True, exist_ok=True)
-        return target_dir / f"{uuid}{ext}"
-
     return None
 
 
@@ -138,7 +118,7 @@ def main():
     parser.add_argument("uuid", help="Session UUID to fork")
     parser.add_argument("old_dir", help="Original project directory (absolute path)")
     parser.add_argument("new_dir", help="Target project directory (absolute path)")
-    parser.add_argument("--platform", required=True, choices=["claude_cli", "codex_cli", "gemini_cli"],
+    parser.add_argument("--platform", required=True, choices=["claude_cli", "codex_cli"],
                         help="CLI platform")
     parser.add_argument("--no-launch", action="store_true", help="Copy transcript but don't launch")
     args = parser.parse_args()
@@ -147,10 +127,6 @@ def main():
     new_dir_path = Path(os.path.realpath(os.path.expanduser(args.new_dir)))
     if not new_dir_path.exists():
         print(f"Error: target directory doesn't exist: {new_dir_path}", file=sys.stderr)
-        sys.exit(1)
-
-    if args.platform == "gemini_cli":
-        print("Error: Gemini does not support fork/resume.", file=sys.stderr)
         sys.exit(1)
 
     # Find source session file

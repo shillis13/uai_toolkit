@@ -45,21 +45,12 @@ from uai_toolkit.session_mgmt.lib_session_substrate import get_substrate, Substr
 WRAPPERS = {
     "claude_cli": CLI_DIR / "claudeCli",
     "codex_cli": CLI_DIR / "codexCli",
-    "gemini_cli": CLI_DIR / "geminiCli",
 }
 
 
 def sanitize_claude_project_dir(dir_path: str) -> str:
     normalized = os.path.realpath(os.path.expanduser(dir_path)).rstrip("/")
     return "-" + re.sub(r"[^a-zA-Z0-9]", "-", normalized.lstrip("/"))
-
-
-
-def slugify_gemini_project(project_path: str) -> str:
-    base = Path(project_path).name or "project"
-    slug = re.sub(r"[^a-z0-9]", "-", base.lower())
-    slug = re.sub(r"-+", "-", slug).strip("-")
-    return slug or "project"
 
 
 
@@ -107,62 +98,6 @@ def first_existing_transcript(entry: dict[str, Any]) -> Path | None:
 
 
 
-def ensure_gemini_project_dir(new_dir: str) -> Path:
-    tmp_root = Path.home() / ".gemini" / "tmp"
-    tmp_root.mkdir(parents=True, exist_ok=True)
-
-    normalized = str(Path(new_dir).resolve())
-    registry_path = Path.home() / ".gemini" / "projects.json"
-    slug: str | None = None
-
-    if registry_path.exists():
-        try:
-            data = json.loads(registry_path.read_text())
-            if isinstance(data, dict):
-                projects = data.get("projects", {})
-                if isinstance(projects, dict):
-                    existing = projects.get(normalized)
-                    if isinstance(existing, str) and existing:
-                        slug = existing
-        except json.JSONDecodeError:
-            pass
-
-    if not slug:
-        base_slug = slugify_gemini_project(normalized)
-        counter = 0
-        while True:
-            candidate = base_slug if counter == 0 else f"{base_slug}-{counter}"
-            marker = tmp_root / candidate / ".project_root"
-            if not marker.exists():
-                slug = candidate
-                break
-            owner = marker.read_text().strip()
-            if owner == normalized:
-                slug = candidate
-                break
-            counter += 1
-
-    assert slug is not None
-    project_dir = tmp_root / slug
-    project_dir.mkdir(parents=True, exist_ok=True)
-    (project_dir / ".project_root").write_text(normalized)
-    chats_dir = project_dir / "chats"
-    chats_dir.mkdir(parents=True, exist_ok=True)
-
-    data = {"projects": {}}
-    if registry_path.exists():
-        try:
-            loaded = json.loads(registry_path.read_text())
-            if isinstance(loaded, dict) and isinstance(loaded.get("projects"), dict):
-                data = loaded
-        except json.JSONDecodeError:
-            pass
-    data.setdefault("projects", {})[normalized] = slug
-    registry_path.write_text(json.dumps(data, indent=2) + "\n")
-    return chats_dir
-
-
-
 def target_transcript_path(entry: dict[str, Any], new_dir: str, source: Path | None) -> Path | None:
     platform = entry["platform"]
     cli_uuid = entry.get("cli_session_id")
@@ -176,15 +111,6 @@ def target_transcript_path(entry: dict[str, Any], new_dir: str, source: Path | N
 
     if platform == "codex_cli":
         return source
-
-    if platform == "gemini_cli":
-        chats_dir = ensure_gemini_project_dir(new_dir)
-        if source is not None:
-            return chats_dir / source.name
-        if cli_uuid:
-            uuid8 = cli_uuid[:8]
-            return chats_dir / f"session-{uuid8}.jsonl"
-        raise ValueError("Gemini resume_into requires a source transcript or CLI UUID")
 
     raise ValueError(f"Unsupported platform: {platform}")
 
@@ -205,18 +131,6 @@ def discover_cli_uuid_from_transcript(platform: str, source: Path | None) -> str
                 if isinstance(data, dict):
                     payload = data.get("payload", {}) or {}
                     return payload.get("id") or data.get("sessionId") or data.get("id")
-        elif platform == "gemini_cli":
-            if source.suffix == ".jsonl":
-                with source.open() as handle:
-                    first_line = handle.readline().strip()
-                if first_line:
-                    data = json.loads(first_line)
-                    if isinstance(data, dict):
-                        return data.get("sessionId")
-            elif source.suffix == ".json":
-                data = json.loads(source.read_text())
-                if isinstance(data, dict):
-                    return data.get("sessionId")
     except (OSError, json.JSONDecodeError):
         return None
     return None

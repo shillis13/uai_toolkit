@@ -44,10 +44,7 @@ PLATFORMS = {
         "script": CLI_DIR / "codexCli",
         "tasks_dir": TASK_ROOT / "codex_cli",
     },
-    "gemini_cli": {
-        "script": CLI_DIR / "geminiCli",
-        "tasks_dir": TASK_ROOT / "gemini_cli",
-    },
+    # gemini_cli retired 2026-07-12 (discontinued upstream) — no longer launchable.
 }
 
 ROLES = ["librarian", "dev_lead", "custodian", "peer_review", "tester", "researcher", "validator"]
@@ -476,7 +473,7 @@ def launch_cli_agent(
     """Launch a CLI agent with given parameters.
 
     This is a higher-level agent workflow wrapper over the canonical platform
-    launcher entrypoints (claudeCli/codexCli/geminiCli). Terminal session
+    launcher entrypoints (claudeCli/codexCli). Terminal session
     creation and CLI execution are owned by the launcher, not by this module.
     """
 

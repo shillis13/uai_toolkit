@@ -207,7 +207,6 @@ def parse_args(platform: str, argv: list[str]) -> tuple[argparse.Namespace, list
     prog_name = {
         'claude_cli': 'claudeCli',
         'codex_cli': 'codexCli',
-        'gemini_cli': 'geminiCli',
     }.get(platform, 'ai_launch')
 
     parser = argparse.ArgumentParser(
@@ -290,7 +289,7 @@ def main(platform: str, argv: list[str]) -> int:
             log.error('Cannot determine terminal session name for resume')
             return 1
 
-        if not cli_uuid and platform in ('codex_cli', 'gemini_cli'):
+        if not cli_uuid and platform == 'codex_cli':
             screen_uuid = try_screen_uuid(terminal_name, platform)
             if screen_uuid and len(screen_uuid) >= 8:
                 cli_uuid = screen_uuid
@@ -416,9 +415,6 @@ def main(platform: str, argv: list[str]) -> int:
 
         parent_tracking_id = parent_entry.get('tracking_id', args.fork_from)
         parent_cli_uuid = parent_entry.get('cli_session_id')
-        if platform == 'gemini_cli':
-            log.error('Gemini does not support fork')
-            return 1
 
         if args.tracking_id:
             tracking_id = args.tracking_id
@@ -506,7 +502,7 @@ def main(platform: str, argv: list[str]) -> int:
         draft_entry = _store.get(tracking_id)
         # Reuse the UUID the draft was reserved with so the eventual Claude
         # --session-id matches the tracking ID's uuid8 (set at reserve time).
-        # Codex/Gemini discover their UUID post-launch, so only Claude carries a
+        # Codex discovers its UUID post-launch, so only Claude carries a
         # meaningful reserved cli_session_id here.
         seed_uuid = (
             args.session_id
@@ -587,7 +583,7 @@ def main(platform: str, argv: list[str]) -> int:
     cli_pid = launch.pid
     transcript_path = compute_transcript_path(platform, cli_uuid, workdir)
     create_session(tracking_id=tracking_id, terminal_session=session_name, platform=platform, cli_session_id=cli_uuid, cli_pid=cli_pid, display_name=args.display_name, working_dir=workdir, project_dir=project_dir, session_dir=session_dir, model=args.model, substrate=substrate.substrate_name, substrate_context=substrate_context, roles=normalize_roles_arg(args.roles), transcript_path=transcript_path, parent_tracking_id=getattr(args, 'parent', None), notes=args.notes)
-    if cli_uuid is None and platform in ('codex_cli', 'gemini_cli'):
+    if cli_uuid is None and platform == 'codex_cli':
         result = discover_cli_uuid(platform, cli_pid, tracking_id=tracking_id, timeout=15.0, session_name=session_name)
         if result:
             cli_uuid, actual_pid = result

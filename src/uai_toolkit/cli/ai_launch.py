@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Unified AI CLI launcher entrypoint.
 
-Canonical public entrypoint for launching Claude, Codex, and Gemini CLI sessions.
+Canonical public entrypoint for launching Claude and Codex CLI sessions.
 Busybox symlinks:
   claudeCli -> ai_launch.py
   codexCli  -> ai_launch.py
-  geminiCli -> ai_launch.py
+(gemini_cli retired 2026-07-12 — discontinued upstream, no longer launchable.)
 """
 from __future__ import annotations
 
@@ -31,14 +31,12 @@ def detect_platform(argv0: str, argv: list[str]) -> tuple[str, list[str]]:
         return 'claude_cli', argv
     if 'codex' in name:
         return 'codex_cli', argv
-    if 'gemini' in name:
-        return 'gemini_cli', argv
 
     env_platform = os.environ.get('AI_LAUNCH_PLATFORM')
-    if env_platform in {'claude_cli', 'codex_cli', 'gemini_cli'}:
+    if env_platform in {'claude_cli', 'codex_cli'}:
         return env_platform, argv
 
-    if len(argv) >= 2 and argv[0] == '--platform' and argv[1] in {'claude_cli', 'codex_cli', 'gemini_cli'}:
+    if len(argv) >= 2 and argv[0] == '--platform' and argv[1] in {'claude_cli', 'codex_cli'}:
         return argv[1], argv[2:]
 
     return 'claude_cli', argv

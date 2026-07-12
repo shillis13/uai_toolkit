@@ -2,7 +2,7 @@
 """Layer 1: CLI wrapper.
 
 Owns platform-specific command construction and binary resolution.
-This layer knows how Claude, Codex, and Gemini expect their command line
+This layer knows how Claude and Codex expect their command line
 arguments, but it does not decide *when* or *why* to launch them.
 """
 from __future__ import annotations
@@ -61,7 +61,6 @@ def find_binary(platform: str) -> str:
     name_map = {
         'claude_cli': 'claude',
         'codex_cli': 'codex',
-        'gemini_cli': 'gemini',
     }
     binary_name = name_map.get(platform, 'claude')
 
@@ -126,16 +125,6 @@ def build_cmd(
             auto_approve=auto_approve,
             passthrough=passthrough or [],
             workdir=workdir,
-        )
-    if platform == 'gemini_cli':
-        return _build_gemini_cmd(
-            binary, args, cli_uuid,
-            is_resume=is_resume,
-            is_fork=is_fork,
-            parent_cli_uuid=parent_cli_uuid,
-            bootstrap_prompt=bootstrap_prompt,
-            auto_approve=auto_approve,
-            passthrough=passthrough or [],
         )
     raise ValueError(f'Unknown platform: {platform}')
 
@@ -237,42 +226,5 @@ def _build_codex_cmd(
     prompt = args.prompt
     if prompt:
         cmd.append(prompt)
-
-    return cmd
-
-
-def _build_gemini_cmd(
-    binary: str,
-    args: argparse.Namespace,
-    cli_uuid: str | None,
-    *,
-    is_resume: bool,
-    is_fork: bool,
-    parent_cli_uuid: str | None,
-    bootstrap_prompt: str | None,
-    auto_approve: bool,
-    passthrough: list[str],
-) -> list[str]:
-    if is_fork:
-        raise ValueError('Gemini does not support fork')
-
-    cmd = [binary]
-
-    if is_resume:
-        cmd.extend(['--resume', cli_uuid or ''])
-
-    if auto_approve:
-        cmd.append('--yolo')
-
-    if args.model:
-        cmd.extend(['--model', args.model])
-
-    cmd.extend(passthrough)
-
-    if args.oneshot and args.prompt:
-        cmd.extend(['--prompt', args.prompt])
-    elif args.prompt or bootstrap_prompt:
-        prompt_text = bootstrap_prompt or args.prompt or ''
-        cmd.extend(['-i', prompt_text])
 
     return cmd

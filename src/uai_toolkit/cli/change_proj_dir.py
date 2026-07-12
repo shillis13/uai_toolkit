@@ -3,7 +3,7 @@
 change_proj_dir.py — Move a CLI session to a different project directory.
 
 Moves the session transcript and resumes in the new dir via ai_launch.py.
-Session must be stopped first. Supports Claude, Codex, and Gemini.
+Session must be stopped first. Supports Claude and Codex.
 
 Usage:
   change_proj_dir.py <uuid> <old_dir> <new_dir> --platform <platform> [--no-launch]
@@ -30,7 +30,7 @@ def main():
     parser.add_argument("uuid", help="Session UUID")
     parser.add_argument("old_dir", help="Original project directory (absolute path)")
     parser.add_argument("new_dir", help="Target project directory (absolute path)")
-    parser.add_argument("--platform", required=True, choices=["claude_cli", "codex_cli", "gemini_cli"],
+    parser.add_argument("--platform", required=True, choices=["claude_cli", "codex_cli"],
                         help="CLI platform")
     parser.add_argument("--no-launch", action="store_true", help="Move transcript but don't launch")
     args = parser.parse_args()

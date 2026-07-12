@@ -278,13 +278,17 @@ MODULE_DIRS = [
      "exclude": ["archive", "gemini_mcp_lock.py", "gemini_memory_lock.py"],
      "overrides": {"capture_uuid_playwright.py": "curated"}},          # heavy playwright dep -> optional
     {"dest": "mcp/comms/tools",    "source": "mcps:comms/tools",    "kind": "clean", "mcp_pkg": "comms"},
-    {"dest": "mcp/sessions/tools", "source": "mcps:sessions/tools", "kind": "clean", "mcp_pkg": "sessions"},
+    {"dest": "mcp/sessions/tools", "source": "mcps:sessions/tools", "kind": "clean", "mcp_pkg": "sessions",
+     "overrides": {"sessions_local_llm.py": "curated"}},              # hardcoded /opt/homebrew python -> AI_PYTHON (WSL); source-side fix pending
     {"dest": "hooks/common",       "source": "aigen:data/hooks/common", "kind": "clean"},
     {"dest": "hooks/handlers",     "source": "aigen:data/hooks",    "kind": "clean",
      "include_only": ["Notification", "PostCompact", "PostToolUse", "PreCompact", "PreToolUse",
                       "SessionStart", "Stop", "UserPromptSubmit"],
      # 10_force_mcp_for_context_sync: hook RETIRED in source 2026-07-11.
-     "exclude": ["10_force_mcp_for_context_sync.py"]},
+     "exclude": ["10_force_mcp_for_context_sync.py"],
+     # hardcoded /opt/homebrew python -> AI_PYTHON (WSL); source-side migration missed these.
+     "overrides": {"04_store_session_data_async.py": "curated",
+                   "11_turn_digest_async.py": "curated"}},
     # transitively-required dirs surfaced by the import-tail scan (port faithfully)
     {"dest": "session_bounce", "source": "ai:session_bounce", "kind": "clean"},
     # added 2026-07-12 (PianoMan): devTrees (git-worktree mgmt), notes, prompts, work.

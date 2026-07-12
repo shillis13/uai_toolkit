@@ -623,6 +623,117 @@ def list_sessions(substrate: str | None = None) -> list[dict]:
     return all_sessions
 
 
+def audit_geometry() -> list[dict]:
+    """Sweep EVERY tmux server and report per-session window geometry + state.
+
+    Read-only. Surfaces the window/xterm size-desync class: the window-size
+    option (manual = a pin needing an authoritative resizer — a hazard if nothing
+    drives it), the window WxH, and each attached client's WxH/tty (a foreign
+    client at a mismatched size is how the window gets dragged off UAI's size).
+    """
+    from uai_toolkit.session_mgmt.lib_session_substrate import TmuxSubstrate
+
+    report: list[dict] = []
+    for server_name in _discover_tmux_servers():
+        label = server_name or "default"
+        try:
+            tsub = TmuxSubstrate(server_name=server_name)
+            sessions = tsub.list_sessions()
+        except Exception:
+            continue  # socket present but server not responding
+        for s in sessions:
+            try:
+                g = tsub.get_window_geometry(s.name)
+            except Exception:
+                continue
+            g["server"] = label
+            g["manual_hazard"] = g["window_size"] == "manual"
+            if g["window"] != "?" and "x" in g["window"]:
+                ww, wh = g["window"].split("x", 1)
+                g["client_mismatch"] = any(
+                    c["cols"] != ww or c["rows"] != wh for c in g["clients"]
+                )
+            else:
+                g["client_mismatch"] = False
+            report.append(g)
+    return report
+
+
+def reset_window_size_op(session: str | None = None, server: str | None = None,
+                         reset_all: bool = False, confirm: bool = False) -> dict:
+    """Guarded reset of the per-session window-size override -> inherit default.
+
+    Single session: reset_window_size_op(session=NAME[, server=LABEL]).
+    Fleet: reset_all=True clears every session at window-size=manual, but only
+    ACTS when confirm=True; otherwise returns a dry-run of what it would touch.
+    """
+    from uai_toolkit.session_mgmt.lib_session_substrate import TmuxSubstrate
+
+    report = audit_geometry()
+    if reset_all:
+        targets = [(r["server"], r["session"]) for r in report if r["manual_hazard"]]
+    else:
+        if not session:
+            return {"ok": False, "error": "provide a session name or --all"}
+        targets = [
+            (r["server"], r["session"]) for r in report
+            if r["session"] == session and (server is None or r["server"] == server)
+        ]
+        if not targets:
+            where = f" on server '{server}'" if server else " on any server"
+            return {"ok": False, "error": f"session '{session}' not found{where}"}
+
+    if reset_all and not confirm:
+        return {
+            "ok": True, "dry_run": True,
+            "would_reset": [{"server": s, "session": n} for s, n in targets],
+            "note": "re-run with --all --yes to apply",
+        }
+
+    results = []
+    for label, name in targets:
+        srv = None if label == "default" else label
+        try:
+            after = TmuxSubstrate(server_name=srv).reset_window_size(name)
+            results.append({"server": label, "session": name, "window_size_now": after})
+        except Exception as e:
+            results.append({"server": label, "session": name, "error": str(e)})
+    return {"ok": True, "reset": results}
+
+
+def _print_geometry(report: list[dict]) -> None:
+    if not report:
+        print("No tmux sessions found on any server.")
+        return
+    by_server: dict[str, list[dict]] = {}
+    for r in report:
+        by_server.setdefault(r["server"], []).append(r)
+    for label in sorted(by_server):
+        print(f"=== server -L {label} ===")
+        for r in sorted(by_server[label], key=lambda x: x["session"]):
+            flags = []
+            if r["manual_hazard"]:
+                flags.append("MANUAL-HAZARD")
+            if r["client_mismatch"]:
+                flags.append("CLIENT-MISMATCH")
+            tail = ("  " + " ".join(flags)) if flags else ""
+            print(f"  {r['session']:<44} win={r['window']:<9} "
+                  f"wsz={r['window_size']:<7} clients={len(r['clients'])} "
+                  f"aggr={r['aggressive_resize']:<4} status={r['status']}{tail}")
+            for c in r["clients"]:
+                mm = ""
+                if r["window"] != "?" and "x" in r["window"]:
+                    ww, wh = r["window"].split("x", 1)
+                    if c["cols"] != ww or c["rows"] != wh:
+                        mm = "  != window"
+                print(f"      client {c['tty']:<18} {c['cols']}x{c['rows']}{mm}")
+    hazards = [r for r in report if r["manual_hazard"]]
+    if hazards:
+        print(f"\n{len(hazards)} session(s) at window-size=manual (pinned, no auto-resize).")
+        print("  Reset one:  session_ops.py reset-window-size <name> [--server <L>]")
+        print("  Reset all:  session_ops.py reset-window-size --all --yes")
+
+
 def read_terminal(session_name: str, full: bool = False, substrate: str | None = None,
                    raw: bool = False, styled: bool = False) -> str:
     """Read current terminal screen content, cleaned for parsing.
@@ -1442,6 +1553,24 @@ Use 'session_ops <command> --help' for full details on each command.""",
     p_rename.add_argument("new_name", help="New session name")
     p_rename.add_argument("--substrate", help="Override substrate (tmux, zellij, none)")
 
+    # geometry (read-only audit across all tmux servers)
+    p_geom = sub.add_parser(
+        "geometry",
+        help="Audit window geometry/state across ALL tmux servers (read-only)")
+    p_geom.add_argument("--json", action="store_true", help="Machine-readable JSON")
+
+    # reset-window-size (guarded recovery of the window-size override)
+    p_rwz = sub.add_parser(
+        "reset-window-size",
+        help="Clear a session's window-size override -> inherit default (latest)")
+    p_rwz.add_argument("session_name", nargs="?",
+                       help="Session to reset (omit when using --all)")
+    p_rwz.add_argument("--server", help="Restrict to this -L server (default: search all)")
+    p_rwz.add_argument("--all", action="store_true", dest="reset_all",
+                       help="Reset every session at window-size=manual (dry-run unless --yes)")
+    p_rwz.add_argument("--yes", action="store_true",
+                       help="Actually apply --all (otherwise a dry-run listing)")
+
     args = parser.parse_args()
 
     if not args.command:
@@ -1520,6 +1649,22 @@ Use 'session_ops <command> --help' for full details on each command.""",
             )
             sub_obj.rename_session(args.session_name, args.new_name)
             print(json.dumps({"ok": True, "old_name": args.session_name, "new_name": args.new_name}))
+
+        elif args.command == "geometry":
+            report = audit_geometry()
+            if getattr(args, 'json', False):
+                print(json.dumps(report, indent=2))
+            else:
+                _print_geometry(report)
+
+        elif args.command == "reset-window-size":
+            res = reset_window_size_op(
+                session=getattr(args, 'session_name', None),
+                server=getattr(args, 'server', None),
+                reset_all=getattr(args, 'reset_all', False),
+                confirm=getattr(args, 'yes', False),
+            )
+            print(json.dumps(res, indent=2))
 
     except SubstrateError as e:
         payload = {"ok": False, "error": str(e)}

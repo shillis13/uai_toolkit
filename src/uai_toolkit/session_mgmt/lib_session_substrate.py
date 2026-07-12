@@ -783,6 +783,93 @@ class TmuxSubstrate(SessionSubstrate):
         else:
             subprocess.run(cmd)
 
+    def get_window_geometry(self, name: str) -> dict:
+        """Read-only geometry/state for a session — for diagnosing window/xterm
+        size desync. Returns:
+          - window: the active window's WxH.
+          - window_size: the effective window-size option
+            (latest/largest/smallest/manual). 'manual' pins the window and needs
+            an authoritative resizer — a hazard if nothing is driving it.
+          - override_set: whether window-size is set on the SESSION (vs inherited).
+          - aggressive_resize, status: adjacent options worth seeing.
+          - clients: each attached client's tty + WxH (a foreign client at a
+            different size is how the window gets dragged off UAI's size).
+        Mutates nothing. Raises SESSION_NOT_FOUND if the session is gone.
+        """
+        if not self.session_exists(name):
+            raise SubstrateError(
+                f"Session '{name}' does not exist", code="SESSION_NOT_FOUND",
+            )
+
+        def _out(*args: str) -> str:
+            r = subprocess.run(self._tmux_cmd(*args), capture_output=True, text=True)
+            return r.stdout if r.returncode == 0 else ""
+
+        def _opt(scope: list[str], key: str, default):
+            for line in _out("show-options", *scope).splitlines():
+                kv = line.split(" ", 1)
+                if kv[0] == key:
+                    return kv[1] if len(kv) == 2 else ""
+            return default
+
+        # Active window's WxH (no attached client required).
+        win_w, win_h = "", ""
+        for line in _out(
+            "list-windows", "-t", name,
+            "-F", "#{window_active}\t#{window_width}\t#{window_height}",
+        ).splitlines():
+            wf = line.split("\t")
+            if len(wf) == 3 and wf[0] == "1":
+                win_w, win_h = wf[1], wf[2]
+
+        session_wsz = _opt(["-t", name], "window-size", None)
+        window_size = session_wsz if session_wsz is not None else _opt(
+            ["-g"], "window-size", "latest",
+        )
+        aggressive = _opt(["-w", "-t", name], "aggressive-resize",
+                          _opt(["-gw"], "aggressive-resize", "off"))
+        status = _opt(["-t", name], "status", _opt(["-g"], "status", "on"))
+
+        clients = []
+        for line in _out(
+            "list-clients", "-t", name,
+            "-F", "#{client_tty}\t#{client_width}\t#{client_height}",
+        ).splitlines():
+            cf = line.split("\t")
+            if len(cf) == 3:
+                clients.append({"tty": cf[0], "cols": cf[1], "rows": cf[2]})
+
+        return {
+            "session": name,
+            "window": f"{win_w}x{win_h}" if win_w else "?",
+            "window_size": window_size,
+            "override_set": session_wsz is not None,
+            "aggressive_resize": aggressive,
+            "status": status,
+            "clients": clients,
+        }
+
+    def reset_window_size(self, name: str) -> str:
+        """Remove any per-session window-size override so the session inherits the
+        server default (latest). Explicit, caller-invoked recovery — NEVER called
+        on attach. Returns the effective window-size after the reset."""
+        if not self.session_exists(name):
+            raise SubstrateError(
+                f"Session '{name}' does not exist", code="SESSION_NOT_FOUND",
+            )
+        subprocess.run(
+            self._tmux_cmd("set-option", "-u", "-t", name, "window-size"),
+            capture_output=True, text=True,
+        )
+        r = subprocess.run(
+            self._tmux_cmd("show-options", "-g"), capture_output=True, text=True,
+        )
+        for line in (r.stdout if r.returncode == 0 else "").splitlines():
+            kv = line.split(" ", 1)
+            if kv[0] == "window-size":
+                return kv[1] if len(kv) == 2 else "latest"
+        return "latest"
+
     def attach_pty(self, name: str, socket_dir: str = "/tmp/uai_pty") -> dict:
         """Spawn tmux attach inside a PTY and bridge it to a unix socket.
 

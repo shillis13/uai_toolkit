@@ -48,7 +48,7 @@ TURN_DIGEST = AI_ROOT / "ai_general" / "scripts" / "jsonl" / "turn_digest.py"
 # Canary allow-list — a stable path (NOT relative to this file's location) so it's read the
 # same whether the hook is staged or live. Edit it to enroll/remove sessions; '*' = all.
 ALLOWLIST = AI_ROOT / "ai_general" / "data" / "hooks" / "Stop" / "turn_digest_allowlist.yml"
-PYTHON = "/opt/homebrew/bin/python3"
+PYTHON = os.environ.get("AI_PYTHON") or sys.executable  # was hardcoded /opt/homebrew/bin/python3 (WSL fix)
 
 
 def _allowed(tracking_id):

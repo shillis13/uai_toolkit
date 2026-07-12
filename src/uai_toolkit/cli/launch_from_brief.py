@@ -8,7 +8,6 @@ file as initial context via --pre-prompt.
 Usage:
   launch_from_brief.py --platform claude --brief /path/to/brief.yml
   launch_from_brief.py --platform codex --brief /path/to/brief.yml --name "successor session"
-  launch_from_brief.py --platform gemini --brief /path/to/brief.yml --workdir /some/project
 
 The brief file is read and prepended to the session's bootstrap prompt so the
 successor AI has full context before receiving any user instructions.
@@ -35,7 +34,6 @@ from uai_toolkit.cli.lib_brief_loading import build_brief_load_prompt
 PLATFORM_COMMANDS = {
     "claude": "claudeCli",
     "codex": "codexCli",
-    "gemini": "geminiCli",
 }
 
 
@@ -45,8 +43,8 @@ def main() -> int:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
-    parser.add_argument("--platform", required=True, choices=["claude", "codex", "gemini"],
-                        help="Platform to launch (claude, codex, gemini)")
+    parser.add_argument("--platform", required=True, choices=["claude", "codex"],
+                        help="Platform to launch (claude, codex)")
     parser.add_argument("--brief", required=True,
                         help="Path to session brief YAML file to inject as context")
     parser.add_argument("--display-name", "--name", dest="display_name",
@@ -72,7 +70,7 @@ def main() -> int:
     cmd_name = PLATFORM_COMMANDS[args.platform]
 
     # Resolve the symlink to get the actual launcher path
-    # ai_launch.py is called via symlinks: claudeCli, codexCli, geminiCli
+    # ai_launch.py is called via symlinks: claudeCli, codexCli
     symlink_dir = _AI_ROOT / "ai_general" / "scripts" / "cli"
     symlink_path = symlink_dir / cmd_name
 

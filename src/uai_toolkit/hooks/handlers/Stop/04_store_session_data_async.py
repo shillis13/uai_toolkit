@@ -30,7 +30,7 @@ try:
     from uai_toolkit.session_mgmt.lib_session_activity import set_activity_state
 except Exception:  # pragma: no cover
     set_activity_state = None
-PYTHON = "/opt/homebrew/bin/python3"
+PYTHON = os.environ.get("AI_PYTHON") or sys.executable  # was hardcoded /opt/homebrew/bin/python3 (WSL fix)
 READ_JSONL = Path.home() / "bin" / "ai" / "jsonl" / "read_jsonl.py"
 
 # ─── State file helpers ──────────────────────────────────────────────────

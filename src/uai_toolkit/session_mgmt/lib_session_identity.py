@@ -48,7 +48,6 @@ PLATFORM_PATTERNS = [
     (re.compile(r'^codex[_-]'), "codex_cli"),
     (re.compile(r'^gemini[_-]'), "gemini_cli"),
     (re.compile(r'^cli_task[_-]'), "claude_cli"),
-    (re.compile(r'^shard[_-]'), "gemini_cli"),
 ]
 
 

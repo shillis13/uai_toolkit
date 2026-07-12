@@ -83,8 +83,8 @@ def main():
 
         # --- Config files (symlinks) ---
         config_files = [
-            "CLAUDE.md", "CLAUDE.local.md", "AGENTS.md", "GEMINI.md",
-            ".gemini", ".mcp.json", "ai_root.yml",
+            "CLAUDE.md", "CLAUDE.local.md", "AGENTS.md",
+            ".mcp.json", "ai_root.yml",
         ]
         for f in config_files:
             src = ai_root_main / f

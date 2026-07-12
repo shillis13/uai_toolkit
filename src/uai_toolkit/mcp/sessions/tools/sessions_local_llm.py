@@ -30,7 +30,7 @@ CALLBACK_SCHEMA = {
     "required": ["type"],
 }
 
-PYTHON = "/opt/homebrew/bin/python3"
+PYTHON = os.environ.get("AI_PYTHON") or sys.executable  # was hardcoded /opt/homebrew/bin/python3 (WSL fix)
 LLLM_DIR = Path(os.environ.get("AI_ROOT",
     Path(__file__).resolve().parents[5])) / "ai_general" / "scripts" / "lllm"
 LLLM_PROMPT = str(LLLM_DIR / "lllm_prompt.py")

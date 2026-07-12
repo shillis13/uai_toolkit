@@ -2,7 +2,7 @@
 """
 lib_cli_common.py - Shared library for AI CLI wrappers.
 
-Used by: claude_cli.py, codex_cli.py, gemini_cli.py
+Used by: claude_cli.py, codex_cli.py
 Location: ~/bin/ai/cli/lib_cli_common.py
 Version: 1.0.0
 Created: 2026-01-01
@@ -229,10 +229,8 @@ class CommonArgs:
     dry_run: bool
     prompt: str | None
     model: str | None  # Model override (platform-specific)
-    sync: bool  # Non-interactive mode: Claude --print, Codex exec, Gemini positional
+    sync: bool  # Non-interactive mode: Claude --print, Codex exec
     start_clean: bool  # Launch with zero bootstrap - no project docs, no framework prompts
-    suppress_global_memory: bool  # Suppress ~/.gemini/GEMINI.md during session (Gemini only)
-    no_tools: bool  # Disable all MCP tools (Gemini: --allowed-mcp-server-names with empty value)
     use_devtree: bool  # Use isolated devTree workspace (AI_ROOT_{uuid8})
     system_instructions: str | None  # Concatenated role context_files content for system prompt injection
     system_instructions_file: Path | None  # Temp file path for platforms that need file-based injection
@@ -1365,15 +1363,7 @@ def create_common_parser(platform: str) -> argparse.ArgumentParser:
     )
     control.add_argument(
         "--start-clean", action="store_true",
-        help="Skip all bootstrap, suppress ~/.gemini/GEMINI.md - use only explicit --prompt"
-    )
-    control.add_argument(
-        "--suppress-global-memory", action="store_true",
-        help="Gemini: suppress ~/.gemini/GEMINI.md during session (for shard initialization)"
-    )
-    control.add_argument(
-        "--no-tools", action="store_true",
-        help="Disable all MCP tools (Gemini: passes --allowed-mcp-server-names with empty value)"
+        help="Skip all bootstrap - use only explicit --prompt"
     )
     control.add_argument(
         "--use-devtree", action="store_true", default=False,
@@ -1538,8 +1528,6 @@ def parse_common_args(
         model=parsed.model,
         sync=parsed.sync,
         start_clean=parsed.start_clean,
-        suppress_global_memory=parsed.suppress_global_memory,
-        no_tools=parsed.no_tools,
         use_devtree=_use_devtree,
         system_instructions=None,  # Populated later by build_prompt()
         system_instructions_file=None,  # Populated later by build_prompt()

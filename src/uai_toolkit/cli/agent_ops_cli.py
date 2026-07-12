@@ -383,7 +383,7 @@ def build_parser():
     p.add_argument("--format", choices=["json", "text", "raw"], default="json", help="Output format (default: json)")
     p.add_argument("--page-size", dest="page_size", type=int, default=500, help="Messages per page (default: 500)")
     p.add_argument("--page", type=int, default=1, help="Page number (default: 1)")
-    p.add_argument("--platform-hint", dest="platform_hint", choices=["auto", "claude", "gemini", "codex"], default="auto", help="Platform override")
+    p.add_argument("--platform-hint", dest="platform_hint", choices=["auto", "claude", "codex"], default="auto", help="Platform override")
     p.add_argument("--status-only", dest="status_only", action="store_true", default=False, help="Return only session status")
     p.set_defaults(func=cmd_read_session)
 
