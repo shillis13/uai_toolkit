@@ -267,8 +267,11 @@ MODULE_DIRS = [
     # tasks/ (task_coord) REMOVED 2026-07-11 — PianoMan flagged ai:tasks DO_NOT_PORT.
     # (todo_mgr in todo/ is unrelated, from pylib, and stays.)
     {"dest": "context_files", "source": "ai:context_files", "kind": "clean",
-     "exclude": ["guidance_cli.py", "guidance_lib.py", "scan_traits_registry.py", "test_registry.py"],
-     "overrides": {"trait_mgr.py": "curated"}},
+     # trait_mgr.py + generate_frontmatter.py EXCLUDED — obsolete traits-management
+     # tools (built around the now-gone ai_traits/ dir; superseded by context_mgr /
+     # context.db). Unreferenced + broken. context_files/ = context_mgr only.
+     "exclude": ["guidance_cli.py", "guidance_lib.py", "scan_traits_registry.py",
+                 "test_registry.py", "trait_mgr.py", "generate_frontmatter.py"]},
     {"dest": "cli",          "source": "ai:cli",          "kind": "clean",
      "exclude": ["archive"],
      "overrides": {"capture_uuid_playwright.py": "curated"}},          # heavy playwright dep -> optional
