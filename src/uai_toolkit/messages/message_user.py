@@ -26,10 +26,13 @@ import subprocess
 import sys
 from pathlib import Path
 
+sys.path.insert(0, os.environ.get("AI_SCRIPTS") or str(Path(__file__).resolve().parents[1]))
+from uai_toolkit.paths import AI_SCRIPTS  # noqa: E402
+
 HOME = Path.home()
-MESSAGING = HOME / "bin" / "ai" / "messages" / "messaging.py"
-USERS_MGR = HOME / "AI" / "ai_root" / "ai_general" / "scripts" / "users" / "users_mgr.py"
-NOTIFY = HOME / "bin" / "ai" / "notifications" / "send_user_notification.py"
+MESSAGING = AI_SCRIPTS / "messages" / "messaging.py"
+USERS_MGR = AI_SCRIPTS / "users" / "users_mgr.py"
+NOTIFY = AI_SCRIPTS / "notifications" / "send_user_notification.py"
 
 
 def _run_json(cmd: list[str], timeout: int = 30) -> dict:

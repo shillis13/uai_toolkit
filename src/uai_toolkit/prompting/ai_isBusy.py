@@ -27,6 +27,9 @@ import sys
 import time
 from pathlib import Path
 
+sys.path.insert(0, os.environ.get("AI_SCRIPTS") or str(Path(__file__).resolve().parents[1]))
+from uai_toolkit.paths import AI_ROOT  # noqa: E402
+
 # common_utils (shared logging core)
 _PY_SRC = Path.home() / "bin" / "all_languages" / "python" / "src"
 if str(_PY_SRC) not in sys.path:
@@ -35,7 +38,6 @@ from uai_toolkit.common_utils.lib_logging import get_logger, configure_logging  
 
 log = get_logger(__name__)
 
-AI_ROOT = Path(os.environ.get("AI_ROOT", Path.home() / "AI" / "ai_root"))
 SESSION_OPS = AI_ROOT / "ai_general" / "scripts" / "session_mgmt" / "session_ops.py"
 
 BUSY_PATTERNS = {

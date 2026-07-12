@@ -328,7 +328,7 @@ def try_screen_uuid(session_name: str, platform: str) -> str | None:
 
 def _schedule_retry_discovery(platform: str, tracking_id: str, session_name: str) -> None:
     try:
-        ai_root = os.environ.get('AI_ROOT', os.path.expanduser('~/AI/ai_root'))
+        ai_root = os.environ.get('AI_ROOT') or str(get_ai_root())
         store_script = f'{ai_root}/ai_general/scripts/session_mgmt/session_store.py'
         retry_cmd = (
             f'UUID=$(cd {ai_root}/ai_general/scripts/session_mgmt && '

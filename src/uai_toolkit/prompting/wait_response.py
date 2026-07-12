@@ -17,9 +17,13 @@ import os
 import re
 import sys
 import time
+from pathlib import Path
+
+sys.path.insert(0, os.environ.get("AI_SCRIPTS") or str(Path(__file__).resolve().parents[1]))
+from uai_toolkit.paths import AI_SCRIPTS  # noqa: E402
 
 # Add session_mgmt to path
-SESSION_MGMT_DIR = os.path.join(os.path.expanduser("~"), "bin", "ai", "session_mgmt")
+SESSION_MGMT_DIR = str(AI_SCRIPTS / "session_mgmt")
 if SESSION_MGMT_DIR not in sys.path:
     sys.path.insert(0, SESSION_MGMT_DIR)
 

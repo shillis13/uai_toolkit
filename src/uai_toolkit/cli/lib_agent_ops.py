@@ -26,8 +26,10 @@ from typing import Optional, Any
 
 # === Configuration ===
 
-AI_ROOT = Path(os.path.expanduser("~/AI/ai_root"))
-CLI_DIR = Path(os.path.expanduser("~/bin/ai/cli"))
+sys.path.insert(0, os.environ.get("AI_SCRIPTS") or str(Path(__file__).resolve().parents[1]))
+from uai_toolkit.paths import AI_ROOT, AI_SCRIPTS
+
+CLI_DIR = AI_SCRIPTS / "cli"
 ROLES_DIR = AI_ROOT / "ai_general/prompts/roles"
 ROLES_DIR_NEW = AI_ROOT / "ai_general/roles"  # new location (preferred)
 COMMS_DIR = AI_ROOT / "ai_comms"
@@ -57,7 +59,7 @@ SERVER_VERSION = "1.0.0"
 
 def _ensure_session_mgmt_path():
     """Add session_mgmt scripts to sys.path if not already present."""
-    session_mgmt_dir = os.path.expanduser("~/bin/ai/session_mgmt")
+    session_mgmt_dir = str(AI_SCRIPTS / "session_mgmt")
     if session_mgmt_dir not in sys.path:
         sys.path.insert(0, session_mgmt_dir)
 

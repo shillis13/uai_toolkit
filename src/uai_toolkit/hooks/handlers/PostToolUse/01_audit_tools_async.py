@@ -13,7 +13,9 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "common"))
-sys.path.insert(0, str(Path.home() / "bin" / "ai"))
+# ai_general/scripts (for `from uai_toolkit.audit import lib_audit`): honor $AI_SCRIPTS
+# override, else derive from location (…/data/hooks/PostToolUse/ -> parents[3]).
+sys.path.insert(0, os.environ.get("AI_SCRIPTS") or str(Path(__file__).resolve().parents[3] / "scripts"))
 
 from uai_toolkit.hooks.common.lib_hook_base import run_hook, HookResult
 

@@ -21,7 +21,8 @@ from pathlib import Path
 
 import yaml
 
-AI_ROOT = Path(os.environ.get("AI_ROOT", os.path.expanduser("~/AI/ai_root")))
+sys.path.insert(0, os.environ.get("AI_SCRIPTS") or str(Path(__file__).resolve().parents[1]))
+from uai_toolkit.paths import AI_ROOT  # noqa: E402
 AI_GENERAL = AI_ROOT / "ai_general"
 TRAITS_DIR = AI_GENERAL / "ai_traits"
 PROFILES_DIR = AI_GENERAL / "ai_profiles"

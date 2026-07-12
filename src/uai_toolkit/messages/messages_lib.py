@@ -13,14 +13,17 @@ arrives. Messages sit on disk until someone explicitly checks.
 import os
 import random
 import string
+import sys
 import yaml
 from pathlib import Path
 from datetime import datetime
 from typing import Optional
 
+sys.path.insert(0, os.environ.get("AI_SCRIPTS") or str(Path(__file__).resolve().parents[1]))
+from uai_toolkit.paths import AI_ROOT  # noqa: E402
+
 
 # === Configuration ===
-AI_ROOT = Path(os.path.expanduser("~/AI/ai_root"))
 COMMS_DIR = AI_ROOT / "ai_comms"
 BROADCASTS_DIR = COMMS_DIR / "claude_cli/broadcasts"
 DIRECT_DIR = COMMS_DIR / "claude_cli/instant_messaging/active"

@@ -51,7 +51,7 @@ for _d in (_cli_scripts, _session_mgmt):
 from uai_toolkit.session_mgmt.lib_session import get_session_info, resolve_identifier, get_project_dir
 from uai_toolkit.cli.lib_paths import AI_ROOT
 
-SEND_PROMPT = Path.home() / "bin/ai/prompting/send_prompt.py"
+SEND_PROMPT = AI_ROOT / "ai_general/scripts/prompting/send_prompt.py"
 
 
 def _get_wrapper(platform: str) -> Path:

@@ -23,6 +23,9 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+sys.path.insert(0, os.environ.get("AI_SCRIPTS") or str(Path(__file__).resolve().parents[1]))
+from uai_toolkit.paths import AI_ROOT, AI_SCRIPTS  # noqa: E402
+
 # common_utils (shared logging core)
 _PY_SRC = Path.home() / "bin" / "all_languages" / "python" / "src"
 if str(_PY_SRC) not in sys.path:
@@ -31,11 +34,10 @@ from uai_toolkit.common_utils.lib_logging import get_logger, configure_logging  
 
 log = get_logger(__name__)
 
-AI_ROOT = Path(os.environ.get("AI_ROOT", Path.home() / "AI" / "ai_root"))
 SCRIPT_DIR = Path(__file__).resolve().parent
 CALLBACKS_DIR = AI_ROOT / "ai_general" / "scripts" / "callbacks"
 SESSION_MGMT_DIR = AI_ROOT / "ai_general" / "scripts" / "session_mgmt"
-MESSAGING = Path.home() / "bin" / "ai" / "messages" / "messaging.py"
+MESSAGING = AI_SCRIPTS / "messages" / "messaging.py"
 
 # callback_lib for endpoint parse/build
 sys.path.insert(0, str(CALLBACKS_DIR))
@@ -375,15 +377,15 @@ def main(argv: list[str] | None = None) -> int:
         print("Queueing message as fallback...")
         home = Path.home()
         queue_dirs = {
-            "claude-desktop": home / "AI/ai_root/ai_comms/claude/prompting/incoming/scheduled",
-            "desktop-claude": home / "AI/ai_root/ai_comms/claude/prompting/incoming/scheduled",
-            "claude-web": home / "AI/ai_root/ai_comms/claude/prompting/incoming/scheduled",
+            "claude-desktop": AI_ROOT / "ai_comms/claude/prompting/incoming/scheduled",
+            "desktop-claude": AI_ROOT / "ai_comms/claude/prompting/incoming/scheduled",
+            "claude-web": AI_ROOT / "ai_comms/claude/prompting/incoming/scheduled",
             "claude-cli": home / ".claude/coordination/to_execute",
-            "codex-cli": home / "AI/ai_root/ai_comms/codex_cli/to_execute",
-            "gemini-cli": home / "AI/ai_root/ai_comms/gemini_cli/to_execute",
-            "chatgpt-app": home / "AI/ai_root/ai_comms/chatgpt/inbox",
-            "chatgpt-web": home / "AI/ai_root/ai_comms/chatgpt/inbox",
-            "user": home / "AI/ai_root/ai_comms/claude/notifications/pending",
+            "codex-cli": AI_ROOT / "ai_comms/codex_cli/to_execute",
+            "gemini-cli": AI_ROOT / "ai_comms/gemini_cli/to_execute",
+            "chatgpt-app": AI_ROOT / "ai_comms/chatgpt/inbox",
+            "chatgpt-web": AI_ROOT / "ai_comms/chatgpt/inbox",
+            "user": AI_ROOT / "ai_comms/claude/notifications/pending",
         }
         queue_dir = queue_dirs.get(target)
         if queue_dir is None:

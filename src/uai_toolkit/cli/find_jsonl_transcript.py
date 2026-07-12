@@ -8,11 +8,11 @@ import re
 from pathlib import Path
 
 # Shared color library
-sys.path.insert(0, os.path.join(os.path.expanduser("~"), "bin", "ai"))
+sys.path.insert(0, os.environ.get("AI_SCRIPTS") or str(Path(__file__).resolve().parents[1]))
 from uai_toolkit.common_utils.standard_colors import c, heading, format_help
 
-# AI_ROOT
-AI_ROOT = Path("$AI_ROOT")
+# AI_ROOT (shared resolver)
+from uai_toolkit.paths import AI_ROOT
 SESSION_STORE_SCRIPT = AI_ROOT / "ai_general" / "scripts" / "session_mgmt" / "session_store.py"
 
 def get_session_info(identifier):

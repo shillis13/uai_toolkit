@@ -54,8 +54,9 @@ try:
 except ImportError:  # pragma: no cover - yaml is available in the workspace
     yaml = None
 
-# AI_ROOT resolution (matches the workspace convention).
-AI_ROOT = Path(os.environ.get("AI_ROOT", os.path.expanduser("~/AI/ai_root")))
+# AI_ROOT resolution (via the shared path resolver).
+sys.path.insert(0, os.environ.get("AI_SCRIPTS") or str(Path(__file__).resolve().parents[1]))
+from uai_toolkit.paths import AI_ROOT  # noqa: E402
 
 SCHEMA_VERSION = 1
 

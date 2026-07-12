@@ -27,6 +27,7 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+import sys
 import time
 from pathlib import Path
 
@@ -38,7 +39,8 @@ LOCK_FILE = GEMINI_DIR / ".mcp_lock"
 COUNT_FILE = GEMINI_DIR / ".mcp_lock_count"
 
 # Project-level config (ai_root)
-AI_ROOT = Path.home() / "AI/ai_root"
+sys.path.insert(0, os.environ.get("AI_SCRIPTS") or str(Path(__file__).resolve().parents[1]))
+from uai_toolkit.paths import AI_ROOT
 PROJECT_GEMINI_DIR = AI_ROOT / ".gemini"
 PROJECT_BACKUP_DIR = AI_ROOT / ".gemini.mcp_suppressed"
 

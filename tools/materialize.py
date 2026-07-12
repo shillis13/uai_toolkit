@@ -94,6 +94,9 @@ def scrub(text: str) -> tuple[str, list[str]]:
 
 
 def transform(source_text: str, entry: dict) -> tuple[str, list[str]]:
+    # docs (README.md/DESIGN.md): scrub only, no import rewrites.
+    if entry.get("kind") == "doc":
+        return scrub(source_text)
     text = apply_rewrites(source_text, entry.get("mcp_pkg"))
     text, survivors = scrub(text)
     return text, survivors
@@ -296,7 +299,7 @@ def expand_module_dirs():
                 continue
             if include_only and parts[0] not in include_only:
                 continue
-            if any(p in ("__pycache__", "archive", ".archive", "_shelved", "tests", "test_files")
+            if any(p in ("__pycache__", ".pytest_cache", "archive", ".archive", "_shelved", "tests", "test_files")
                    or p.startswith(("_backup", "_archive")) for p in parts):
                 continue
             # honor a DO_NOT_PORT.flag anywhere between src_root and this file
@@ -307,6 +310,23 @@ def expand_module_dirs():
             if mcp_pkg:
                 entry["mcp_pkg"] = mcp_pkg
             expanded.append(entry)
+        # carry each dir's docs (README.md/DESIGN.md) alongside the code — scrub only
+        root_key = spec["source"].split(":")[0]
+        for doc in sorted(src_root.rglob("README.md")) + sorted(src_root.rglob("DESIGN.md")):
+            rel = doc.relative_to(src_root)
+            parts = rel.parts
+            if any(p in exclude for p in parts):        # honor the entry's exclude list
+                continue
+            if any(p in ("__pycache__", ".pytest_cache", "archive", ".archive", "_shelved", "tests", "test_files")
+                   or p.startswith(("_backup", "_archive")) for p in parts):
+                continue
+            if include_only and len(parts) > 1 and parts[0] not in include_only:
+                continue
+            if _do_not_port(doc, src_root):
+                continue
+            expanded.append({"dest": f"{spec['dest']}/{rel}",
+                             "source": f"{root_key}:{doc.relative_to(_resolve_root(root_key))}",
+                             "kind": "doc"})
     return expanded
 
 

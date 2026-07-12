@@ -13,8 +13,12 @@ top-level .py/.sh files inside an EVENT dir (hooks/Stop/…), so sitting here it
 fire. It becomes live only when copied into hooks/Stop/ under an `NN_..._async.py` name.
 
 Behavior once live:
-  * Runs `turn_digest.py --session <transcript> --turns last` for the session that just
-    stopped, so the closed turn is digested into <uuid>/int##_br##.yml.
+  * Runs `turn_digest.py --session <transcript> --turns all` for the session that just
+    stopped — a CATCH-UP: it (re)digests every un-digested turn into <uuid>/int##_br##.yml,
+    so gaps a 'last'-only run would miss (a turn whose Stop was skipped) get backfilled.
+  * DE-BOUNCE: a non-blocking per-transcript lock — if a digest run is already in progress
+    (a catch-up can span the endpoint calls), this Stop skips rather than double the work;
+    the next successful run catches up the skipped turns.
   * `_async` => dispatch backgrounds it: the model turn NEVER waits on the digest (or its
     endpoint), even if the endpoint is the local LLM.
   * Endpoint policy lives in turn_digest (DEFAULT_ENDPOINT = $TURN_DIGEST_ENDPOINT, else the
@@ -28,6 +32,7 @@ Behavior once live:
     Default-off rollout — a missing/empty allow-list means NOBODY digests; add '*' to enable
     for ALL sessions. Grow the list as confidence grows.
 """
+import fcntl
 import os
 import subprocess
 import sys
@@ -69,20 +74,42 @@ def handler(hook_input, context):
     transcript = hook_input.get("transcript_path", "") or os.environ.get("AI_CLI_SESSION_ID", "")
     if not transcript:
         return HookResult.error("no transcript_path / AI_CLI_SESSION_ID")
-    # No --endpoint here: turn_digest uses its own DEFAULT_ENDPOINT ($TURN_DIGEST_ENDPOINT, else
-    # the fleet default chain llm,claude,extractive) — one source of the fleet endpoint policy.
-    # Wrapper timeout is kept WELL ABOVE the worst-case chain (llm + claude ~<=90s each) + margin
-    # so the wrapper never kills the parent mid-endpoint and orphan a child (Codex review, blocker 3).
-    # This is async/backgrounded, so a generous cap doesn't affect the model turn.
+    # DE-BOUNCE: at most one digest run per transcript at a time. We use `--turns all` — a
+    # CATCH-UP that (re)digests every UN-digested turn, so it backfills internal gaps a 'last'-only
+    # run structurally misses (e.g. a turn whose Stop was skipped while an earlier async run was
+    # mid-endpoint). But a catch-up run can span the endpoint calls, so two Stops firing close
+    # together must NOT both run and double the endpoint work. A NON-BLOCKING per-transcript lock:
+    # if a run is already in progress, skip — the next successful run catches up the skipped turns.
+    lock_path = Path(str(transcript) + ".digestrun.lock")
     try:
-        r = subprocess.run(
-            [PYTHON, str(TURN_DIGEST), "--session", str(transcript), "--turns", "last"],
-            capture_output=True, text=True, timeout=300,
-        )
-    except Exception as e:  # pragma: no cover - infra-dependent
-        return HookResult.error(f"{type(e).__name__}: {e}")
+        lf = open(lock_path, "w")
+    except OSError:
+        lf = None
+    if lf is not None:
+        try:
+            fcntl.flock(lf.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except (BlockingIOError, OSError):
+            lf.close()
+            return HookResult.skip("digest run already in progress — de-bounced")
+    # No --endpoint here: turn_digest uses its own DEFAULT_ENDPOINT ($TURN_DIGEST_ENDPOINT, else
+    # the fleet default chain llm,claude,extractive). Wrapper timeout is kept WELL ABOVE the
+    # worst-case chain so it never kills the parent mid-endpoint and orphans a child (Codex b3).
+    try:
+        try:
+            r = subprocess.run(
+                [PYTHON, str(TURN_DIGEST), "--session", str(transcript), "--turns", "all"],
+                capture_output=True, text=True, timeout=300,
+            )
+        except Exception as e:  # pragma: no cover - infra-dependent
+            return HookResult.error(f"{type(e).__name__}: {e}")
+    finally:
+        if lf is not None:
+            try:
+                fcntl.flock(lf.fileno(), fcntl.LOCK_UN)
+            finally:
+                lf.close()
     if r.returncode == 0:
-        return HookResult.allow("digested last turn")
+        return HookResult.allow("digested (catch-up: all un-digested turns)")
     return HookResult.error(f"turn_digest rc={r.returncode}: {(r.stderr or '').strip()[:160]}")
 
 

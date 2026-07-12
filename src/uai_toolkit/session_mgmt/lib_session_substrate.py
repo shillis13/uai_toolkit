@@ -36,7 +36,9 @@ _FALLBACK_BINARY_DIRS = (
 )
 
 _AUTO_TMUX_SERVER = object()
-_DEFAULT_AI_ROOT = Path.home() / "AI/ai_root"
+sys.path.insert(0, os.environ.get("AI_SCRIPTS") or str(Path(__file__).resolve().parents[1]))
+from uai_toolkit.paths import AI_ROOT  # noqa: E402
+_DEFAULT_AI_ROOT = AI_ROOT
 
 
 # =============================================================================
@@ -696,13 +698,46 @@ class TmuxSubstrate(SessionSubstrate):
         # input; assume-paste-time 0 (set above) stops tmux from re-coalescing them.
         CHUNK = 400           # bytes per send — comfortably under the ~1KB chip threshold
         INTER_CHUNK_S = 0.06  # pause so the CLI processes each chunk as typed input
+        # NOTE the `--` after `-l`: it terminates tmux option parsing so a chunk that
+        # begins with '-' (a markdown "- " bullet, a "--flag", or a hyphen that lands on
+        # a CHUNK boundary) is sent as LITERAL text, not misread as a send-keys option.
+        # Without it, tmux parses that chunk as options and either errors (raise → abort)
+        # or — worse — silently consumes it and returns 0, so delivery reports SUCCESS
+        # while the chunk's text is dropped. Either way the prompt truncates at that
+        # chunk. Observed live: a 596-char prompt whose "pre-configuring" hyphen sat on
+        # the 400 boundary delivered only 400 chars with success=True.
         if len(text) <= CHUNK:
-            _run_cmd(self._tmux_cmd("send-keys", "-t", name, "-l", text))
-            return
-        for i in range(0, len(text), CHUNK):
-            _run_cmd(self._tmux_cmd("send-keys", "-t", name, "-l", text[i:i + CHUNK]))
-            if i + CHUNK < len(text):
-                time.sleep(INTER_CHUNK_S)
+            _run_cmd(self._tmux_cmd("send-keys", "-t", name, "-l", "--", text))
+        else:
+            for i in range(0, len(text), CHUNK):
+                _run_cmd(self._tmux_cmd("send-keys", "-t", name, "-l", "--", text[i:i + CHUNK]))
+                if i + CHUNK < len(text):
+                    time.sleep(INTER_CHUNK_S)
+
+        # ── Post-send verification (defense-in-depth) ────────────────────────
+        # A dropped chunk (see the `--` note above) or any other delivery fault leaves
+        # the prompt area SHORT while send-keys still returns 0 — a SILENT truncation.
+        # Before the caller submits, confirm the TAIL of what we typed actually landed
+        # in the pane; if it didn't, raise so a truncated prompt is a LOUD failure (the
+        # caller won't press Enter) rather than a silent bad send. The tail is matched
+        # whitespace-normalized so the CLI's soft-wrapping of the input line is tolerated,
+        # and re-checked with a short backoff so a slow render isn't a false alarm.
+        import re as _re
+        _norm = lambda s: _re.sub(r"\s+", "", s)
+        needle = _norm(text)[-28:]
+        if needle:
+            for _delay in (0.15, 0.25, 0.4):
+                time.sleep(_delay)
+                try:
+                    if needle in _norm(self.dump_screen(name, plain_text=True)):
+                        return
+                except Exception:
+                    pass
+            raise SubstrateError(
+                "Typed delivery verification failed: the end of the prompt did not appear "
+                "in the prompt area (likely truncated in transit) — NOT submitted.",
+                code="DELIVERY_TRUNCATED",
+            )
 
     def dump_screen(self, name: str, path: Path | None = None, plain_text: bool = True,
                      full: bool = False) -> str:

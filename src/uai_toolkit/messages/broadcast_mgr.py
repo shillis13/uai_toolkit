@@ -39,7 +39,9 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-AI_ROOT = Path(os.environ.get("AI_ROOT", os.path.expanduser("~/AI/ai_root")))
+sys.path.insert(0, os.environ.get("AI_SCRIPTS") or str(Path(__file__).resolve().parents[1]))
+from uai_toolkit.paths import AI_ROOT, AI_SCRIPTS  # noqa: E402
+
 AI_GENERAL = AI_ROOT / "ai_general"
 _SESSION_MGMT = AI_GENERAL / "scripts" / "session_mgmt"
 for _d in (str(_SESSION_MGMT),):
@@ -53,7 +55,7 @@ except Exception:  # pragma: no cover - degrade to raw identity if unavailable
         return identity if identity else unknown
 
 NOTIFY = AI_GENERAL / "scripts" / "notifications" / "send_user_notification.py"
-MESSAGING = Path(os.path.expanduser("~/bin/ai/messages/messaging.py"))
+MESSAGING = AI_SCRIPTS / "messages" / "messaging.py"
 DEFAULT_STAGGER_MS = 500
 
 # --- Message-to-user path (built EOD 2026-07-01). Set when the interface lands. ---
@@ -111,7 +113,7 @@ def active_targets(platform: str | None = None, sessions: list[str] | None = Non
 
 # ─────────────────────────── prompt-area state ───────────────────────────
 
-_PROMPT_TEXTS = Path(os.path.expanduser("~/bin/ai/prompting/get_prompt_area_texts.py"))
+_PROMPT_TEXTS = AI_SCRIPTS / "prompting" / "get_prompt_area_texts.py"
 
 
 def prompt_state(terminal: str) -> str:

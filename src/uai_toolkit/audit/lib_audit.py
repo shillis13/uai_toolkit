@@ -13,6 +13,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+sys.path.insert(0, os.environ.get("AI_SCRIPTS") or str(Path(__file__).resolve().parents[1]))
+from uai_toolkit.paths import AI_ROOT
+
 from uai_toolkit.audit.lib_audit_store import AuditStore
 
 # Resolved lazily from AI_ROOT env var or default
@@ -24,8 +27,7 @@ _PREVIEW_CAP = 512
 def _get_ai_root() -> Path:
     global _AI_ROOT
     if _AI_ROOT is None:
-        _AI_ROOT = Path(os.environ.get("AI_ROOT",
-                        os.path.expanduser("~/AI/ai_root")))
+        _AI_ROOT = AI_ROOT
     return _AI_ROOT
 
 

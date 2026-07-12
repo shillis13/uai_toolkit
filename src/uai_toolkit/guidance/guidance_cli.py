@@ -27,8 +27,10 @@ from pathlib import Path
 # --- sys.path setup ---
 _SCRIPT_DIR = Path(__file__).resolve().parent
 AI_ROOT = Path(os.environ.get("AI_ROOT", _SCRIPT_DIR.parents[2]))
-sys.path.insert(0, str(AI_ROOT / "ai_general" / "scripts" / "context_files"))
-sys.path.insert(0, str(Path.home() / "bin" / "ai"))
+sys.path.insert(0, os.environ.get("AI_SCRIPTS") or str(_SCRIPT_DIR.parent))
+from uai_toolkit.paths import AI_SCRIPTS  # noqa: E402
+sys.path.insert(0, str(AI_SCRIPTS / "context_files"))
+sys.path.insert(0, str(AI_SCRIPTS))
 
 from uai_toolkit.guidance import guidance_lib  # noqa: E402
 

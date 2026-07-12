@@ -21,10 +21,13 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import List, Tuple
 
+sys.path.insert(0, os.environ.get("AI_SCRIPTS") or str(Path(__file__).resolve().parents[1]))
+from uai_toolkit.paths import AI_ROOT  # noqa: E402
+
 
 def _get_ai_root() -> Path:
     """Resolve AI_ROOT from env or default."""
-    return Path(os.environ.get("AI_ROOT", os.path.expanduser("~/AI/ai_root")))
+    return AI_ROOT
 
 
 AI_ROOT = _get_ai_root()

@@ -24,8 +24,12 @@ Design notes:
 
 import json
 import os
+import sys
 from datetime import datetime
 from pathlib import Path
+
+sys.path.insert(0, os.environ.get("AI_SCRIPTS") or str(Path(__file__).resolve().parents[1]))
+from uai_toolkit.paths import AI_ROOT  # noqa: E402
 
 # States we accept as a real, persistable activity_state. "unknown" is intentionally
 # excluded — we never overwrite a known state with "unknown".
@@ -36,7 +40,7 @@ VALID_STATES = {
 
 
 def _ai_root() -> Path:
-    return Path(os.environ.get("AI_ROOT", os.path.expanduser("~/AI/ai_root")))
+    return AI_ROOT
 
 
 def set_activity_state(session_dir: str, tracking_id: str, state: str, *, signal: bool = True) -> bool:

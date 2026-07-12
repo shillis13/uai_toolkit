@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
 """PostToolUse handler — record knowledge/guidance loads to session state.
 
-When any knowledge_get_* tool is called, records what was loaded to the
-session state loaded.manifest key. This ensures all trait/role/skill/profile
-loads are tracked regardless of which path the AI used.
+Records what a session pulled into context to the loaded.manifest key, from
+either source:
+  - any knowledge_get_* MCP call (by reference name/topic), or
+  - a direct Read of a guarded context dir (by AI_ROOT-relative path).
+
+The latter replaces the retired force-MCP PreToolUse block: raw Reads of
+session_briefs / ai_traits / ai_context_files / ai_profiles / working_memory
+are now allowed, and tracked here instead of forbidden.
 
 Async handler — fire-and-forget, never blocks.
 """
@@ -27,6 +32,21 @@ TRACKED_TOOLS = {
     "knowledge_get_knowledge": "knowledge",
 }
 
+# Direct Reads of these dirs (relative to AI_ROOT) are ALLOWED — the old
+# PreToolUse force-MCP block that forbade them is gone. Tracking moved here so a
+# raw Read of a context file still lands in loaded.manifest (keyed by
+# AI_ROOT-relative path), instead of only knowledge_get_context calls showing up.
+AI_ROOT = Path(os.environ.get("AI_ROOT", os.path.expanduser("~/AI/ai_root")))
+GUARDED_READ_TYPES = {
+    "ai_general/data/session_briefs": "brief",
+    "ai_general/ai_traits": "trait",
+    "ai_general/ai_context_files": "context",
+    "ai_general/ai_profiles": "profile",
+    "ai_memories/80_working_memory": "memory",
+}
+# Filenames that carry no context-load meaning even inside guarded dirs.
+UNTRACKED_READ_FILENAMES = {"DESIGN.md", "README.md", "manifest.yml"}
+
 
 def _match_tool(tool_name):
     """Match tool_name against TRACKED_TOOLS, handling MCP prefix.
@@ -42,6 +62,25 @@ def _match_tool(tool_name):
         if bare in TRACKED_TOOLS:
             return bare
     return None
+
+
+def _guarded_read_load(hook_input, raw_tool_name):
+    """If this is a direct Read of a guarded context file, return
+    (load_type, AI_ROOT-relative-path); else (None, None). Covers exactly the
+    dirs the retired force-MCP PreToolUse block used to guard."""
+    if raw_tool_name != "Read" and not raw_tool_name.endswith("__Read"):
+        return None, None
+    file_path = hook_input.get("tool_input", {}).get("file_path", "")
+    if not file_path or Path(file_path).name in UNTRACKED_READ_FILENAMES:
+        return None, None
+    try:
+        rel = str(Path(file_path).resolve().relative_to(AI_ROOT.resolve()))
+    except (ValueError, OSError):
+        return None, None
+    for prefix, load_type in GUARDED_READ_TYPES.items():
+        if rel.startswith(prefix):
+            return load_type, rel
+    return None, None
 
 
 def read_state(path):
@@ -64,36 +103,58 @@ def write_state(path, state):
 
 def handler(hook_input, context):
     raw_tool_name = hook_input.get("tool_name", "")
-    tool_name = _match_tool(raw_tool_name)
-    if not tool_name:
-        return HookResult.skip("not a knowledge load tool")
 
     if not context.tracking_id or not context.session_dir:
         return HookResult.skip("no session identity")
 
-    # Extract what was loaded from tool_input
-    tool_input = hook_input.get("tool_input", {})
-
-    # Different tools use different param names:
-    #   get_context: "references" (array)
-    #   role/skill/profile: "name"
-    #   trait: "identifier"
-    #   knowledge: "topics" (array)
-    loaded_name = tool_input.get("name") or tool_input.get("identifier") or tool_input.get("topic") or tool_input.get("query") or ""
-    topics = tool_input.get("references") or tool_input.get("topics") or []
-
-    if not loaded_name and not topics:
-        return HookResult.skip("no name/topic in tool input")
-
-    load_type = TRACKED_TOOLS[tool_name]
     now = datetime.now().isoformat()
 
-    # Check if the tool succeeded (tool_result should not contain error)
-    tool_result = hook_input.get("tool_result", "")
-    if isinstance(tool_result, str) and tool_result.startswith("[Role not found") or \
-       isinstance(tool_result, str) and tool_result.startswith("[Trait not found") or \
-       isinstance(tool_result, str) and tool_result.startswith("Error"):
-        return HookResult.skip(f"tool returned error for {loaded_name}")
+    # Two sources feed loaded.manifest:
+    #   (1) knowledge_get_* MCP calls — recorded by reference name/topic.
+    #   (2) direct Read of a guarded context dir — recorded by AI_ROOT-relative
+    #       path (the force-MCP block that used to forbid these reads is gone).
+    tool_name = _match_tool(raw_tool_name)
+    read_type, read_relpath = _guarded_read_load(hook_input, raw_tool_name)
+
+    if tool_name:
+        # Different tools use different param names:
+        #   get_context: "references" (array)
+        #   role/skill/profile: "name"; trait: "identifier"; knowledge: "topics"
+        tool_input = hook_input.get("tool_input", {})
+        loaded_name = tool_input.get("name") or tool_input.get("identifier") or tool_input.get("topic") or tool_input.get("query") or ""
+        topics = tool_input.get("references") or tool_input.get("topics") or []
+        if not loaded_name and not topics:
+            return HookResult.skip("no name/topic in tool input")
+
+        # Don't record a failed load.
+        tool_result = hook_input.get("tool_result", "")
+        if isinstance(tool_result, str) and (tool_result.startswith("[Role not found")
+                or tool_result.startswith("[Trait not found") or tool_result.startswith("Error")):
+            return HookResult.skip(f"tool returned error for {loaded_name}")
+
+        load_type = TRACKED_TOOLS[tool_name]
+        src = tool_name
+        update_lists = True  # role/trait comma-lists take clean identifiers
+        # references[] (knowledge_get_context) and topics[] (knowledge_get_knowledge)
+        # both arrive in `topics`; record whenever present, regardless of load_type.
+        # (Previously gated on load_type=="knowledge", which silently dropped every
+        # knowledge_get_context load — the primary tool.)
+        if topics:
+            names_to_record = [t for t in topics if isinstance(t, str) and t.strip()]
+        elif loaded_name:
+            names_to_record = [loaded_name]
+        else:
+            names_to_record = []
+    elif read_type:
+        load_type = read_type
+        src = "Read"
+        update_lists = False  # a path is not a clean identifier — manifest only
+        names_to_record = [read_relpath]
+    else:
+        return HookResult.skip("not a tracked load")
+
+    if not names_to_record:
+        return HookResult.skip("nothing to record")
 
     # Read current state and update loaded.manifest
     state_path = Path(context.session_dir) / f"{context.tracking_id}_state.json"
@@ -108,39 +169,28 @@ def handler(hook_input, context):
     if not isinstance(manifest, list):
         manifest = []
 
-    # Build list of names to record (knowledge_get_knowledge sends topics array)
-    names_to_record = []
-    if topics and load_type == "knowledge":
-        names_to_record = [t for t in topics if isinstance(t, str) and t.strip()]
-    elif loaded_name:
-        names_to_record = [loaded_name]
-
     recorded = []
     for name in names_to_record:
         # Check for duplicates — don't record the same load twice
-        already = False
-        for entry in manifest:
-            if entry.get("type") == load_type and entry.get("name") == name:
-                already = True
-                break
-        if already:
+        if any(e.get("type") == load_type and e.get("name") == name for e in manifest):
             continue
 
         manifest.append({
             "type": load_type,
             "name": name,
-            "src": tool_name,
+            "src": src,
             "at": now,
         })
 
-        # Also update the type-specific loaded.* keys
-        if load_type == "role":
+        # Maintain the flat comma-lists only for clean identifier loads (knowledge
+        # tools) — a guarded Read records a path, which doesn't belong in these.
+        if update_lists and load_type == "role":
             existing_roles = state.get("loaded.roles", "")
             roles = [r.strip() for r in existing_roles.split(",") if r.strip()] if existing_roles else []
             if name not in roles:
                 roles.append(name)
                 state["loaded.roles"] = ",".join(roles)
-        elif load_type == "trait":
+        elif update_lists and load_type == "trait":
             existing = state.get("loaded.traits", "")
             traits = [t.strip() for t in existing.split(",") if t.strip()] if existing else []
             if name not in traits:

@@ -13,15 +13,16 @@ MCP servers import from here. CLI (callback.py) wraps this.
 import os
 import stat
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse, parse_qs, unquote, quote
 
+sys.path.insert(0, os.environ.get("AI_SCRIPTS") or str(Path(__file__).resolve().parents[1]))
+from uai_toolkit.paths import AI_ROOT  # noqa: E402
 
-SEND_PROMPT_SCRIPT = Path(
-    os.environ.get("AI_ROOT", os.path.expanduser("~/AI/ai_root"))
-) / "ai_general/scripts/prompting/send_prompt.py"
+SEND_PROMPT_SCRIPT = AI_ROOT / "ai_general/scripts/prompting/send_prompt.py"
 
 
 _PLATFORM_TARGETS = {
@@ -42,10 +43,7 @@ def _ensure_session_mgmt_on_path():
     launchd) hit ModuleNotFoundError('lib_uri'), which surfaced as a misleading
     "target/endpoint required" and silently broke uai://session/<id> sends
     (meridian reflection, reflect_1 2026-07-03). Centralised + called up front."""
-    import sys
-    sm_path = str(Path(
-        os.environ.get("AI_ROOT", os.path.expanduser("~/AI/ai_root"))
-    ) / "ai_general/scripts/session_mgmt")
+    sm_path = str(AI_ROOT / "ai_general/scripts/session_mgmt")
     if sm_path not in sys.path:
         sys.path.insert(0, sm_path)
 

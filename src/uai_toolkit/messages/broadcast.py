@@ -33,8 +33,9 @@ import sys
 from pathlib import Path
 from typing import Dict, List, Optional
 
+sys.path.insert(0, os.environ.get("AI_SCRIPTS") or str(Path(__file__).resolve().parents[1]))
+from uai_toolkit.paths import AI_ROOT, AI_SCRIPTS  # noqa: E402
 
-AI_ROOT = Path(os.environ.get("AI_ROOT", os.path.expanduser("~/AI/ai_root")))
 SESSION_MGMT_DIR = AI_ROOT / "ai_general" / "scripts" / "session_mgmt"
 if str(SESSION_MGMT_DIR) not in sys.path:
     sys.path.insert(0, str(SESSION_MGMT_DIR))
@@ -47,7 +48,7 @@ except Exception:  # pragma: no cover - degrade to raw identity if unavailable
         return identity if identity else unknown
 
 SEND_PROMPT = AI_ROOT / "ai_general" / "scripts" / "prompting" / "send_prompt.py"
-MESSAGING = Path.home() / "bin" / "ai" / "messages" / "messaging.py"
+MESSAGING = AI_SCRIPTS / "messages" / "messaging.py"
 SESSION_STORE = AI_ROOT / "ai_general" / "scripts" / "session_mgmt" / "session_store.py"
 SESSION_OPS = AI_ROOT / "ai_general" / "scripts" / "session_mgmt" / "session_ops.py"
 
@@ -167,7 +168,7 @@ def send_message_to(session_id: str, content: str, sender: str) -> Dict:
 def notify_sender(callback_endpoint: str, delivery: Dict) -> None:
     """Notify sender of a delivery result via callback endpoint."""
     try:
-        cb_path = Path.home() / "bin" / "ai" / "callbacks"
+        cb_path = AI_SCRIPTS / "callbacks"
         if str(cb_path) not in sys.path:
             sys.path.insert(0, str(cb_path))
         from uai_toolkit.callbacks.callback_lib import execute_uri

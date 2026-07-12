@@ -25,14 +25,17 @@ from __future__ import annotations
 import os
 import secrets
 import sqlite3
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Union
 
+sys.path.insert(0, os.environ.get("AI_SCRIPTS") or str(Path(__file__).resolve().parents[1]))
+from uai_toolkit.paths import AI_ROOT  # noqa: E402
+
 SCHEMA_VERSION = 1
 
 # AI_ROOT resolution mirrors the workspace convention.
-AI_ROOT = Path(os.environ.get("AI_ROOT", os.path.expanduser("~/AI/ai_root")))
 DB_PATH = AI_ROOT / "ai_general" / "data" / "comms.db"
 
 # Body files referenced by body_refs.path are resolved relative to the comms

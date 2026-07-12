@@ -47,12 +47,16 @@ Terms:
 from __future__ import annotations
 
 import hashlib
+import os
 import sqlite3
 import sys
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
+
+sys.path.insert(0, os.environ.get("AI_SCRIPTS") or str(Path(__file__).resolve().parents[1]))
+from uai_toolkit.paths import AI_ROOT  # noqa: E402
 
 import yaml
 
@@ -484,7 +488,7 @@ def main(argv: Optional[list] = None) -> int:
     if args.comms_root:
         comms_root = Path(args.comms_root)
     else:
-        ai_root = Path(os.environ.get("AI_ROOT", os.path.expanduser("~/AI/ai_root")))
+        ai_root = AI_ROOT
         comms_root = ai_root / "ai_comms"
 
     bf = Backfiller(comms_root=comms_root, index=idx)

@@ -47,8 +47,11 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+sys.path.insert(0, os.environ.get("AI_SCRIPTS") or str(Path(__file__).resolve().parents[1]))
+from uai_toolkit.paths import AI_SCRIPTS
+
 # Import standard_colors
-sys.path.insert(0, str(Path.home() / "bin" / "ai"))
+sys.path.insert(0, str(AI_SCRIPTS))
 from uai_toolkit.common_utils.standard_colors import (
     CODES as _SC_CODES,
     c as _sc_c,
@@ -478,7 +481,7 @@ def _strip_uri(identifier: str) -> str:
         return identifier
     try:
         import sys as _sys
-        _sm = str(Path.home() / "bin" / "ai" / "session_mgmt")
+        _sm = str(AI_SCRIPTS / "session_mgmt")
         if _sm not in _sys.path:
             _sys.path.insert(0, _sm)
         from uai_toolkit.session_mgmt.lib_uri import session_id_of
@@ -503,7 +506,7 @@ def _resolve_via_session_store(query: str) -> Path | None:
     no match is found.
     """
     try:
-        store_path = Path.home() / "bin" / "ai" / "session_mgmt" / "session_store.py"
+        store_path = AI_SCRIPTS / "session_mgmt" / "session_store.py"
         if not store_path.exists():
             return None
         import importlib.util

@@ -41,7 +41,8 @@ from uai_toolkit.context_files.context_mgr import ContextIndex  # noqa: E402
 
 # === Path configuration ===
 
-AI_ROOT = Path(os.environ.get("AI_ROOT", os.path.expanduser("~/AI/ai_root")))
+sys.path.insert(0, os.environ.get("AI_SCRIPTS") or str(Path(__file__).resolve().parents[1]))
+from uai_toolkit.paths import AI_ROOT  # noqa: E402
 AI_GENERAL = AI_ROOT / "ai_general"
 TRAITS_DIR = AI_GENERAL / "ai_context_files"  # was the ai_traits symlink (now removed)
 PROFILES_DIR = AI_GENERAL / "ai_profiles"
@@ -105,6 +106,14 @@ def read_trait(rel_path: str) -> str:
         text = text[len("ai_general/"):]
     if text.startswith("ai_traits/") or text.startswith("ai_context_files/"):
         return read_file_content(AI_GENERAL / text)
+
+    # Items whose files live OUTSIDE ai_general — e.g. memory slots under
+    # ai_memories/80_working_memory/ or briefs under data/session_briefs/ — are
+    # now indexed in context.db with an AI_ROOT-relative path. Read them from
+    # their real location before the ai_context_files stem search (which only
+    # knows how to look under ai_context_files/ and would report "not found").
+    if "/" in text and (AI_ROOT / text).is_file():
+        return read_file_content(AI_ROOT / text)
 
     normalized = normalize_trait_identifier(text)
     suffixes = (

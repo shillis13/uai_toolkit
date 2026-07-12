@@ -23,7 +23,8 @@ from typing import Optional
 
 # --- Paths ---
 
-AI_ROOT = Path(os.environ.get("AI_ROOT", Path.home() / "AI/ai_root"))
+sys.path.insert(0, os.environ.get("AI_SCRIPTS") or str(Path(__file__).resolve().parents[1]))
+from uai_toolkit.paths import AI_ROOT  # noqa: E402
 AI_GENERAL = AI_ROOT / "ai_general"
 TRAITS_DIR = AI_GENERAL / "ai_traits"
 PROFILES_DIR = AI_GENERAL / "ai_profiles"
@@ -539,24 +540,29 @@ def discover_globals() -> list[str]:
 
 
 def _discover_from_registry() -> dict[str, list[str]]:
-    """Query the traits registry DB for all indexed items.
+    """Query the authoritative context.db index for all active items.
 
-    Returns items grouped by VALID_TYPES. Items are keyed the same way
-    filesystem discovery keys them:
-      traits: "category/base_name" (e.g., "knowledge/instr_operating_principles")
-      roles: role id (e.g., "dev") or "skill:name"
-      profiles: profile id (e.g., "individual_developer")
+    Returns items grouped the way filesystem discovery keys them:
+      traits:   "category/base_name" (e.g., "how_tos/instr_operating_principles")
+      roles:    role name (e.g., "dev") or "skill:<name>"
+      profiles: profile / global / platform name
+
+    Ported off the retired context_files_registry.db (scan_traits_registry) onto
+    ``data/context.db`` — the authoritative context-files index built by
+    context_mgr.py. context.db's ``name`` already carries the category/base form
+    for leaves (e.g. "how_tos/instr_x"). Briefs/memory are fs-authoritative and
+    are left to filesystem discovery.
     """
-    db_path = AI_GENERAL / "data" / "context_files" / "context_files_registry.db"
+    db_path = AI_GENERAL / "data" / "context.db"
     if not db_path.exists():
         return {}
 
     import sqlite3
     try:
-        db = sqlite3.connect(str(db_path))
+        db = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
         db.row_factory = sqlite3.Row
         rows = db.execute(
-            "SELECT id, category, composition_type, status FROM content_items WHERE status = 'active' OR status IS NULL"
+            "SELECT kind, name FROM items WHERE status = 'active' OR status IS NULL"
         ).fetchall()
         db.close()
     except (sqlite3.Error, OSError):
@@ -564,22 +570,19 @@ def _discover_from_registry() -> dict[str, list[str]]:
 
     result = {"traits": [], "roles": [], "profiles": []}
     for row in rows:
-        comp = (row["composition_type"] or "").lower()
-        item_id = row["id"]
-        category = row["category"] or ""
-
-        if comp == "role":
-            result["roles"].append(item_id)
-        elif comp == "skill":
-            result["roles"].append(f"skill:{item_id}")
-        elif comp == "profile":
-            result["profiles"].append(item_id)
-        elif comp in ("global", "platform"):
-            result["profiles"].append(item_id)
-        else:
-            # Traits/knowledge — use category/id format
-            key = f"{category}/{item_id}" if category else item_id
-            result["traits"].append(key)
+        kind = (row["kind"] or "").lower()
+        name = row["name"] or ""
+        if not name:
+            continue
+        if kind == "role":
+            result["roles"].append(name)
+        elif kind == "skill":
+            result["roles"].append(f"skill:{name}")
+        elif kind in ("profile", "global", "platform"):
+            result["profiles"].append(name)
+        elif kind in ("instruction", "knowledge"):
+            result["traits"].append(name)
+        # brief/memory: fs-authoritative (skipped here)
 
     return result
 

@@ -8,7 +8,9 @@ import os
 import sys
 from pathlib import Path
 
-_AI_ROOT = Path(os.environ.get("AI_ROOT", Path.home() / "AI" / "ai_root"))
+sys.path.insert(0, os.environ.get("AI_SCRIPTS") or str(Path(__file__).resolve().parents[1]))
+from uai_toolkit.paths import AI_ROOT
+_AI_ROOT = AI_ROOT
 _CLI_DIR = _AI_ROOT / "ai_general" / "scripts" / "cli"
 
 if __name__ == "__main__":

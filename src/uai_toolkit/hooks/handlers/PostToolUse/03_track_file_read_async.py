@@ -2,10 +2,14 @@
 """PostToolUse hook for Read — tracks the read in file access state."""
 
 import json
+import os
 import sys
 from pathlib import Path
 
-sys.path.insert(0, '$AI_ROOT/ai_general/scripts/file_access')
+# Locate ai_general/scripts/file_access: honor $AI_SCRIPTS override, else derive
+# from this hook's location (…/data/hooks/PostToolUse/ -> parents[3] = ai_general).
+_scripts = os.environ.get("AI_SCRIPTS") or str(Path(__file__).resolve().parents[3] / "scripts")
+sys.path.insert(0, str(Path(_scripts) / "file_access"))
 from uai_toolkit.file_access.tracker import log_read
 
 def main():

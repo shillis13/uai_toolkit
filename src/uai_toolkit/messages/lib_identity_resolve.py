@@ -51,6 +51,9 @@ import sys
 from pathlib import Path
 from typing import Dict, List, Mapping, Optional
 
+sys.path.insert(0, os.environ.get("AI_SCRIPTS") or str(Path(__file__).resolve().parents[1]))
+from uai_toolkit.paths import AI_ROOT  # noqa: E402
+
 
 # =============================================================================
 # Locating the session store
@@ -60,7 +63,7 @@ def _ai_root() -> Path:
     root = os.environ.get("AI_ROOT")
     if root:
         return Path(root)
-    return Path.home() / "AI" / "ai_root"
+    return AI_ROOT
 
 
 SESSION_STORE = (
@@ -312,5 +315,17 @@ def resolve_recipient(to: Optional[str]) -> Dict:
         # team / project / any other entity address: record, do not fan out yet.
         return {"kind": "entity", "to_entity": raw, "deferred_fanout": True}
 
-    # Bare id or display name.
-    return _resolve_session(raw)
+    # Bare id or display name. Try a session first; if nothing matches, fall
+    # back to the user registry so a bare REGISTERED-user id (e.g. "piano_man")
+    # resolves to the user endpoint — symmetric with resolve_sender's bare-user
+    # path (todo_0367). This is why addressing the user by their bare handle
+    # previously failed RecipientNotFound: sessions could reply FROM a bare user
+    # id but nobody could send/reply TO one. Additive — only reached on a session
+    # miss, so it never changes an existing session delivery. RecipientAmbiguous
+    # (>1 session) is NOT caught, so it still surfaces.
+    try:
+        return _resolve_session(raw)
+    except RecipientNotFound:
+        if _resolve_uri("uai://user/{}".format(raw)):
+            return _resolve_user("uai://user/{}".format(raw), raw)
+        raise

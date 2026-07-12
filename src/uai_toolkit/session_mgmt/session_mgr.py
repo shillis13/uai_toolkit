@@ -32,6 +32,8 @@ from pathlib import Path
 _SCRIPT_DIR = str(Path(__file__).resolve().parent)
 if _SCRIPT_DIR not in sys.path:
     sys.path.insert(0, _SCRIPT_DIR)
+sys.path.insert(0, os.environ.get("AI_SCRIPTS") or str(Path(__file__).resolve().parents[1]))
+from uai_toolkit.paths import AI_ROOT  # noqa: E402
 
 
 def _strip_uri(identifier):
@@ -233,7 +235,7 @@ def cmd_state_load(args):
 
 def cmd_get_ai_root(_args):
     # type: (argparse.Namespace) -> None
-    ai_root = os.environ.get("AI_ROOT", str(Path.home() / "AI/ai_root"))
+    ai_root = str(AI_ROOT)
     _json_out({"ai_root": ai_root, "exists": Path(ai_root).exists()})
 
 

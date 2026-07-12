@@ -44,7 +44,9 @@ MAX_DIMENSION = 2000
 # ---------------------------------------------------------------------------
 # Colors
 # ---------------------------------------------------------------------------
-sys.path.insert(0, '$AI_ROOT/ai_general/scripts/utils')
+sys.path.insert(0, os.environ.get("AI_SCRIPTS") or str(Path(__file__).resolve().parents[1]))
+from uai_toolkit.paths import AI_SCRIPTS  # noqa: E402
+sys.path.insert(0, str(AI_SCRIPTS / "utils"))
 from uai_toolkit.common_utils.standard_colors import c, format_help, bold, dim, heading  # noqa: E402
 
 
@@ -66,7 +68,7 @@ def find_jsonl(identifier: str) -> Optional[Path]:
 
     # Resolve through session_store → get CLI UUID → find JSONL
     try:
-        sm_path = str(Path.home() / "AI/ai_root/ai_general/scripts/session_mgmt")
+        sm_path = str(AI_SCRIPTS / "session_mgmt")
         if sm_path not in sys.path:
             sys.path.insert(0, sm_path)
         from uai_toolkit.session_mgmt.session_store import SessionStore

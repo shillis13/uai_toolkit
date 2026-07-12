@@ -27,7 +27,7 @@ from datetime import datetime
 from pathlib import Path
 
 AI_ROOT = Path(os.environ.get("AI_ROOT") or (Path.home() / "AI" / "ai_root"))
-GUIDANCE_CLI = AI_ROOT / "ai_general" / "scripts" / "traits" / "guidance_cli.py"
+GUIDANCE_CLI = AI_ROOT / "ai_general" / "scripts" / "context_files" / "guidance_cli.py"
 
 DEFAULT_MAX_CHARS = 200_000
 
@@ -46,7 +46,14 @@ def _resolve_via_guidance(name, tracking_id):
             capture_output=True, text=True, timeout=30, env=env,
         )
         out = result.stdout.strip()
-        if out and "[Not found" not in out:
+        # Guidance emits a bracketed error marker when it can't resolve a name —
+        # "[Not found: …]", "[Trait not found: …]", "[Brief not found]", etc. NEVER
+        # inject that error string as content (that was the brief-load bug: the old
+        # guard only checked "[Not found" and missed "[Trait not found …]"). Any
+        # first-line bracketed "… not found …" ⇒ unresolved ⇒ fall back to raw path.
+        first_line = out.split("\n", 1)[0].lower()
+        looks_unresolved = first_line.startswith("[") and "not found" in first_line
+        if out and not looks_unresolved:
             return out
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
         pass

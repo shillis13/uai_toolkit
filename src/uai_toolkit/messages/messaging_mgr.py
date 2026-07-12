@@ -45,11 +45,14 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any
 
-_CB = Path.home() / "bin/ai/callbacks"
+sys.path.insert(0, os.environ.get("AI_SCRIPTS") or str(Path(__file__).resolve().parents[1]))
+from uai_toolkit.paths import AI_ROOT, AI_SCRIPTS  # noqa: E402
+
+_CB = AI_SCRIPTS / "callbacks"
 if str(_CB) not in sys.path:
     sys.path.insert(0, str(_CB))
 
-_SM = Path.home() / "bin/ai/session_mgmt"
+_SM = AI_SCRIPTS / "session_mgmt"
 if str(_SM) not in sys.path:
     sys.path.insert(0, str(_SM))
 
@@ -88,7 +91,7 @@ except Exception:  # pragma: no cover - degrade to raw identity if unavailable
 logger = logging.getLogger(__name__)
 
 # Import standard_colors for consistent color output
-_AI_BIN = Path.home() / "bin" / "ai"
+_AI_BIN = AI_SCRIPTS
 if str(_AI_BIN) not in sys.path:
     sys.path.insert(0, str(_AI_BIN))
 from uai_toolkit.common_utils.standard_colors import (
@@ -133,7 +136,7 @@ def _cp(code, text):
 
 def _get_ai_root() -> Path:
     """Resolve AI_ROOT from env or default."""
-    return Path(os.environ.get("AI_ROOT", os.path.expanduser("~/AI/ai_root")))
+    return AI_ROOT
 
 
 AI_ROOT = _get_ai_root()
@@ -265,7 +268,7 @@ def send_to_multiple(
 
 # ── Active delivery (B): don't wait for the recipient to poll ──────────────
 _PLATFORM_TARGET = {"claude_cli": "claude-cli", "codex_cli": "codex-cli", "gemini_cli": "gemini-cli"}
-_PROMPTING_DIR = Path.home() / "bin" / "ai" / "prompting"
+_PROMPTING_DIR = AI_SCRIPTS / "prompting"
 
 # Urgencies that actively POKE a verifiably-idle recipient with a "you've got
 # mail" nudge. interrupt/prompt mean "reach me now"; async/passive stay pull-only
@@ -377,7 +380,7 @@ def _notify_user_blocked_interrupt(tid: str, sender: str, preview: str, blk: Dic
     """Pop a user notification that an interrupt-urgency message was held by a
     prompt block, so PianoMan knows an urgent one is waiting. Best-effort."""
     try:
-        notify = Path.home() / "bin" / "ai" / "notifications" / "send_user_notification.py"
+        notify = AI_SCRIPTS / "notifications" / "send_user_notification.py"
         if not notify.exists():
             return
         msg = "Interrupt message held — {} is prompt-blocked. From {}: \"{}\"".format(
@@ -1325,6 +1328,13 @@ def check_unread(session: Optional[str] = None) -> Dict[str, Any]:
 
         return {
             "success": True,
+            "scope": "all_inboxes",
+            "note": (
+                "Fleet-wide unread across EVERY session's inbox, keyed by "
+                "recipient (these are each session's own unread mail, NOT "
+                "senders to you). Pass session=<tracking_id> for a single "
+                "session's own inbox."
+            ),
             "sessions": counts,
             "broadcast_unread": broadcast_unread,
             "total_unread": total + broadcast_unread,
@@ -2101,7 +2111,7 @@ def _load_store() -> Any:
         return _store
     _store_loaded = True
     try:
-        _sm_path = str(Path.home() / "AI/ai_root/ai_general/scripts/session_mgmt")
+        _sm_path = str(AI_SCRIPTS / "session_mgmt")
         if _sm_path not in sys.path:
             sys.path.insert(0, _sm_path)
         from uai_toolkit.session_mgmt.session_store import SessionStore  # type: ignore
@@ -2189,6 +2199,21 @@ def _resolve_recipient_strict(ref: str) -> tuple:
         return None, "recipient resolution failed for {!r}: {}".format(orig, e)
     if session and session.get("tracking_id"):
         return session["tracking_id"], None
+    # The session store missed. Fall back to the canonical resolver, which also
+    # honors the user registry — so a bare registered-user handle (e.g.
+    # "piano_man") delivers to the user's inbox. Without this, reply / reply-all
+    # to the user fail here (the session store has no user record), which is why
+    # answering the user threaded as a new conversation via the send path instead
+    # (todo_0502 fixed the send path; this brings reply to parity).
+    try:
+        from uai_toolkit.messages.lib_identity_resolve import resolve_recipient as _rr
+        target = _rr(orig)
+        if target.get("kind") == "user" and target.get("entity_id"):
+            return target["entity_id"], None
+        if target.get("kind") == "session" and target.get("tracking_id"):
+            return target["tracking_id"], None
+    except Exception:
+        pass  # fall through to the strict rejection below
     return None, (
         "unresolvable recipient: {!r} — provide a known tracking_id, display "
         "name, CLI UUID, or prompt:// URI".format(orig)

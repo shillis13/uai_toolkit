@@ -28,13 +28,16 @@ import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
-sys.path.insert(0, os.path.join(os.path.expanduser("~"), "bin", "ai"))
+sys.path.insert(0, os.environ.get("AI_SCRIPTS") or str(Path(__file__).resolve().parents[1]))
+from uai_toolkit.paths import AI_ROOT, AI_SCRIPTS  # noqa: E402
+
+sys.path.insert(0, str(AI_SCRIPTS))
 from uai_toolkit.common_utils.standard_colors import c, error as sc_error, warn, success, info, dim, bold, heading
 
 SEND_PROMPT = Path(__file__).resolve().parent / "send_prompt.py"
 MARKER = "# schedule_prompt:"
-LOG_DIR = Path.home() / "AI/ai_root/ai_general/logs/scheduled_prompts"
-SCHEDULE_FILE = Path.home() / "AI/ai_root/ai_general/data/scheduled_prompts/scheduled_prompts.json"
+LOG_DIR = AI_ROOT / "ai_general" / "logs" / "scheduled_prompts"
+SCHEDULE_FILE = AI_ROOT / "ai_general" / "data" / "scheduled_prompts" / "scheduled_prompts.json"
 MAX_DELAY_SECONDS = 86400  # 24 hours
 
 

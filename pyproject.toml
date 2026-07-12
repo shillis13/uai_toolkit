@@ -47,4 +47,4 @@ where = ["src"]
 # The knowledge base (ai_context_files) + composition layer (ai_profiles) ship
 # as package data; `uai-toolkit install` copies them into AI_ROOT and builds the
 # guidance index (context.db, via context_mgr reindex) from them on a fresh box.
-"uai_toolkit" = ["py.typed", "content/**/*", "ai_env.sh"]
+"uai_toolkit" = ["py.typed", "content/**/*", "ai_env.sh", "**/*.md"]

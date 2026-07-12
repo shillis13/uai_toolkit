@@ -36,6 +36,7 @@ for _d in (_SCRIPT_DIR, _CLI_DIR, _AI_SCRIPTS):
 
 from uai_toolkit.session_mgmt.lib_session_substrate import build_tmux_command, get_substrate, SubstrateError
 from uai_toolkit.common_utils.lib_clean_text import clean_text
+from uai_toolkit.paths import AI_ROOT
 
 try:
     from uai_toolkit.session_mgmt.lib_session_activity import set_activity_state
@@ -756,8 +757,7 @@ def get_ai_status(session_name: str, platform: str = "", substrate: str | None =
             else:
                 match = live_uuid == store_uuid
             if not match:
-                ai_root = os.environ.get("AI_ROOT",
-                    os.path.expanduser("~/AI/ai_root"))
+                ai_root = str(AI_ROOT)
                 fix_cmd = (f"{ai_root}/ai_general/scripts/session_mgmt/"
                            f"session_store.py update {tracking_id} "
                            f"--set cli_session_id={live_uuid}")
@@ -768,8 +768,7 @@ def get_ai_status(session_name: str, platform: str = "", substrate: str | None =
                 }
         elif live_uuid and not store_uuid:
             # Store has no UUID but live terminal does — backfill opportunity
-            ai_root = os.environ.get("AI_ROOT",
-                os.path.expanduser("~/AI/ai_root"))
+            ai_root = str(AI_ROOT)
             fix_cmd = (f"{ai_root}/ai_general/scripts/session_mgmt/"
                        f"session_store.py update {tracking_id} "
                        f"--set cli_session_id={live_uuid}")
@@ -799,7 +798,7 @@ def _audit_emit_session_write(session_name, text, delivery, press_enter, success
     """Emit audit event for session write. Never raises."""
     try:
         import sys as _sys
-        _src = str(Path.home() / "bin" / "ai")
+        _src = str(_AI_SCRIPTS)
         if _src not in _sys.path:
             _sys.path.insert(0, _src)
         from uai_toolkit.audit import lib_audit

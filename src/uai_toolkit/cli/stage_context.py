@@ -29,7 +29,9 @@ import shutil
 import sys
 from pathlib import Path
 
-_AI_ROOT = Path(os.environ.get("AI_ROOT", Path.home() / "AI" / "ai_root"))
+sys.path.insert(0, os.environ.get("AI_SCRIPTS") or str(Path(__file__).resolve().parents[1]))
+from uai_toolkit.paths import AI_ROOT
+_AI_ROOT = AI_ROOT
 _SESSION_MGMT = _AI_ROOT / "ai_general" / "scripts" / "session_mgmt"
 if str(_SESSION_MGMT) not in sys.path:
     sys.path.insert(0, str(_SESSION_MGMT))

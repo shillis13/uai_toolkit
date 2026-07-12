@@ -33,9 +33,13 @@ hooks, the footer builder, and messaging_mgr can all import it cheaply.
 from __future__ import annotations
 
 import os
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+sys.path.insert(0, os.environ.get("AI_SCRIPTS") or str(Path(__file__).resolve().parents[1]))
+from uai_toolkit.paths import AI_ROOT  # noqa: E402
 
 try:
     import yaml  # type: ignore
@@ -44,7 +48,6 @@ except Exception:  # pragma: no cover - fallback
     import json as _json
     _HAVE_YAML = False
 
-AI_ROOT = Path(os.environ.get("AI_ROOT", Path.home() / "AI/ai_root"))
 BLOCKS_DIR = AI_ROOT / "ai_general" / "data" / "locks" / "prompt_blocks"
 PROMPTS_INBOX = AI_ROOT / "ai_comms" / "prompts_inbox"
 

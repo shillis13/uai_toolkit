@@ -133,6 +133,20 @@ SCRUB_PATTERNS = [
 # dest is relative to src/uai_toolkit/. source is "<root_key>:<relpath>".
 # rename is implicit (source basename may differ from dest basename).
 MODULES = [
+    # ---- per-dir docs for the per-file-sourced packages (dir-glob pkgs get theirs
+    #      automatically). kind=doc = copy + scrub, no import rewrite. ----
+    {"dest": "jsonl/README.md",         "source": "ai:jsonl/README.md",              "kind": "doc"},
+    {"dest": "memory/README.md",        "source": "ai:memories/README.md",           "kind": "doc"},
+    {"dest": "history/README.md",       "source": "ai:histories/README.md",          "kind": "doc"},
+    {"dest": "file_access/README.md",   "source": "ai:file_access/README.md",         "kind": "doc"},
+    {"dest": "audit/README.md",         "source": "ai:audit/README.md",               "kind": "doc"},
+    {"dest": "coordination/README.md",  "source": "ai:coordination/README.md",        "kind": "doc"},
+    {"dest": "guidance/README.md",      "source": "ai:context_files/README.md",       "kind": "doc"},
+    {"dest": "mcp/knowledge/README.md", "source": "mcps:knowledge/README.md",         "kind": "doc"},
+    {"dest": "mcp/workflow/README.md",  "source": "mcps:workflow/README.md",          "kind": "doc"},
+    {"dest": "mcp/comms/README.md",     "source": "mcps:comms/README.md",             "kind": "doc"},
+    {"dest": "mcp/sessions/README.md",  "source": "mcps:sessions/README.md",          "kind": "doc"},
+
     # ---- shared env-var path resolver (source-authoritative in ai_general;
     #      Noctis + Portage merged model: env>config.toml>default, platform-aware
     #      discovery, ai_root()/config()/get() accessors + AI_* constants) ----

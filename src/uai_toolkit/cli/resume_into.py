@@ -29,7 +29,8 @@ import time
 from pathlib import Path
 from typing import Any
 
-AI_ROOT = Path(os.environ.get("AI_ROOT", Path.home() / "AI" / "ai_root"))
+sys.path.insert(0, os.environ.get("AI_SCRIPTS") or str(Path(__file__).resolve().parents[1]))
+from uai_toolkit.paths import AI_ROOT
 SCRIPTS_DIR = AI_ROOT / "ai_general" / "scripts"
 CLI_DIR = SCRIPTS_DIR / "cli"
 SESSION_MGMT_DIR = SCRIPTS_DIR / "session_mgmt"

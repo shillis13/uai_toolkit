@@ -26,7 +26,10 @@ import subprocess
 import sys
 from pathlib import Path
 
-_AI_ROOT = Path(os.environ.get("AI_ROOT", Path.home() / "AI" / "ai_root"))
+sys.path.insert(0, os.environ.get("AI_SCRIPTS") or str(Path(__file__).resolve().parents[1]))
+from uai_toolkit.paths import AI_ROOT
+
+_AI_ROOT = AI_ROOT
 _GEN = _AI_ROOT / "ai_general"
 _SESSION_MGMT = _GEN / "scripts" / "session_mgmt"
 _PROMPTING = _GEN / "scripts" / "prompting"
@@ -41,7 +44,9 @@ for _d in (_SESSION_MGMT, _PROMPTING):
 IDLE_MIN_S = 300              # idle >= 5 min before triggering
 RESCHEDULE_IN = "5m"
 DEFAULT_THRESHOLD = 85
-SELF_WRITE_MIN_REMAINING = 10  # >= this % room -> self-write; else subagent
+# Platforms with a Task/subagent tool — always delegate brief-writing to a
+# subagent (transcript-from-disk) instead of self-writing from depleted context.
+_SUBAGENT_PLATFORMS = ("claude_cli", "codex_cli")
 _PLATFORM_TARGET = {"claude_cli": "claude-cli", "codex_cli": "codex-cli", "gemini_cli": "gemini-cli"}
 
 
@@ -222,30 +227,39 @@ def _live_idle(target: str, terminal: str) -> bool:
         return False
 
 
-def _build_instruction(tid: str, ctx_pct, session_dir: str, token: str) -> str:
-    """The compact instruction body — self-write if there's room, else subagent."""
-    remaining = (100 - ctx_pct) if isinstance(ctx_pct, int) else 0
+def _build_instruction(tid: str, ctx_pct, session_dir: str, token: str, platform: str = "") -> str:
+    """The compact instruction body.
+
+    ALWAYS delegate brief-writing to a subagent on subagent-capable platforms
+    (Claude/Codex): the subagent reads the transcript from disk via
+    `condense.py --interval live`, so brief quality no longer depends on how
+    little context the parent has left at the ~89% trigger — and the brief is a
+    clean one-shot snapshot of the live interval. Self-write is only a FALLBACK
+    for platforms without a subagent tool.
+    """
     brief_path = _GEN / "data" / "session_briefs" / "auto_briefs" / f"{tid}.yml"
-    if remaining >= SELF_WRITE_MIN_REMAINING:
+    if platform in _SUBAGENT_PLATFORMS:
         return (
-            f"You've been idle a while and your context is at {ctx_pct}% ({remaining}% room). "
-            f"Write your handoff brief now, then compact — do these steps yourself (do NOT invoke "
-            f"the /self-compact skill):\n"
-            f"  1. Write your session brief from your current context (follow the operational_handoff "
-            f"procedure) to {brief_path}.\n"
-            f"  2. Register it: python3 {_GEN}/scripts/session_mgmt/register_self_brief.py {brief_path}\n"
-            f"  3. Compact: comms_send_slash_command(identifier=\"self\", command=\"/compact\", "
+            f"You've been idle a while and your context is at {ctx_pct}%. Hand off, then compact. "
+            f"Write the brief via a SUBAGENT (it reads the transcript from disk, so it doesn't spend "
+            f"your remaining context) — do NOT invoke the /self-compact skill:\n"
+            f"  1. Spawn a Task subagent to run: python3 {_GEN}/scripts/jsonl/condense.py --src-uuid "
+            f"\"$AI_CLI_SESSION_ID\" --interval live --prepare-only --output /tmp/selfbrief_src.json\n"
+            f"  2. Have it read /tmp/selfbrief_src.json + {_PROMPT_FILE}, then write a YAML brief to {brief_path} "
+            f"(confirm it parses with yaml.safe_load).\n"
+            f"  3. Register it: python3 {_GEN}/scripts/session_mgmt/register_self_brief.py {brief_path}\n"
+            f"  4. Then compact: comms_send_slash_command(identifier=\"self\", command=\"/compact\", "
             f"authorization_token=\"{token}\")"
         )
+    # Fallback: no subagent tool on this platform — write the brief yourself.
     return (
-        f"You've been idle a while and your context is at {ctx_pct}% — only {remaining}% room, too tight "
-        f"to write a brief yourself safely. Use a subagent (it reads the transcript from disk):\n"
-        f"  1. Spawn a Task subagent to run: python3 {_GEN}/scripts/jsonl/condense.py --src-uuid "
-        f"\"$AI_CLI_SESSION_ID\" --interval live --prepare-only --output /tmp/selfbrief_src.json\n"
-        f"  2. Have it read /tmp/selfbrief_src.json + {_PROMPT_FILE}, then write a YAML brief to {brief_path} "
-        f"(confirm it parses with yaml.safe_load).\n"
-        f"  3. Register it: python3 {_GEN}/scripts/session_mgmt/register_self_brief.py {brief_path}\n"
-        f"  4. Then compact: comms_send_slash_command(identifier=\"self\", command=\"/compact\", "
+        f"You've been idle a while and your context is at {ctx_pct}%. Your platform has no subagent "
+        f"tool, so write the handoff brief yourself, then compact — do NOT invoke the /self-compact "
+        f"skill:\n"
+        f"  1. Write your session brief from your current context (follow the operational_handoff "
+        f"procedure) to {brief_path}.\n"
+        f"  2. Register it: python3 {_GEN}/scripts/session_mgmt/register_self_brief.py {brief_path}\n"
+        f"  3. Compact: comms_send_slash_command(identifier=\"self\", command=\"/compact\", "
         f"authorization_token=\"{token}\")"
     )
 
@@ -412,7 +426,7 @@ def main() -> int:
         _set_deferred(session_dir, tid, state="armed")
         return 0
 
-    msg = _build_instruction(tid, ctx_pct, session_dir, token)
+    msg = _build_instruction(tid, ctx_pct, session_dir, token, platform)
     if _deliver(target, terminal, msg):
         _log(f"delivered compact instruction (ctx {ctx_pct}%) -> TRIGGERED")
         _set_deferred(session_dir, tid, state="triggered",

@@ -24,18 +24,15 @@ import subprocess
 import sys
 from pathlib import Path
 
+sys.path.insert(0, os.environ.get("AI_SCRIPTS") or str(Path(__file__).resolve().parents[1]))
+from uai_toolkit.paths import AI_ROOT  # noqa: E402
+
 
 def get_ai_root():
     # type: () -> str
     if os.environ.get("AI_ROOT"):
         return os.environ["AI_ROOT"]
-    for candidate in [
-        Path.home() / "AI" / "ai_root",
-        Path.home() / "AI" / "ai_root",
-    ]:
-        if candidate.is_dir():
-            return str(candidate)
-    return str(Path.home() / "AI" / "ai_root")
+    return str(AI_ROOT)
 
 
 def _session_ops(ai_root):

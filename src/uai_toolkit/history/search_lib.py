@@ -20,6 +20,7 @@ import re
 import csv
 import json
 import shutil
+import sys
 from pathlib import Path
 from datetime import datetime
 from typing import Optional, Literal, Any
@@ -27,7 +28,8 @@ from dataclasses import dataclass, asdict
 
 
 # === Configuration ===
-AI_ROOT = Path(os.path.expanduser("~/AI/ai_root"))
+sys.path.insert(0, os.environ.get("AI_SCRIPTS") or str(Path(__file__).resolve().parents[1]))
+from uai_toolkit.paths import AI_ROOT
 MEMORIES_ROOT = AI_ROOT / "ai_memories"
 INDEXES_DIR = MEMORIES_ROOT / "40_histories/indexes"
 HISTORIES_DIR = MEMORIES_ROOT / "40_histories"

@@ -35,7 +35,9 @@ if str(_SCRIPT_DIR) not in sys.path:
 
 from uai_toolkit.session_mgmt.session_store import SessionStore
 
-PROMPTING_DIR = Path.home() / "bin" / "ai" / "prompting"
+sys.path.insert(0, os.environ.get("AI_SCRIPTS") or str(Path(__file__).resolve().parents[1]))
+from uai_toolkit.paths import AI_SCRIPTS  # noqa: E402
+PROMPTING_DIR = AI_SCRIPTS / "prompting"
 SEND_PROMPT_SCRIPT = PROMPTING_DIR / "send_prompt.py"
 
 # Map platform codes to send_prompt target names
@@ -112,15 +114,26 @@ def _resolve_to_endpoint(identifier: str) -> tuple[str | None, dict]:
 
 # Commands that may NEVER be sent programmatically via this script. They must
 # originate from the user's keyboard (a typed slash command). /self-compact is
-# here because its sole job is to MINT a compaction authorization token — if a
-# session could send it to itself (or another session), the session would be
-# authorizing its own compaction, defeating the entire authorization model.
+# here because its sole job is to MINT a compaction authorization token — a
+# session sending it to itself would be authorizing its own compaction.
+#
+# HONEST SCOPE — this is defense-in-depth, NOT airtight enforcement. This block
+# closes the send-a-slash-command path; `disable-model-invocation: true` on the
+# self-compact skill closes the Skill-tool path. Together those shut the two easy
+# doors. But a session runs as the same user with full file access, so it can
+# still hand-forge a <token>.auth file and call /compact directly — no local
+# check can stop that (any signal we'd verify is itself a file the session can
+# write). That path is a DELIBERATE circumvention of a safety control — a
+# reportable violation, not a casual bypass. Real enforcement would have to live
+# in the harness (which actually runs /compact), which we don't control.
 NEVER_SEND_COMMANDS = {"self-compact"}
 
 # Commands that require a valid one-time authorization_token when sent.
-# Token files are zero-byte files at <session_dir>/<token>.auth, created only
-# by the authorizing hook handlers (user-typed /self-compact -> 07, or the
-# auto-threshold Stop hook 08), consumed on use.
+# A token is a <session_dir>/<token>.auth file (issuer + expiry JSON, or a legacy
+# zero-byte file), minted by compact_auth.mint from a trusted issuer: the
+# user-typed /self-compact path (UserPromptSubmit 07), the auto-threshold Stop
+# hook, or the deferred self-compact timer. Validated (existence + TTL) and
+# consumed on use. See the HONEST SCOPE note above: the token file is forgeable.
 GUARDED_COMMANDS = {"compact"}
 
 
@@ -137,8 +150,9 @@ def _check_authorization(command, session_dir, authorization_token):
     if base_cmd in NEVER_SEND_COMMANDS:
         return False, (
             f"/{base_cmd} cannot be sent programmatically. It must be typed by "
-            f"the user. A session may not initiate its own compaction — that is "
-            f"the whole point of the authorization model."
+            f"the user — a session should not initiate its own compaction. "
+            f"(Forging a token to route around this is a deliberate safety-control "
+            f"violation, not a supported path.)"
         )
 
     if base_cmd not in GUARDED_COMMANDS:

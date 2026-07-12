@@ -36,10 +36,14 @@ from uai_toolkit.hooks.common.lib_hook_base import run_hook, HookResult
 from uai_toolkit.hooks.common.lib_stop_hooks import (should_evaluate, get_response_tail,
                             get_response_text, get_last_user_message)
 
-AI_ROOT = Path(os.environ.get("AI_ROOT", os.path.expanduser("~/AI/ai_root")))
-PYTHON = "/opt/homebrew/bin/python3"
-LLLM_PROMPT = AI_ROOT / "ai_general/scripts/lllm/lllm_prompt.py"
-SEND_PROMPT = AI_ROOT / "ai_general/scripts/prompting/send_prompt.py"
+# Shared resolver: script locations + the interpreter used to spawn lllm/send_prompt.
+# Honor $AI_SCRIPTS override, else derive from location (parents[3] = ai_general).
+sys.path.insert(0, os.environ.get("AI_SCRIPTS") or str(Path(__file__).resolve().parents[3] / "scripts"))
+from uai_toolkit.paths import AI_ROOT, AI_SCRIPTS, AI_PYTHON  # noqa: E402
+
+PYTHON = AI_PYTHON                       # was hardcoded /opt/homebrew/bin/python3
+LLLM_PROMPT = AI_SCRIPTS / "lllm" / "lllm_prompt.py"
+SEND_PROMPT = AI_SCRIPTS / "prompting" / "send_prompt.py"
 CONFIG_PATH = Path(__file__).resolve().parent / "intent_without_action.config.yml"
 
 
@@ -76,7 +80,18 @@ def _compile(patterns):
 
 
 def _expand(path_str):
-    return os.path.expandvars(str(path_str)) if path_str else ""
+    """Expand $AI_* from the RESOLVER (env may not carry them), then $HOME etc.
+
+    The config default log_path is "$AI_ROOT/…"; plain os.path.expandvars would
+    leave it literal whenever AI_ROOT isn't exported into the hook's env, silently
+    writing the log to a bogus relative "$AI_ROOT/…" path. Resolve it explicitly.
+    """
+    if not path_str:
+        return ""
+    s = str(path_str)
+    for var, val in (("$AI_ROOT", str(AI_ROOT)), ("$AI_SCRIPTS", str(AI_SCRIPTS))):
+        s = s.replace(var, val)
+    return os.path.expandvars(s)
 
 
 # ─── Logging (requirement #2) ────────────────────────────────────────────────
