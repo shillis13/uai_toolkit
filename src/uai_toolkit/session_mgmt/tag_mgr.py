@@ -52,15 +52,10 @@ except ImportError:
 
 VERSION = "1.0.0"
 
-# Load the resolver directly from its file — immune to the `utils` package-name
-# collision with the ~/bin/all_languages/python/src/utils shim this file also
-# puts on sys.path (that shim-utils has no paths.py, so `from uai_toolkit.paths` binds
-# wrong). See scripts/utils/paths.py.
-import importlib.util as _ilu  # noqa: E402
-_ps = _ilu.spec_from_file_location(
-    "ai_paths", str(Path(os.environ.get("AI_SCRIPTS") or _AI_SCRIPTS) / "utils" / "paths.py"))
-_ai_paths = _ilu.module_from_spec(_ps); _ps.loader.exec_module(_ai_paths)
-AI_ROOT = _ai_paths.AI_ROOT
+# Toolkit: no `utils` package-name collision here (the ~/bin shim isn't on path),
+# so import the shared resolver normally. Source uses an importlib-by-path
+# workaround to dodge that collision in ai_general; unneeded + broken in the toolkit.
+from uai_toolkit.paths import AI_ROOT  # noqa: E402
 TODO_ROOT = Path(os.environ.get("TODO_ROOT", AI_ROOT / "ai_general/work/todos"))
 HISTORY_FILE = Path.home() / ".tag_mgr_history"
 

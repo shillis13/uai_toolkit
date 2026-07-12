@@ -63,13 +63,10 @@ DEFAULT_FULL_EVERY = 5
 
 def _resolve_ai_root():
     # type: () -> str
-    """Resolve AI_ROOT via the shared resolver (loaded by file path — immune to the
-    utils-package name collision with the common_utils shim)."""
-    import importlib.util as _ilu
-    _pp = Path(os.environ.get("AI_SCRIPTS") or Path(__file__).resolve().parents[1]) / "utils" / "paths.py"
-    _ps = _ilu.spec_from_file_location("ai_paths", str(_pp))
-    _m = _ilu.module_from_spec(_ps); _ps.loader.exec_module(_m)
-    return str(_m.AI_ROOT)
+    """Resolve AI_ROOT via the shared resolver. (Source loads it by file path to
+    dodge the ai_general `utils` collision; unneeded in the toolkit.)"""
+    from uai_toolkit.paths import AI_ROOT
+    return str(AI_ROOT)
 
 
 def _get_transcript_stats(cli_uuid):

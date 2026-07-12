@@ -252,7 +252,11 @@ MODULES = [
 # excluded (their canonical targets are ported elsewhere).
 MODULE_DIRS = [
     {"dest": "session_mgmt", "source": "ai:session_mgmt", "kind": "clean",
-     "exclude": ["trait_mgr.py", "session_traits.py"]},               # symlinks -> context_files / session_context_registry
+     "exclude": ["trait_mgr.py", "session_traits.py"],                # symlinks -> context_files / session_context_registry
+     # tag_mgr/build_footer: source has an importlib-by-path paths.py workaround for
+     # the ai_general utils-collision that's unneeded+broken in the toolkit; hand-
+     # fixed to `from uai_toolkit.paths import AI_ROOT` -> curated so we don't re-pull it.
+     "overrides": {"tag_mgr.py": "curated", "build_footer.py": "curated"}},
     {"dest": "callbacks",    "source": "ai:callbacks",    "kind": "clean"},
     {"dest": "messages",     "source": "ai:messages",     "kind": "clean",
      "exclude": ["messaging.py"]},                                    # symlink -> messaging_mgr.py
