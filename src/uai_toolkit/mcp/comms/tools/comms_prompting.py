@@ -89,7 +89,7 @@ def get_session_lock(session: str) -> threading.Lock:
 def _audit_prompt_dispatch(target, session, message, submit, label):
     """Emit high-level audit event for prompt dispatch. Never raises."""
     try:
-        from audit import lib_audit
+        from uai_toolkit.audit import lib_audit
         target_type = "cli_session" if target in ("claude-cli", "codex-cli", "gemini-cli", "cli-direct") else (
             "desktop" if target == "claude-desktop" else "webui")
         lib_audit.emit(

@@ -43,7 +43,7 @@ def handler(hook_input, context):
 
     try:
         import json
-        import session_starts
+        from uai_toolkit.session_mgmt import session_starts
 
         state_path = Path(context.session_dir) / f"{context.tracking_id}_state.json"
         existing = []

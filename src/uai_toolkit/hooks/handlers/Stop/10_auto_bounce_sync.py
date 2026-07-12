@@ -49,7 +49,7 @@ def handler(hook_input, context):
     try:
         if str(_BOUNCE) not in sys.path:
             sys.path.insert(0, str(_BOUNCE))
-        import deferred_offload_bounce as dob
+        from uai_toolkit.session_bounce import deferred_offload_bounce as dob
         status = dob.reconcile_from_stop(context.session_dir, context.tracking_id, recommend)
     except Exception as e:
         return HookResult.allow(f"auto_bounce reconcile error: {e}")

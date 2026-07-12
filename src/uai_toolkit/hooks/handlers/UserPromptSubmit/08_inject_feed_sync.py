@@ -30,7 +30,7 @@ def handler(hook_input, context):
 
     # Everything below fails open — a feed problem must never block the prompt.
     try:
-        import feed_lib
+        from uai_toolkit.coordination import feed_lib
         from uai_toolkit.session_mgmt.store import SessionStore
 
         key = f"feed.index.{CHANNEL}"

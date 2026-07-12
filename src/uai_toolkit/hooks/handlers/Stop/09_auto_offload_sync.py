@@ -107,7 +107,7 @@ def _resolve_transcript(tracking_id):
     if d not in sys.path:
         sys.path.insert(0, d)
     try:
-        import scrub_files  # noqa: E402
+        from uai_toolkit.jsonl import scrub_files  # noqa: E402
         found = scrub_files.find_jsonl(tracking_id)
         return str(found) if found else None
     except Exception:

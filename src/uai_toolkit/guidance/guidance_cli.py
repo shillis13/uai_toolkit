@@ -243,7 +243,17 @@ def cmd_get_context(args):
         _track_knowledge_request(ref, db)
         # Uniform: resolve + walk the reference graph to the requested depth.
         item = guidance_lib.resolve_item(db, ref) if db else None
-        if item:
+        if item and item.get("kind") == "brief":
+            # Briefs are file-based artifacts. The registry now INDEXES them
+            # (kind='brief'), so a bare brief name HITS the registry — but their
+            # content lives on disk and must be loaded by the brief resolver, not
+            # the composition/graph walker (assemble_context can't read a brief
+            # .yml and reports "Trait not found"). Route registry-hit briefs to
+            # the same file loader a registry-miss uses. Applies to briefs at the
+            # session_briefs/ root as well as auto_briefs/.
+            if not _emit_brief(item.get("name") or ref, outputs):
+                outputs.append("[Not found: {}]".format(ref))
+        elif item:
             outputs.append(guidance_lib.assemble_context(ref, db, load, _seen=seen))
         else:
             # Registry miss — try a file-based brief by name, else knowledge search

@@ -4,7 +4,7 @@
 Zero dependencies. Respects NO_COLOR, --no-color, and non-TTY stdout.
 
 Usage:
-    from standard_colors import c, success, error, warn, info, dim, bold, heading
+    from uai_toolkit.common_utils.standard_colors import c, success, error, warn, info, dim, bold, heading
 
     # Semantic helpers — print with prefix + color
     success("Server started")          # green checkmark

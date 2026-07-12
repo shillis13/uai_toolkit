@@ -83,7 +83,7 @@ def handler(hook_input, context):
     input_json = json.dumps(tool_input, ensure_ascii=False)
 
     try:
-        from audit import lib_audit
+        from uai_toolkit.audit import lib_audit
         lib_audit.emit(
             category="tools",
             action=tool_name,

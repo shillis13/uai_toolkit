@@ -19,8 +19,8 @@ def handler(hook_input, context):
     if not context.tracking_id:
         return HookResult.skip("no tracking_id")
     try:
-        import feed_lib
-        import feed_identity
+        from uai_toolkit.coordination import feed_lib
+        from uai_toolkit.coordination import feed_identity
 
         rec = feed_identity.get_record(context.tracking_id)
         if not rec:

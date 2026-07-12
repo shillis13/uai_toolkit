@@ -5,6 +5,9 @@ read_jsonl.py - Read and extract messages from CLI JSONL conversation files.
 Supports Claude CLI, Codex CLI, Gemini CLI, and Anti-Gravity session formats.
 Platform is auto-detected from file path or content; use --platform to override.
 
+Used by: chat-pipeline, unified_cli app, claude_cli.py
+Location: ~/bin/ai/cli/read_jsonl.py
+
 Usage:
     # Interactive REPL mode
     read_jsonl.py
@@ -13,10 +16,13 @@ Usage:
     read_jsonl.py list [project_dir] [--limit N]
 
     # Read messages from a specific session UUID (searches all platforms)
-    read_jsonl.py read <uuid> [--format json|text|markdown] [--platform claude|codex|gemini|agy]
+    read_jsonl.py read <uuid> [--format json|text|markdown|memorex] [--platform claude|codex|gemini|agy]
 
     # Read messages from one or more JSONL files directly
-    read_jsonl.py read-file <path> [path2 ...] [--format json|text|markdown] [--platform claude|codex|gemini|agy]
+    read_jsonl.py read-file <path> [path2 ...] [--format json|text|markdown|memorex] [--platform claude|codex|gemini|agy]
+
+    # Extract scoped messages for briefing/Recall workflows
+    read_jsonl.py extract <uuid|path> [--types user,response] [--interval 1-3] [--turns 40-55]
 
     # Find JSONL file for a UUID (prints path, searches all platforms)
     read_jsonl.py find <uuid>
@@ -30,6 +36,7 @@ from __future__ import annotations
 import atexit
 import json
 import os
+import re
 import readline
 import shlex
 import sys
@@ -41,6 +48,7 @@ from pathlib import Path
 from typing import Any
 
 # Import standard_colors
+sys.path.insert(0, str(Path.home() / "bin" / "ai"))
 from uai_toolkit.common_utils.standard_colors import (
     CODES as _SC_CODES,
     c as _sc_c,
@@ -48,6 +56,12 @@ from uai_toolkit.common_utils.standard_colors import (
     set_color_mode as _sc_set_color_mode,
     format_help as _sc_format_help,
 )
+
+# Canonical compaction-interval + branch model (single source of truth). read_jsonl
+# delegates its interval enumeration / SPEC selection here (see the thin aliases
+# below) so context_stats / turn_digest share the exact same numbering.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from uai_toolkit.jsonl import lib_jsonl_archive as _lja  # noqa: E402
 
 
 from uai_toolkit.jsonl.platform_adapters import adapter_for_platform, detect_platform as _detect_platform_adapter
@@ -116,16 +130,173 @@ def c(text: str, *codes: str) -> str:
     return f"{combined}{text}{Colors.RESET}"
 
 
+# ── Memorex shared presentation spec (sectioned/colored cards) ──────────────
+# The "memorex" output format renders messages as colored, labeled, collapsible
+# section cards that match the UAI Memorex live overlay. The look is shared with
+# that overlay via an external palette file (so editing it restyles both); this
+# embedded default keeps read_jsonl self-contained when the file is absent
+# (e.g. ported standalone). See ai_general/data/memorex/palette.json.
+_MEMOREX_PALETTE_DEFAULT = {
+    "sections": {
+        "user":      {"color": "#7aa2f7", "bg": "#213450", "label": "YOU",      "collapse": False},
+        "inject":    {"color": "#2ac3de", "bg": "#103039", "label": "COMMS",    "collapse": False},
+        "assistant": {"color": "#9ece6a", "bg": "#1c3a26", "label": "CLAUDE",   "collapse": False},
+        "thinking":  {"color": "#bb9af7", "bg": "#2e2049", "label": "THINKING", "collapse": True, "textColor": "#e3ccff"},
+        "tool":      {"color": "#e0af68", "bg": "#3a2c18", "label": "TOOL",     "collapse": True},
+        "skill":     {"color": "#7dcfff", "bg": "#0e2a33", "label": "SKILL",    "collapse": True},
+        "agent":     {"color": "#7dcfff", "bg": "#102a33", "label": "AGENT",    "collapse": True},
+        "system":    {"color": "#565f89", "bg": "#181a20", "label": "SYSTEM",   "collapse": True},
+        "meta":      {"color": "#565f89", "bg": "#181a20", "label": "META",     "collapse": True},
+    },
+    "typeToSection": {
+        "user": "user", "response": "assistant", "thinking": "thinking",
+        "tool_use": "tool", "tool_result": "tool", "injected": "inject",
+        "skill": "skill", "agent_result": "agent", "system": "system", "meta": "meta",
+    },
+    "thinkingText": "#e3ccff",
+}
+
+_memorex_palette_cache = None
+
+# Inter-session prompt envelope — matches the UAI Memorex overlay's INJECT_ENVELOPE_RE
+# (TerminalFormatOverlay.tsx). A USER message whose body opens with this is a
+# comms send_prompt injection (e.g. from Git Guardian), rendered as COMMS.
+_MEMOREX_INJECT_RE = re.compile(r"^From\s+\S+\s+\(\S+\)\s+at\s+\d{4}-\d{2}-\d{2}\b")
+
+
+def _load_memorex_palette() -> dict:
+    """Load the shared Memorex palette: external file if present (keeps the look
+    in sync with the UAI overlay), else the embedded default. Search order:
+    $MEMOREX_PALETTE, $AI_ROOT/ai_general/data/memorex/palette.json, then a path
+    relative to this script."""
+    global _memorex_palette_cache
+    if _memorex_palette_cache is not None:
+        return _memorex_palette_cache
+    candidates = []
+    env = os.environ.get("MEMOREX_PALETTE")
+    if env:
+        candidates.append(Path(env))
+    ai_root = os.environ.get("AI_ROOT")
+    if ai_root:
+        candidates.append(Path(ai_root) / "ai_general" / "data" / "memorex" / "palette.json")
+    candidates.append(Path(__file__).resolve().parents[2] / "data" / "memorex" / "palette.json")
+    for p in candidates:
+        try:
+            if p and p.is_file():
+                data = json.loads(p.read_text(encoding="utf-8"))
+                if isinstance(data, dict) and data.get("sections"):
+                    _memorex_palette_cache = data
+                    return data
+        except Exception:
+            continue
+    _memorex_palette_cache = _MEMOREX_PALETTE_DEFAULT
+    return _MEMOREX_PALETTE_DEFAULT
+
+
+def _hex_to_ansi(hex_str: str, *, bg: bool = False) -> str:
+    """'#7aa2f7' -> ANSI 24-bit SGR ('\\033[38;2;122;162;247m'). bg=True -> 48;2."""
+    h = (hex_str or "").lstrip("#")
+    if len(h) != 6:
+        return ""
+    try:
+        r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    except ValueError:
+        return ""
+    return f"\033[{48 if bg else 38};2;{r};{g};{b}m"
+
+
+def render_memorex(messages: "list[Message]", *, msg_num_offset: int = 0,
+                   expand: "set[str] | None" = None) -> str:
+    """Render messages as Memorex-style colored, labeled section cards (ANSI),
+    matching the UAI Memorex live overlay's look via the shared palette.
+
+    - Each message is one card: a colored left-border bar, a bold type label
+      (YOU/COMMS/CLAUDE/THINKING/TOOL/...), and dim Turn#/Msg#/timestamp.
+    - Collapse-default sections (thinking, tool, skill, agent, system, meta) are
+      folded to a one-line summary unless their section name is in `expand`
+      (or `expand` contains 'all').
+    """
+    palette = _load_memorex_palette()
+    sections = palette.get("sections", {})
+    type_to_section = palette.get("typeToSection", {})
+    expand = expand or set()
+    expand_all = "all" in expand
+    enabled = Colors.enabled()
+    BAR = "▎"  # left-border bar
+
+    def paint(text: str, hexcolor: str, bold: bool = False) -> str:
+        if not enabled:
+            return text
+        pre = _hex_to_ansi(hexcolor) + (Colors.BOLD if bold else "")
+        return f"{pre}{text}{Colors.RESET}"
+
+    meta_spec = sections.get("meta", {"color": "#565f89", "label": "META", "collapse": True})
+    out: list[str] = []
+    for i, m in enumerate(messages):
+        sec = type_to_section.get(m.type.value, "meta")
+        # Inter-session prompt (comms send_prompt): a USER record whose body opens
+        # with the provenance envelope "From <id> (<id>) at YYYY-MM-DD ...". The
+        # JSONL has no meta flag for these, so read_jsonl tags them USER — but the
+        # UAI Memorex overlay shows them as COMMS. Remap here so both render alike.
+        if sec == "user" and _MEMOREX_INJECT_RE.match((m.content or "").lstrip()):
+            sec = "inject"
+        spec = sections.get(sec, meta_spec)
+        color = spec.get("color", "#565f89")
+        label = spec.get("label", sec.upper())
+        if sec == "assistant" and m.platform:
+            label = m.platform.upper()
+        if sec == "tool" and m.tool_name:
+            label = f"{spec.get('label', 'TOOL')} · {m.tool_name}"
+
+        num = msg_num_offset + i + 1
+        turn_tag = "pre " if m.turn_number < 0 else f"Turn #{m.turn_number} "
+        meta_str = f"{turn_tag}Msg #{num}  {_ts_to_local(m.timestamp)}"
+        bar = paint(BAR, color)
+        meta_painted = c(meta_str, Colors.DIM) if enabled else meta_str
+        out.append(f"{bar} {paint(label, color, bold=True)}  {meta_painted}")
+
+        body = m.content or ""
+        if sec == "tool" and m.type == MessageType.TOOL_USE and m.tool_input:
+            body = json.dumps(m.tool_input, indent=2, ensure_ascii=False)
+        lines = body.splitlines() or [""]
+        collapse = spec.get("collapse", False) and not expand_all and sec not in expand
+        if collapse and len(lines) > 1:
+            summary = lines[0][:100].rstrip()
+            out.append(f"{bar} {summary}")
+            fold = f"⟨{len(lines)} lines — --expand {sec} to unfold⟩"
+            out.append(f"{bar} {c(fold, Colors.DIM) if enabled else fold}")
+        else:
+            text_color = spec.get("textColor")
+            for ln in lines:
+                if text_color and enabled:
+                    out.append(f"{bar} {paint(ln, text_color)}")
+                else:
+                    out.append(f"{bar} {ln}")
+        out.append("")  # blank line between cards
+    return "\n".join(out)
+
+
+def _parse_memorex_expand(value: "str | None") -> "set[str]":
+    """Parse a --expand value (comma-separated section names, or 'all') into a set.
+    Section names: user, inject, assistant, thinking, tool, skill, agent, system, meta."""
+    if not value:
+        return set()
+    return {s.strip() for s in value.split(",") if s.strip()}
+
+
 COMMAND_ALIASES = {
     "?": "help",
     "h": "help",
     "r": "read",
+    "x": "extract",
     "rf": "read-file",
     "f": "find",
     "s": "summary",
     "st": "stats",
     "ls": "list",
     "cx": "compactions",
+    "hg": "histo",
+    "hist": "histo",
 }
 
 
@@ -161,7 +332,9 @@ class Message:
     tool_call_id: str = ""
     line_number: int = 0       # message ordinal: 1-based position in the parsed message stream — NOT the raw file line
     source_line: int = 0       # 1-indexed raw JSONL file line this message came from (0 if unknown)
-    turn_number: int = 0       # 1-indexed conversation turn this message belongs to (0 if unknown)
+    turn_number: int = 0       # conversation turn (first prompt = turn 0; -1 = `pre` prologue)
+    on_chain: bool = True      # is this record on the active chain (in model context)? off-chain = dead retry/rewind fork
+    is_compaction: bool = False  # isCompactSummary continuation record
     raw: dict = field(default_factory=dict, repr=False)
 
     def to_dict(self, include_raw: bool = False) -> dict:
@@ -229,22 +402,22 @@ class DayGroup:
 # ---------------------------------------------------------------------------
 
 def group_into_turns(messages: list[Message]) -> list[Turn]:
-    """Group messages into turns. A turn starts with a user message and
-    includes all subsequent messages until the next user message or EOF."""
+    """Group messages by their assigned turn_number (set in parse_session).
+
+    turn_number is structural (a prompt with a promptSource on the active chain
+    starts a turn; first prompt = turn 0, prologue = -1 `pre`). Grouping by it keeps
+    turns consistent across read headers, t-ranges, and histo."""
     turns: list[Turn] = []
     current: list[Message] = []
-    turn_num = 1
-
+    cur_num = None
     for msg in messages:
-        if msg.type == MessageType.USER and current:
-            turns.append(Turn(number=turn_num, messages=current))
-            turn_num += 1
+        if cur_num is not None and msg.turn_number != cur_num:
+            turns.append(Turn(number=cur_num, messages=current))
             current = []
+        cur_num = msg.turn_number
         current.append(msg)
-
     if current:
-        turns.append(Turn(number=turn_num, messages=current))
-
+        turns.append(Turn(number=cur_num if cur_num is not None else 0, messages=current))
     return turns
 
 
@@ -297,19 +470,26 @@ def structure_session(messages: list[Message]) -> list[DayGroup]:
 def _strip_uri(identifier: str) -> str:
     """Extract session ID from a URI, or return as-is if not a URI.
 
-    Handles uai://session/<id>, prompt://target/<id>, and any scheme://path/<id>.
+    Handles uai://session/<id>[/<action>], prompt://target/<id>, and any
+    scheme://path/<id>. Centralized, action-aware (see lib_uri) — an action
+    suffix like /message is not mistaken for the id.
     """
     if "://" not in identifier:
         return identifier
     try:
-        from urllib.parse import urlparse
-        parsed = urlparse(identifier)
-        path_parts = parsed.path.strip("/").split("/")
-        if path_parts:
-            return path_parts[-1]
+        import sys as _sys
+        _sm = str(Path.home() / "bin" / "ai" / "session_mgmt")
+        if _sm not in _sys.path:
+            _sys.path.insert(0, _sm)
+        from uai_toolkit.session_mgmt.lib_uri import session_id_of
+        return session_id_of(identifier)
     except Exception:
-        pass
-    return identifier
+        try:
+            from urllib.parse import urlparse
+            path_parts = urlparse(identifier).path.strip("/").split("/")
+            return path_parts[-1] if path_parts else identifier
+        except Exception:
+            return identifier
 
 
 def _resolve_via_session_store(query: str) -> Path | None:
@@ -323,13 +503,7 @@ def _resolve_via_session_store(query: str) -> Path | None:
     no match is found.
     """
     try:
-        # Optional enhancement: resolve via an external session_store if one is
-        # configured. Set AI_SESSION_STORE_PATH to its module path to enable;
-        # absent that, this lookup is skipped (UUID/path search still works).
-        store_path_str = os.environ.get("AI_SESSION_STORE_PATH")
-        if not store_path_str:
-            return None
-        store_path = Path(store_path_str).expanduser()
+        store_path = Path.home() / "bin" / "ai" / "session_mgmt" / "session_store.py"
         if not store_path.exists():
             return None
         import importlib.util
@@ -583,29 +757,164 @@ def resolve_archived_stubs(messages: list[Message], jsonl_path: Path) -> list[Me
     return messages
 
 
-def _assign_turn_numbers(messages: list[Message]) -> list[Message]:
-    """Stamp each message with its absolute 1-indexed conversation turn number.
+def _chain_and_prompt_meta(jsonl_path: Path, *,
+                           all_intervals: bool = False) -> tuple[set, set, set]:
+    """Structural turn metadata from the ORIGINAL records (the standardized
+    Message.raw drops promptSource/isCompactSummary, like it drops the signature).
 
-    A turn starts at a USER message and runs until the next USER message (mirrors
-    group_into_turns). Turn numbers are assigned once on the full parsed stream so
-    they stay stable/absolute regardless of any later --range/--type filtering.
+    Returns (chain_lines, turnstart_lines, compaction_lines) as sets of 1-indexed
+    raw file line numbers:
+      chain_lines     — records on the active chain (leaf→root parentUuid walk).
+      turnstart_lines — on-chain user records that carry promptSource (an actually
+                        submitted prompt — typed/queued/system) and aren't
+                        isMeta/isCompactSummary. These start a turn.
+      compaction_lines— isCompactSummary continuation records.
+    Empty sets ⇒ caller falls back to the legacy USER-based numbering (non-Claude).
+
+    DEFAULT (all_intervals=False): the CURRENT-INTERVAL single-walk chain — only the
+    tree containing the active conversational leaf. Each /compact writes a fresh
+    parentUuid=None root, so this is what the model actually sees NOW; superseded
+    pre-compaction intervals are excluded. Set all_intervals=True for the whole-FILE
+    multi-root union (all intervals' live turns) — wanted only for file reduction /
+    archival accounting (todo_0393)."""
+    by_uuid: dict = {}
+    order: list = []
+    try:
+        with open(jsonl_path, encoding="utf-8") as f:
+            for i, ln in enumerate(f, 1):
+                if not ln.strip():
+                    continue
+                try:
+                    o = json.loads(ln)
+                except Exception:
+                    continue
+                if not isinstance(o, dict):
+                    continue
+                order.append((i, o))
+                u = o.get("uuid")
+                if u:
+                    by_uuid[u] = (i, o)
+    except OSError:
+        return set(), set(), set()
+
+    # Active chain, multi-root. Each /compact starts a NEW tree (a system root with
+    # parentUuid=None), so a single leaf→root walk only sees the current interval.
+    # Instead: group records into trees by root, and for each tree walk back from its
+    # LIVE tip (latest record in the tree) to the root. Union = all live turns across
+    # all intervals, while dead-retry / rewind siblings (which end before their tree's
+    # tip) drop out.
+    parent_of = {u: o.get("parentUuid") for u, (i, o) in by_uuid.items()}
+
+    def root_of(u):
+        seen_r = set()
+        while u in by_uuid and u not in seen_r:
+            seen_r.add(u)
+            p = parent_of.get(u)
+            if p not in by_uuid:
+                break
+            u = p
+        return u
+
+    trees: dict = {}
+    for u, (i, o) in by_uuid.items():
+        trees.setdefault(root_of(u), []).append((i, u))
+
+    # DEFAULT: current interval only — the single tree containing the active
+    # conversational leaf (last non-sidechain user/assistant). all_intervals=True
+    # unions every tree's live branch (whole-file, all compaction intervals).
+    if all_intervals:
+        selected = list(trees.items())
+    else:
+        leaf_uuid = None
+        for _i, o in reversed(order):
+            if o.get("isSidechain"):
+                continue
+            if o.get("type") in ("user", "assistant") and o.get("uuid"):
+                leaf_uuid = o["uuid"]
+                break
+        if leaf_uuid is not None:
+            lr = root_of(leaf_uuid)
+            selected = [(lr, trees.get(lr, []))]
+        else:
+            selected = list(trees.items())   # no conversational leaf → fall back to union
+
+    chain_lines: set = set()
+    for _root, members in selected:
+        if not members:
+            continue
+        tip_u = max(members)[1]          # latest record (by file line) = the live branch
+        cur, seen = tip_u, set()
+        while cur in by_uuid and cur not in seen:
+            seen.add(cur)
+            chain_lines.add(by_uuid[cur][0])
+            p = parent_of.get(cur)
+            if p not in by_uuid:
+                break
+            cur = p
+
+    turnstart_lines: set = set()
+    compaction_lines: set = set()
+    for i, o in order:
+        if o.get("type") != "user":
+            continue
+        if o.get("isCompactSummary"):
+            compaction_lines.add(i)
+        if (i in chain_lines and "promptSource" in o
+                and not o.get("isMeta") and not o.get("isCompactSummary")):
+            turnstart_lines.add(i)
+    return chain_lines, turnstart_lines, compaction_lines
+
+
+def _assign_turn_numbers(messages: list[Message], turnstart_lines: set | None = None,
+                         chain_lines: set | None = None,
+                         compaction_lines: set | None = None) -> list[Message]:
+    """Stamp turn_number / on_chain / is_compaction.
+
+    Structural mode (turnstart_lines given): a new turn begins at each turn-start
+    record (a submitted prompt — promptSource). The FIRST prompt is turn 0; records
+    before it (compact_boundary / isCompactSummary / continuation — the prologue)
+    get turn_number -1, the `pre` sentinel (NOT a numbered turn). on_chain reflects
+    active-chain membership. Fallback (no turnstart_lines — non-Claude): legacy
+    increment-on-USER, 0-indexed, everything on_chain.
     """
-    turn_num = 1
+    compaction_lines = compaction_lines or set()
+    for m in messages:
+        if m.source_line in compaction_lines:
+            m.is_compaction = True
+
+    if turnstart_lines:
+        turn_num = -1                     # prologue (`pre`) until the first prompt
+        for m in messages:
+            if m.source_line in turnstart_lines:
+                turn_num = turn_num + 1 if turn_num >= 0 else 0   # first prompt = T0
+            m.turn_number = turn_num
+            m.on_chain = (chain_lines is None) or (m.source_line in chain_lines)
+        return messages
+
+    # Fallback: legacy USER-based numbering (platforms without promptSource); the
+    # first USER message is turn 0 (0-indexed, matching the structural mode).
+    turn_num = 0
     started = False
     for m in messages:
         if m.type == MessageType.USER and started:
             turn_num += 1
             started = False
         m.turn_number = turn_num
+        m.on_chain = True
         started = True
     return messages
 
 
-def parse_session(jsonl_path: Path, platform: str | None = None) -> list[Message]:
+def parse_session(jsonl_path: Path, platform: str | None = None, *,
+                  all_intervals: bool = False) -> list[Message]:
     """Parse a session file into a list of Message objects.
 
     Native platform files are first converted into the standardized schema, then
     the rest of read_jsonl operates on the standardized message records.
+
+    all_intervals=False (DEFAULT): turn/chain metadata scopes to the CURRENT
+    compaction interval (single-walk chain = what the model sees now). Pass
+    all_intervals=True for the whole-file, all-intervals view (file reduction).
     """
     if is_standardized_session_file(jsonl_path):
         msgs = _standardized_to_messages(load_standardized_session(jsonl_path))
@@ -618,7 +927,9 @@ def parse_session(jsonl_path: Path, platform: str | None = None) -> list[Message
             adapter = adapter_for_platform(platform)
             session = adapter.from_file(jsonl_path)
             msgs = _standardized_to_messages(session)
-    return _assign_turn_numbers(msgs)
+    chain_lines, turnstart_lines, compaction_lines = _chain_and_prompt_meta(
+        jsonl_path, all_intervals=all_intervals)
+    return _assign_turn_numbers(msgs, turnstart_lines, chain_lines, compaction_lines)
 
 
 
@@ -681,6 +992,11 @@ def raw_line_breakdown(jsonl_path: Path) -> dict[str, Any]:
     conv = {"count": 0, "chars": 0}
     client = {"count": 0, "chars": 0}
     total = {"count": 0, "chars": 0}
+    # Attachment records (deferred_tools_delta et al.) are dropped by parse_session so
+    # they land in `client`, but unlike true client-only bookkeeping they ARE re-sent
+    # to the model each resume. Track them so the render can correct the "never sent"
+    # impression (todo_0375). Kept inside `client` so conversation+client_only=total.
+    mfa = {"count": 0, "chars": 0}
     # Sub-breakouts within the two conversation raw line types. `user` is split
     # LINE-wise (each user line is either a prompt or carries tool_result(s) —
     # mutually exclusive, so prompts+tool_results sum exactly to the user total).
@@ -713,6 +1029,9 @@ def raw_line_breakdown(jsonl_path: Path) -> dict[str, Any]:
                 bucket = conv if t in _CONVERSATION_LINE_TYPES else client
                 bucket["count"] += 1
                 bucket["chars"] += n
+                if t == "attachment":
+                    mfa["count"] += 1
+                    mfa["chars"] += n
                 # ---- sub-breakouts ----
                 if isinstance(obj, dict) and t in ("user", "assistant"):
                     msg = obj.get("message")
@@ -749,6 +1068,7 @@ def raw_line_breakdown(jsonl_path: Path) -> dict[str, Any]:
         "total": total,
         "conversation": conv,
         "client_only": client,
+        "model_facing_attachments": mfa,
         "client_only_pct": round(100 * client["chars"] / total["chars"], 1) if total["chars"] else 0,
         "by_type": dict(sorted(by_type.items(), key=lambda kv: -kv[1]["chars"])),
         "sub": sub,
@@ -769,7 +1089,11 @@ def _format_raw_line_breakdown(bd: dict) -> str:
     out.append(c("      and Totals(Tools) is split across both raw types. Same word, different axis.", Colors.DIM))
     out.append(f"  total         {t['count']:>6,} lines  {t['chars']:>12,} chars")
     out.append(f"  conversation  {conv['count']:>6,} lines  {conv['chars']:>12,} chars   " + c("(user+assistant role lines — model-facing stream)", Colors.DIM))
-    out.append(f"  client-only   {cl['count']:>6,} lines  {cl['chars']:>12,} chars   " + c(f"({bd['client_only_pct']}% of file — NEVER sent to model)", Colors.DIM))
+    out.append(f"  client-only   {cl['count']:>6,} lines  {cl['chars']:>12,} chars   " + c(f"({bd['client_only_pct']}% of file — dropped by parse_session; MOSTLY not sent, but see below)", Colors.DIM))
+    mfa = bd.get("model_facing_attachments")
+    if mfa and mfa["count"]:
+        out.append("    of which attachments " + f"{mfa['count']:>5,} lines  {mfa['chars']:>12,} chars   "
+                   + c("(deferred_tools_delta etc. — these DO reach the model, re-sent each resume; NOT free)", Colors.YELLOW))
     out.append(c("  per raw type:", Colors.DIM))
     _incl = {"user": c("  (role: prompts + tool_results)", Colors.YELLOW),
              "assistant": c("  (role: AI text + thinking + tool_use)", Colors.YELLOW)}
@@ -815,7 +1139,7 @@ def _stub_prefixes() -> tuple[tuple[str, ...], str]:
     offload = ()
     engram = "[engram archived:"
     try:
-        import lib_jsonl_archive
+        from uai_toolkit.jsonl import lib_jsonl_archive
         offload = tuple(lib_jsonl_archive.STUB_PREFIXES)
     except Exception:
         offload = (
@@ -823,7 +1147,7 @@ def _stub_prefixes() -> tuple[tuple[str, ...], str]:
             "[input stripped:", "[embed archived:", "[embed stripped:",
         )
     try:
-        import lib_engram
+        from uai_toolkit.jsonl import lib_engram
         engram = lib_engram.ENGRAM_STUB_PREFIX
     except Exception:
         pass
@@ -851,6 +1175,19 @@ def stub_accounting(jsonl_path: Path) -> dict[str, Any]:
     def _is_offload_stub(v) -> bool:
         return isinstance(v, str) and v.lstrip().startswith(offload_prefixes)
 
+    def _offload_stub_text(v):
+        """Return the stub string for an attachment.<key> value, or None.
+
+        Attachment offload is shape-preserving: a list-typed field keeps its list
+        container and holds the stub as its sole element ([stub]); a string-typed
+        field holds the bare stub. Recognise both so offloaded attachments stay
+        visible in the accounting regardless of the original container type."""
+        if _is_offload_stub(v):
+            return v
+        if isinstance(v, list) and len(v) == 1 and _is_offload_stub(v[0]):
+            return v[0]
+        return None
+
     def _is_engram_stub(v) -> bool:
         return isinstance(v, str) and v.lstrip().startswith(engram_prefix)
 
@@ -858,7 +1195,7 @@ def stub_accounting(jsonl_path: Path) -> dict[str, Any]:
         return isinstance(v, str) and v.lstrip().startswith(("[embed archived:", "[embed stripped:"))
 
     cats = {k: {"count": 0, "bytes": 0}
-            for k in ("tool_result", "tool_use_input", "embed", "engram")}
+            for k in ("tool_result", "tool_use_input", "embed", "engram", "attachment")}
 
     def _add(cat: str, text: str) -> None:
         cats[cat]["count"] += 1
@@ -874,6 +1211,15 @@ def stub_accounting(jsonl_path: Path) -> dict[str, Any]:
                 except Exception:
                     continue
                 if not isinstance(o, dict):
+                    continue
+                # top-level `attachment` record: offloaded attachment.<key> payloads
+                # (e.g. deferred_tools_delta.addedNames) sit as stub strings here, not
+                # in message.content — inspect them so offloaded attachments are visible.
+                if o.get("type") == "attachment" and isinstance(o.get("attachment"), dict):
+                    for av in o["attachment"].values():
+                        stub_text = _offload_stub_text(av)
+                        if stub_text is not None:
+                            _add("attachment", stub_text)
                     continue
                 msg = o.get("message")
                 content = msg.get("content") if isinstance(msg, dict) else o.get("content")
@@ -937,8 +1283,9 @@ def _format_stub_accounting(sa: dict) -> str:
         "tool_use_input": "tool_use-input stubs",
         "embed": "embed stubs",
         "engram": "engram stubs",
+        "attachment": "attachment stubs",
     }
-    for key in ("tool_result", "tool_use_input", "embed", "engram"):
+    for key in ("tool_result", "tool_use_input", "embed", "engram", "attachment"):
         d = cats[key]
         out.append(f"    {labels[key]:<22}{d['count']:>6,} stubs  {d['bytes']:>12,} stub bytes")
     out.append(f"    {'TOTAL':<22}{total['count']:>6,} stubs  {total['bytes']:>12,} stub bytes")
@@ -1088,16 +1435,25 @@ def model_facing_ledger(jsonl_path: Path) -> dict[str, Any]:
                     split: already-stubbed / inline ≥ floor / inline < floor.
                     The inline-<floor bucket is the untapped headroom skipped by a
                     normal offload run (it sits below --min-bytes).
-      THINKING    — thinking text + signature; reclaimable only by routing the turn
-                    off-chain (consolidation), NOT offloadable (signature is
-                    API-required).
+      OFFLOADABLE attachments — deferred_tools_delta / mcp_instructions_delta /
+                    agent_listing_delta / hook_additional_context / skill_listing.
+                    Separate top-level `attachment` records (NOT message.content), so
+                    ADDITIONAL to the bottom-up figure — but model-facing (re-sent
+                    every session-start/resume) and offloadable, same 3-way split.
+      THINKING    — signature (the billed cost: encrypted FULL chain-of-thought;
+                    server decrypts it to reconstruct the real thinking for the
+                    prompt, so it counts against context and grows with thinking
+                    size) + thinking text (only a SUMMARY, empty under
+                    display:omitted, droppable). On Opus 4.5+/Sonnet 4.6+ prior-turn
+                    thinking is kept and billed as input tokens; reclaimable only by
+                    routing the turn off-chain (consolidation), NOT offloadable.
 
     Category buckets use INNER payload bytes (the reclaimable/semantic content);
     the per-block JSON envelope is reported as the gap to the bottom-up block-JSON
     total. Approx tokens ≈ bytes / 4.
     """
     try:
-        import lib_jsonl_archive as _lja
+        from uai_toolkit.jsonl import lib_jsonl_archive as _lja
         offload_prefixes = tuple(_lja.STUB_PREFIXES)
         min_floor = _lja.MIN_BYTES
         _wire = _lja.wire_size
@@ -1112,10 +1468,25 @@ def model_facing_ledger(jsonl_path: Path) -> dict[str, Any]:
             return isinstance(v, str) and v.lstrip().startswith(offload_prefixes)
         min_floor = 512
 
+    def _is_attachment_stub(v):
+        # shape-preserving: list-typed attachment fields hold [stub], string-typed a bare stub
+        if _is_stub(v):
+            return True
+        return isinstance(v, list) and len(v) == 1 and _is_stub(v[0])
+
     def _blank():
         return {
             "keep": {"user": 0, "assistant": 0},
             "offloadable": {
+                "stubbed": {"count": 0, "bytes": 0},
+                "inline_ge": {"count": 0, "bytes": 0},
+                "inline_lt": {"count": 0, "bytes": 0},
+            },
+            # Attachment records (deferred_tools_delta / mcp_instructions_delta /
+            # agent_listing_delta / hook_additional_context / skill_listing): separate
+            # top-level records, NOT message.content, but model-facing (re-sent each
+            # resume) and offloadable. Tracked in their own category (todo_0375).
+            "attachment": {
                 "stubbed": {"count": 0, "bytes": 0},
                 "inline_ge": {"count": 0, "bytes": 0},
                 "inline_lt": {"count": 0, "bytes": 0},
@@ -1155,10 +1526,32 @@ def model_facing_ledger(jsonl_path: Path) -> dict[str, Any]:
                 if not isinstance(o, dict):
                     continue
                 ltype = o.get("type")
-                if ltype not in _CONVERSATION_LINE_TYPES:
-                    continue
                 idx = _which(i)
                 accs = [overall] + ([iv_acc[idx]] if idx is not None else [])
+                # Attachment records (deferred_tools_delta et al.): model-facing,
+                # offloadable, but NOT message.content — bucket into the attachment
+                # category (per attachment.<key> field) and skip the block walk below.
+                # (todo_0375) Not added to block_json_bytes/inner_bytes, which remain
+                # the message.content bottom-up figure.
+                if ltype == "attachment":
+                    att = o.get("attachment")
+                    if isinstance(att, dict):
+                        for _k, _v in att.items():
+                            if _k == "type" or _v is None:
+                                continue
+                            _inner = _wire(_v)
+                            if _is_attachment_stub(_v):
+                                _bkt = "stubbed"
+                            elif _inner >= min_floor:
+                                _bkt = "inline_ge"
+                            else:
+                                _bkt = "inline_lt"
+                            for a in accs:
+                                a["attachment"][_bkt]["count"] += 1
+                                a["attachment"][_bkt]["bytes"] += _inner
+                    continue
+                if ltype not in _CONVERSATION_LINE_TYPES:
+                    continue
                 role = "user" if ltype == "user" else "assistant"
                 msg = o.get("message")
                 content = msg.get("content") if isinstance(msg, dict) else o.get("content")
@@ -1230,8 +1623,16 @@ def model_facing_ledger(jsonl_path: Path) -> dict[str, Any]:
 
 
 def _format_model_facing_ledger(ml: dict, cf: dict | None = None,
-                                semantic_chars: int | None = None) -> str:
-    """Render model_facing_ledger(): bottom-up figure + decision ledger."""
+                                semantic_chars: int | None = None,
+                                show_intervals: list | None = None) -> str:
+    """Render model_facing_ledger(): bottom-up figure + decision ledger.
+
+    show_intervals: interval indices to render alongside OVERALL (from --interval).
+    None (default) renders the LIVE (last) interval only.
+
+    COLOR KEY (consistent): bytes/chars = normal · tokens = dim · SECTION header =
+    cyan · totals = bold · YELLOW = untapped reclaim (below the --min-bytes floor,
+    not captured today) — yellow means that one thing only."""
     if not ml or not ml.get("overall"):
         return ""
     floor = ml["min_floor"]
@@ -1239,10 +1640,10 @@ def _format_model_facing_ledger(ml: dict, cf: dict | None = None,
     ov = ml["overall"]
 
     def _n(x):
-        return f"{x:>13,}"
+        return c(f"{x:>13,}", Colors.DIM)                       # bytes de-emphasized (dim)
 
     def _tok(x):
-        return c(f"~{x // 4:>10,} tok", Colors.DIM)
+        return c(f"~{x // 4:>10,} tok", Colors.BRIGHT_WHITE)    # tokens undimmed
 
     out = ["", c("MODEL-FACING — BOTTOM-UP + LEDGER", Colors.BOLD, Colors.BRIGHT_GREEN)]
     out.append(c("  (bottom-up = Σ JSON bytes of message.content BLOCKS only [text+thinking+tool_use+", Colors.DIM))
@@ -1254,7 +1655,7 @@ def _format_model_facing_ledger(ml: dict, cf: dict | None = None,
         td = cf["model_facing_estimate"]
         gap = td - bu
         out.append(f"  top-down estimate (old)       {_n(td)}   " + c("conv raw − toolUseResult − usage (OVERSTATES)", Colors.DIM))
-        out.append(c(f"  gap (top-down − bottom-up)    {_n(gap)}   = per-record CLIENT METADATA, also NOT sent", Colors.YELLOW))
+        out.append(f"  gap (top-down − bottom-up)    {_n(gap)}   " + c("= per-record CLIENT METADATA, also NOT sent", Colors.DIM))
     if semantic_chars:
         ratio = bu / semantic_chars if semantic_chars else 0
         out.append(f"  Totals semantic chars         {_n(semantic_chars)}   "
@@ -1262,43 +1663,87 @@ def _format_model_facing_ledger(ml: dict, cf: dict | None = None,
     env = ov["block_json_bytes"] - ov["inner_bytes"]
     out.append(f"  per-block JSON envelope       {_n(env)}   " + c("(block type tags/ids/braces; bottom-up − ledger payload)", Colors.DIM))
 
+    # Semantic colors: GREEN = offloadable now · BLUE = not offloadable · LIGHT-BLUE =
+    # sub-floor (could, but the stub would be bigger than the content — net-negative).
+    STUB_BYTES = 265        # ≈ bytes a single offload stub leaves behind (ref/sha/sizes)
+    LBL_W = 26
+    GREEN, BLUE, LBLUE = Colors.BRIGHT_GREEN, Colors.BLUE, Colors.BRIGHT_BLUE
+
+    def _row(label, bytes_, color, count=None, unit="blocks", note="", bold=False):
+        codes = (Colors.BOLD, color) if bold else (color,)
+        lbl = c(f"{label:<{LBL_W}}", *codes)
+        by = c(f"{bytes_:>13,}", Colors.DIM)                        # bytes DIMMED (de-emphasized)
+        tk = c(f"~{bytes_ // 4:>10,} tok", *codes)                 # tokens colored + undimmed
+        cnt = f"  in {count:>6,} {unit}" if count is not None else ""
+        nt = ("  " + c(note, Colors.DIM)) if note else ""
+        return f"      {lbl} {by}   {tk}{cnt}{nt}"
+
+    def _offload_group(st, ge, lt, unit):
+        # st = already-stubbed (done) · ge = inline>=floor (OFFLOADABLE now) · lt = headroom (below floor)
+        non_off = st["bytes"] + lt["bytes"]
+        refs = ge["count"] * STUB_BYTES
+        net = max(0, ge["bytes"] - refs)
+        return [
+            _row("already-stubbed", st["bytes"], BLUE, st["count"], unit, "already offloaded — residual stub cost"),
+            _row(f"inline < {floor}B (headroom)", lt["bytes"], LBLUE, lt["count"], unit, "below floor — offloading = net-negative"),
+            _row(f"inline >= {floor}B", ge["bytes"], GREEN, ge["count"], unit, "a normal run pages these out"),
+            "      " + c("─" * 62, Colors.DIM),
+            _row("= NON-OFFLOADABLE", non_off, BLUE, note="stubbed + sub-floor — a normal run won't reduce it", bold=True),
+            _row("= OFFLOADABLE", ge["bytes"], GREEN, note="a normal run pages out this much…", bold=True),
+            _row("−  offload stub refs", refs, Colors.DIM, note=f"…leaving ~{STUB_BYTES}B × {ge['count']:,} stubs behind"),
+            _row("= NET SAVINGS", net, GREEN, note="ACTUAL reduction realized on next resume", bold=True),
+        ]
+
     def _ledger_block(title: str, a: dict) -> list[str]:
+        off, th, at = a["offloadable"], a["thinking"], a["attachment"]
         keep_u, keep_a = a["keep"]["user"], a["keep"]["assistant"]
-        keep = keep_u + keep_a
-        off = a["offloadable"]
-        st, ge, lt = off["stubbed"], off["inline_ge"], off["inline_lt"]
-        offtot = st["bytes"] + ge["bytes"] + lt["bytes"]
-        th = a["thinking"]
         L = [c(f"  {title}", Colors.BOLD)]
-        L.append(c("    KEEP  conversational memory (user prompts + assistant text)", Colors.BRIGHT_CYAN))
-        L.append(f"      user prompts            {_n(keep_u)}   {_tok(keep_u)}")
-        L.append(f"      assistant text          {_n(keep_a)}   {_tok(keep_a)}")
-        L.append(c(f"      = KEEP total            {_n(keep)}   {_tok(keep)}", Colors.BOLD))
+        L.append(c("    KEEP  conversational memory (user prompts + assistant text) — never offloaded", Colors.BRIGHT_CYAN))
+        L.append(_row("user prompts", keep_u, Colors.BRIGHT_WHITE))
+        L.append(_row("assistant text", keep_a, Colors.BRIGHT_WHITE))
+        L.append(_row("= KEEP total", keep_u + keep_a, Colors.BRIGHT_WHITE, bold=True))
         L.append(c("    OFFLOADABLE non-memory  tool_use.input + tool_result.content (inner payload)", Colors.BRIGHT_CYAN))
-        L.append(f"      already-stubbed         {_n(st['bytes'])}   {_tok(st['bytes'])}  in {st['count']:>5,} blocks")
-        L.append(f"      inline >= {floor}B         {_n(ge['bytes'])}   {_tok(ge['bytes'])}  in {ge['count']:>5,} blocks  "
-                 + c("(a normal run would offload these)", Colors.DIM))
-        L.append(c(f"      inline <  {floor}B HEADROOM {_n(lt['bytes'])}   ~{lt['bytes'] // 4:>10,} tok  in {lt['count']:>5,} blocks  "
-                   "<-- BELOW floor, skipped today", Colors.YELLOW))
-        L.append(c(f"          (untapped: lowering --min-bytes below {floor} would reclaim these {lt['count']:,} blocks)", Colors.DIM))
-        L.append(c(f"      = OFFLOADABLE total     {_n(offtot)}   {_tok(offtot)}", Colors.BOLD))
-        L.append(c("    THINKING  consolidation-only — NOT offloadable", Colors.BRIGHT_CYAN))
-        L.append(f"      thinking text           {_n(th['text_bytes'])}   {_tok(th['text_bytes'])}  in {th['count']:>5,} blocks")
-        L.append(c(f"      signature               {_n(th['sig_bytes'])}   ~{th['sig_bytes'] // 4:>10,} tok  "
-                   "API-REQUIRED (off-chain only)", Colors.DIM))
+        L += _offload_group(off["stubbed"], off["inline_ge"], off["inline_lt"], "blocks")
+        L.append(c("    THINKING  consolidation-only — NOT offloadable (route the turn off-chain to shed)", Colors.BRIGHT_CYAN))
+        L.append(_row("thinking text", th["text_bytes"], BLUE, th["count"], "blocks", "SUMMARY only / often empty — droppable"))
+        L.append(_row("signature", th["sig_bytes"], BLUE, note="the billed cost — encrypted full CoT, grows with thinking"))
+        if at["stubbed"]["count"] or at["inline_ge"]["count"] or at["inline_lt"]["count"]:
+            L.append(c("    OFFLOADABLE attachments  deferred_tools_delta / mcp / agent / hook_context  (ADDITIONAL to above)", Colors.BRIGHT_CYAN))
+            L.append(c("      (separate top-level records, NOT message.content — model-facing, re-sent every resume)", Colors.DIM))
+            L += _offload_group(at["stubbed"], at["inline_ge"], at["inline_lt"], "fields")
         return L
 
     out.append("")
+    out.append(c("  COLOR KEY  bytes = dim (de-emphasized) · tokens = colored & undimmed (what matters) · SECTION = cyan", Colors.DIM))
+    out.append(c("             GREEN = offloadable now · BLUE = not offloadable · LIGHT-BLUE = sub-floor (could, but net-negative)", Colors.DIM))
+    out.append("")
     out.extend(_ledger_block("LEDGER — OVERALL (whole file)", ov))
-    live = ml.get("live")
-    if live is not None and ml.get("live_index") not in (None, 0):
-        out.append("")
-        out.extend(_ledger_block(f"LEDGER — LIVE interval {ml['live_index']} (post-last-compaction, current context)", live))
+    intervals = ml.get("intervals") or {}
+    if show_intervals:
+        for idx in show_intervals:
+            a = intervals.get(idx)
+            out.append("")
+            if a is None:
+                out.append(c(f"  LEDGER — interval {idx}: (no data for this interval)", Colors.YELLOW))
+                continue
+            tag = " LIVE" if idx == ml.get("live_index") else ""
+            out.extend(_ledger_block(f"LEDGER —{tag} interval {idx}", a))
+    else:
+        live = ml.get("live")
+        if live is not None and ml.get("live_index") not in (None, 0):
+            out.append("")
+            out.extend(_ledger_block(f"LEDGER — LIVE interval {ml['live_index']} (post-last-compaction, current context)", live))
     out.append("")
     out.append(c("  NOTE: THINKING is reclaimable ONLY by routing the turn off-chain (consolidation),", Colors.DIM))
-    out.append(c("        NOT by offloading — the signature is API-required and cannot be stubbed.", Colors.DIM))
-    out.append(c("  FLAG: open question — whether signature bytes count against the model's", Colors.YELLOW))
-    out.append(c("        context-token budget is UNVERIFIED.", Colors.YELLOW))
+    out.append(c("        NOT by offloading — the block cannot be stubbed while it stays on-chain.", Colors.DIM))
+    out.append(c("  VERIFIED (Anthropic extended-thinking doc + our own experiment): the `signature`", Colors.DIM))
+    out.append(c("        carries the ENCRYPTED FULL chain-of-thought; the server decrypts it to", Colors.DIM))
+    out.append(c("        reconstruct the real thinking for prompt construction, so the SIGNATURE is", Colors.DIM))
+    out.append(c("        the part that counts against context and it grows with thinking size. The", Colors.DIM))
+    out.append(c("        visible `thinking` text is only a SUMMARY (empty under display:omitted) and", Colors.DIM))
+    out.append(c("        can be dropped with impunity. On Opus 4.5+/Sonnet 4.6+ prior-turn thinking is", Colors.DIM))
+    out.append(c("        kept by default and billed as input tokens; on pre-4.5 Opus/Sonnet + all", Colors.DIM))
+    out.append(c("        Haiku it is instead stripped and not billed.", Colors.DIM))
     return "\n".join(out)
 
 
@@ -1328,134 +1773,27 @@ def _raw_line_count(jsonl_path: Path) -> int:
     return n
 
 
-def find_compactions(jsonl_path: Path) -> list[dict]:
-    """Scan RAW lines for compaction events.
-
-    Returns one dict per event, 1-indexed and in file order:
-      {"index": k, "start_line": <earliest raw line of the event>,
-       "summary_line": <raw line with isCompactSummary>,
-       "timestamp": <ts or "">, "summary_chars": <len of the summary line>}
-    """
-    events: list[dict] = []
-    prev_line_num = 0
-    prev_obj: dict | None = None
-    try:
-        with open(jsonl_path, encoding="utf-8", errors="replace") as fh:
-            for i, line in enumerate(fh, start=1):
-                try:
-                    obj = json.loads(line)
-                except Exception:
-                    obj = None
-                if isinstance(obj, dict) and obj.get("isCompactSummary") is True:
-                    start_line = i
-                    if (
-                        prev_obj is not None
-                        and prev_line_num == i - 1
-                        and prev_obj.get("type") == "system"
-                        and prev_obj.get("subtype") == "compact_boundary"
-                    ):
-                        start_line = prev_line_num
-                    events.append({
-                        "index": len(events) + 1,
-                        "start_line": start_line,
-                        "summary_line": i,
-                        "timestamp": obj.get("timestamp", "") or "",
-                        "summary_chars": len(line.rstrip("\n")),
-                    })
-                prev_line_num, prev_obj = i, obj if isinstance(obj, dict) else None
-    except OSError:
-        return []
-    return events
-
-
-def compaction_intervals(jsonl_path: Path) -> list[dict]:
-    """Partition the raw file into compaction intervals.
-
-    interval 0 = "prologue": raw lines 1 .. (first event start_line - 1). May be
-    empty (end_line < start_line) if the file opens with a compaction.
-    interval k (k=1..N) = event k start_line .. (event k+1 start_line - 1) or EOF.
-    The LAST interval is the live/current region. With no events, interval 0
-    spans the whole file.
-
-    Returns [{"index": i, "start_line": s, "end_line": e, "is_prologue": bool}, ...].
-    """
-    events = find_compactions(jsonl_path)
-    total = _raw_line_count(jsonl_path)
-    if not events:
-        return [{"index": 0, "start_line": 1, "end_line": total, "is_prologue": True}]
-
-    intervals = [{
-        "index": 0,
-        "start_line": 1,
-        "end_line": events[0]["start_line"] - 1,
-        "is_prologue": True,
-    }]
-    for i, ev in enumerate(events):
-        start = ev["start_line"]
-        end = (events[i + 1]["start_line"] - 1) if i + 1 < len(events) else total
-        intervals.append({
-            "index": i + 1,
-            "start_line": start,
-            "end_line": end,
-            "is_prologue": False,
-        })
-    return intervals
-
-
-def _select_intervals(spec: str, intervals: list[dict]) -> tuple[list[dict] | None, str | None]:
-    """Resolve an --interval SPEC against the file's intervals.
-
-    SPEC supports: a single integer (0=prologue, 1..N); the words `last`/`live`
-    (final interval); negative indices (-1 = last); comma lists ("1,3"); and
-    ranges ("2-4"). Returns (selected_intervals, None) or (None, error_message).
-    """
-    max_index = intervals[-1]["index"]
-    valid = {iv["index"] for iv in intervals}
-    chosen: list[int] = []
-    for token in spec.split(","):
-        token = token.strip().lower()
-        if not token:
-            continue
-        if token in ("last", "live"):
-            chosen.append(intervals[-1]["index"])
-        elif token.startswith("-"):
-            try:
-                idx = int(token)
-                chosen.append(intervals[idx]["index"])
-            except (ValueError, IndexError):
-                return None, f"Invalid/out-of-range interval index: {token}"
-        elif "-" in token:
-            lo_s, hi_s = token.split("-", 1)
-            try:
-                lo, hi = int(lo_s), int(hi_s)
-            except ValueError:
-                return None, f"Invalid interval range: {token}"
-            chosen.extend(range(lo, hi + 1))
-        else:
-            try:
-                chosen.append(int(token))
-            except ValueError:
-                return None, f"Invalid interval token: {token}"
-
-    bad = sorted({i for i in chosen if i not in valid})
-    if bad:
-        note = "no compactions in this file" if max_index == 0 else f"{max_index} compaction(s)"
-        return None, (
-            f"Requested interval(s) {bad} not available — file has intervals 0..{max_index} ({note})."
-        )
-    want = set(chosen)
-    return [iv for iv in intervals if iv["index"] in want], None
+# Compaction-interval enumeration + SPEC selection are now the CANONICAL single
+# source of truth in lib_jsonl_archive (next to is_turn_start / classify_record).
+# read_jsonl was the origin of this logic and now DELEGATES to the canonical copies
+# via thin aliases so the interval NUMBERING (0=prologue, 1..N, last/live=final)
+# can never diverge from context_stats / turn_digest. These aliases keep every
+# existing read_jsonl call site + test working unchanged.
+find_compactions = _lja.find_compactions
+compaction_intervals = _lja.compaction_intervals
+_select_intervals = _lja.select_intervals
 
 
 def _apply_interval_filter(msgs: list[Message], selected: list[dict]) -> list[Message]:
-    """Keep only messages whose source_line falls within a selected interval."""
+    """Keep only messages whose source_line falls within a selected interval.
+
+    Membership is LINE-RANGE based (the canonical interval partition); reuses the
+    shared lib_jsonl_archive helpers so read_jsonl and the reclaim tools apply the
+    identical interval boundaries."""
     if not selected:
         return msgs
-    ranges = [(iv["start_line"], iv["end_line"]) for iv in selected]
-    return [
-        m for m in msgs
-        if m.source_line and any(s <= m.source_line <= e for s, e in ranges)
-    ]
+    ranges = _lja.interval_line_ranges(selected)
+    return [m for m in msgs if _lja.line_in_intervals(m.source_line, ranges)]
 
 
 def _meta_preview(obj: dict, limit: int = 200) -> str:
@@ -2015,7 +2353,8 @@ def _apply_range(messages: list, range_str: str | None) -> tuple[list, int]:
     # Turn-based range: prefix with 't'
     if range_str.lower().startswith("t"):
         turn_range = range_str[1:]  # strip the 't' prefix
-        turns = group_into_turns(messages)
+        # Real turns only (number >= 0); the `pre` prologue (-1) is not t-addressable.
+        turns = [t for t in group_into_turns(messages) if t.number >= 0]
         t_start, t_end = _parse_range(turn_range, len(turns))
         selected_turns = turns[t_start:t_end]
         if not selected_turns:
@@ -2116,18 +2455,103 @@ def _sort_messages_by_ts(msgs: list[Message], order: str) -> list[Message]:
     return sorted(msgs, key=_sort_key, reverse=(order == "newest"))
 
 
+_TYPE_FILTER_ALIASES: dict[str, tuple[str, ...]] = {
+    # Human-friendly aliases. Values are canonical MessageType.value strings.
+    "assistant": ("response",),
+    "ai": ("response",),
+    "text": ("response",),
+    "tool": ("tool_use", "tool_result"),
+    "tools": ("tool_use", "tool_result"),
+    "conversation": ("user", "response"),
+    "messages": ("user", "response"),
+    "nonmeta": ("user", "response", "thinking", "tool_use", "tool_result"),
+}
+
+
 def _parse_type_filter(type_str: str | None) -> list[str] | None:
-    """Parse comma-separated type filter into list of type values."""
+    """Parse comma-separated type filter into canonical MessageType.value names.
+
+    Accepts the historical exact values plus a few operator-friendly aliases:
+    assistant/ai/text -> response, tool/tools -> tool_use+tool_result, and
+    conversation/messages -> user+response. Unknown tokens are preserved so old
+    callers that passed a future type keep the old no-match behavior rather than
+    failing at parse time.
+    """
     if not type_str:
         return None
-    return [t.strip() for t in type_str.split(",")]
+    values: list[str] = []
+    seen: set[str] = set()
+    for raw in type_str.split(","):
+        token = raw.strip().lower()
+        if not token:
+            continue
+        if token == "all":
+            return None
+        expanded = _TYPE_FILTER_ALIASES.get(token, (token,))
+        for value in expanded:
+            if value not in seen:
+                values.append(value)
+                seen.add(value)
+    return values or None
+
+
+def _parse_message_types_arg(args: list[str]) -> list[str] | None:
+    """Parse --type or --types; --types is the clearer extraction spelling."""
+    raw = _parse_flag(args, "--type", multi=True)
+    if raw is None:
+        raw = _parse_flag(args, "--types", multi=True)
+    return _parse_type_filter(raw)
 
 
 def _apply_type_filter(msgs: list[Message], type_values: list[str] | None) -> list[Message]:
     """Filter messages by type value(s)."""
     if not type_values:
         return msgs
-    return [m for m in msgs if m.type.value in type_values]
+    wanted = set(type_values)
+    return [m for m in msgs if m.type.value in wanted]
+
+
+def _turn_numbers_in_scope(messages: list[Message]) -> list[int]:
+    """Distinct real turn numbers (>= 0) in message order; the `pre` prologue (-1)
+    is excluded (not a numbered, t-addressable turn)."""
+    nums: list[int] = []
+    seen: set[int] = set()
+    for m in messages:
+        n = m.turn_number
+        if n is None or n < 0 or n in seen:
+            continue
+        nums.append(n)
+        seen.add(n)
+    return nums
+
+
+def _select_turn_numbers(spec: str, messages: list[Message]) -> tuple[set[int] | None, str | None]:
+    """Resolve a --turns SPEC against the visible/scoped messages.
+
+    SPEC is absolute by Message.turn_number, matching the Tn shown in output headers.
+    The grammar (N, N-M, N-, -N last-N, comma lists, optional leading 't', last/live)
+    is the CANONICAL shared one in lib_cli_common.select_turn_numbers — this delegates
+    to it (passing the turn numbers visible in scope) so context_stats / turn_digest
+    interpret --turns identically."""
+    from uai_toolkit.cli import lib_cli_common as _lcc
+    return _lcc.select_turn_numbers(spec, _turn_numbers_in_scope(messages))
+
+
+def _apply_turn_filter(messages: list[Message], turn_spec: str | None) -> tuple[list[Message], int, str | None]:
+    """Filter by absolute turn_number. Returns (messages, offset, error)."""
+    if not turn_spec:
+        return messages, 0, None
+    selected, err = _select_turn_numbers(turn_spec, messages)
+    if err:
+        return [], 0, err
+    if not selected:
+        return [], 0, None
+    filtered = [m for m in messages if m.turn_number in selected]
+    if not filtered:
+        return [], 0, None
+    first = filtered[0]
+    offset = next((i for i, m in enumerate(messages) if m is first), 0)
+    return filtered, offset, None
 
 
 PRIVATE_MARKER = "[/PRIVATE]"
@@ -2166,14 +2590,20 @@ def _apply_private_filter(msgs: list[Message], *, show_private: bool = False) ->
 
 
 def format_messages_from_schema(messages: list[Message], fmt: str = "text",
-                                 msg_num_offset: int = 0) -> str:
+                                 msg_num_offset: int = 0,
+                                 expand: "set[str] | None" = None) -> str:
     """Format Message objects for display.
 
-    Formats: text, json, flat, markdown, structured, raw.
+    Formats: text, json, flat, markdown, structured, raw, memorex.
     'structured' returns JSON with day > turn > message hierarchy.
     'flat' returns a flat JSON array using Message.to_dict() (all fields including line_number).
     'raw' returns the original JSONL entries as a JSON array (unprocessed).
+    'memorex' renders Memorex-style colored, labeled, collapsible section cards
+    (matches the UAI Memorex live overlay; `expand` unfolds collapse-default types).
     """
+    if fmt == "memorex":
+        return render_memorex(messages, msg_num_offset=msg_num_offset, expand=expand)
+
     if fmt == "raw":
         # Return original JSONL entries for messages that have raw data
         raw_entries = [m.raw for m in messages if m.raw]
@@ -2211,7 +2641,7 @@ def format_messages_from_schema(messages: list[Message], fmt: str = "text",
         sep = c("=" * 60, Colors.DIM)
         for i, m in enumerate(messages):
             num = msg_num_offset + i + 1
-            turn_tag = f"T{m.turn_number} " if m.turn_number else ""     # conversation turn
+            turn_tag = "pre " if m.turn_number < 0 else f"T{m.turn_number} "  # conversation turn
             line_tag = f" L{m.source_line}" if m.source_line else ""     # raw JSONL file line
             num_str = c(f"[{turn_tag}#{num}{line_tag}]", Colors.BRIGHT_CYAN, Colors.BOLD)
             ts = c(f"[{_ts_to_local(m.timestamp)}]", Colors.DIM)
@@ -2268,59 +2698,189 @@ def format_messages_from_schema(messages: list[Message], fmt: str = "text",
 # =============================================================================
 
 
+def _read_targets(
+    targets: list[str], *, platform: str | None, resolve: bool,
+    include_client_only: bool, interval_spec: str | None,
+    all_intervals: bool, missing_label: str = "Session not found",
+) -> tuple[list[Message] | None, str | None]:
+    """Load messages for UUID/path targets and apply per-file interval selection."""
+    all_msgs: list[Message] = []
+    parse_all_intervals = all_intervals or bool(interval_spec)
+    for target in targets:
+        path = find_jsonl(target)
+        if not path:
+            return None, c(f"{missing_label}: {target}", Colors.RED)
+        m = parse_session(path, platform=platform, all_intervals=parse_all_intervals)
+        if resolve:
+            m = resolve_archived_stubs(m, path)
+        if include_client_only:
+            m = sorted(m + client_only_meta_messages(path), key=lambda x: x.source_line)
+        if interval_spec:
+            selected, err = _select_intervals(interval_spec, compaction_intervals(path))
+            if err:
+                return None, c(err, Colors.YELLOW)
+            m = _apply_interval_filter(m, selected)
+        all_msgs.extend(m)
+    return all_msgs, None
+
+
+def _read_file_targets(
+    paths: list[str], *, platform: str | None, resolve: bool,
+    include_client_only: bool, interval_spec: str | None,
+    all_intervals: bool,
+) -> tuple[list[Message] | None, str | None]:
+    """Load messages for explicit file paths and apply per-file interval selection."""
+    all_msgs: list[Message] = []
+    parse_all_intervals = all_intervals or bool(interval_spec)
+    for p_str in paths:
+        p = Path(p_str)
+        if not p.exists():
+            return None, c(f"File not found: {p}", Colors.RED)
+        m = parse_session(p, platform=platform, all_intervals=parse_all_intervals)
+        if resolve:
+            m = resolve_archived_stubs(m, p)
+        if include_client_only:
+            m = sorted(m + client_only_meta_messages(p), key=lambda x: x.source_line)
+        if interval_spec:
+            selected, err = _select_intervals(interval_spec, compaction_intervals(p))
+            if err:
+                return None, c(err, Colors.YELLOW)
+            m = _apply_interval_filter(m, selected)
+        all_msgs.extend(m)
+    return all_msgs, None
+
+
+def _filter_and_format_messages(
+    msgs: list[Message], *, fmt: str, type_filter: list[str] | None,
+    range_str: str | None, turns_str: str | None, show_private: bool,
+    sort_order: str | None = None, apply_toggles: bool = False,
+    expand: set[str] | None = None,
+) -> str:
+    """Common post-load filter pipeline for read/read-file/extract."""
+    if turns_str and range_str and range_str.lower().startswith("t"):
+        return c("Use either --turns or --range t..., not both.", Colors.YELLOW)
+
+    range_offset = 0
+    if turns_str:
+        msgs, range_offset, err = _apply_turn_filter(msgs, turns_str)
+        if err:
+            return c(err, Colors.YELLOW)
+    else:
+        # Apply --range before --type so t-ranges can still see USER turn starts.
+        msgs, range_offset = _apply_range(msgs, range_str)
+
+    msgs = _apply_type_filter(msgs, type_filter)
+    msgs = _apply_private_filter(msgs, show_private=show_private)
+    if apply_toggles:
+        msgs = _apply_toggles(msgs)
+    if sort_order:
+        msgs = _sort_messages_by_ts(msgs, sort_order)
+    return format_messages_from_schema(msgs, fmt, msg_num_offset=range_offset, expand=expand)
+
+
 def cmd_read(args: list[str]) -> str:
     """Read messages from a session by UUID."""
     if not args:
-        return "Usage: read <uuid> [--format F] [--platform P] [--type T] [--range R]"
+        return "Usage: read <uuid> [--format F] [--platform P] [--type/--types T] [--range R|--turns R] [--interval SPEC]"
     query = args[0]
     fmt = _parse_flag(args, "--format") or "text"
     platform = _parse_flag(args, "--platform")
-    type_filter = _parse_type_filter(_parse_flag(args, "--type", multi=True))
+    type_filter = _parse_message_types_arg(args)
     range_str = _parse_flag(args, "--range")
+    turns_str = _parse_flag(args, "--turns")
+    interval_spec = _parse_flag(args, "--interval")
     show_private = "--show-private" in args
     resolve = "--resolve" in args
+    include_client_only = "--include-client-only" in args
+    all_intervals = "--all-intervals" in args
 
-    path = find_jsonl(query)
-    if not path:
-        return c(f"Session not found: {query}", Colors.RED)
-
-    msgs = parse_session(path, platform=platform)
-    if resolve:
-        msgs = resolve_archived_stubs(msgs, path)
-    msgs, range_offset = _apply_range(msgs, range_str)   # range first: turn-grouping needs USER msgs
-    msgs = _apply_type_filter(msgs, type_filter)
-    msgs = _apply_private_filter(msgs, show_private=show_private)
-    return format_messages_from_schema(msgs, fmt, msg_num_offset=range_offset)
+    loaded, err = _read_targets([query], platform=platform, resolve=resolve,
+                                include_client_only=include_client_only,
+                                interval_spec=interval_spec,
+                                all_intervals=all_intervals)
+    if err:
+        return err
+    return _filter_and_format_messages(loaded or [], fmt=fmt, type_filter=type_filter,
+                                       range_str=range_str, turns_str=turns_str,
+                                       show_private=show_private)
 
 
 def cmd_read_file(args: list[str]) -> str:
     """Read messages from one or more file paths."""
     fmt = _parse_flag(args, "--format") or "text"
     platform = _parse_flag(args, "--platform")
-    type_filter = _parse_type_filter(_parse_flag(args, "--type", multi=True))
+    type_filter = _parse_message_types_arg(args)
     range_str = _parse_flag(args, "--range")
+    turns_str = _parse_flag(args, "--turns")
+    interval_spec = _parse_flag(args, "--interval")
     show_private = "--show-private" in args
     resolve = "--resolve" in args
-    paths = _strip_flags(args, ["--format", "--platform", "--range", "--show-private", "--resolve"], multi_flags=["--type"])
+    include_client_only = "--include-client-only" in args
+    all_intervals = "--all-intervals" in args
+    expand = _parse_memorex_expand(_parse_flag(args, "--expand"))
+    paths = _strip_flags(args, ["--format", "--platform", "--range", "--turns", "--interval", "--expand"], multi_flags=["--type", "--types"])
+    paths = [p for p in paths if p not in ("--include-client-only", "--all-intervals")]
 
     if not paths:
-        return "Usage: read-file <path> [path2 ...] [--format F] [--platform P] [--type T] [--range R] [--resolve]"
+        return "Usage: read-file <path> [path2 ...] [--format F] [--platform P] [--type/--types T] [--range R|--turns R] [--interval SPEC] [--resolve] [--expand SECTIONS]"
 
-    all_msgs = []
-    for p_str in paths:
-        p = Path(p_str)
-        if not p.exists():
-            return c(f"File not found: {p}", Colors.RED)
-        m = parse_session(p, platform=platform)
-        if resolve:
-            m = resolve_archived_stubs(m, p)
-        all_msgs.extend(m)
+    loaded, err = _read_file_targets(paths, platform=platform, resolve=resolve,
+                                     include_client_only=include_client_only,
+                                     interval_spec=interval_spec,
+                                     all_intervals=all_intervals)
+    if err:
+        return err
+    return _filter_and_format_messages(loaded or [], fmt=fmt, type_filter=type_filter,
+                                       range_str=range_str, turns_str=turns_str,
+                                       show_private=show_private, expand=expand)
 
-    all_msgs, range_offset = _apply_range(all_msgs, range_str)   # range first: turn-grouping needs USER msgs
-    all_msgs = _apply_type_filter(all_msgs, type_filter)
-    all_msgs = _apply_private_filter(all_msgs, show_private=show_private)
-    return format_messages_from_schema(all_msgs, fmt, msg_num_offset=range_offset)
 
+def cmd_extract(args: list[str]) -> str:
+    """Extract scoped message content for briefing/Recall workflows."""
+    usage = ("Usage: extract <uuid|path> [target2 ...] [--types TYPE[,TYPE]] "
+             "[--interval SPEC | --turns RANGE] [--format markdown|text|json|flat|structured|raw] "
+             "[--resolve] [--include-client-only]")
+    if not args:
+        return usage
+    fmt = _parse_flag(args, "--format") or "markdown"
+    platform = _parse_flag(args, "--platform")
+    type_filter = _parse_message_types_arg(args)
+    range_str = _parse_flag(args, "--range")
+    turns_str = _parse_flag(args, "--turns")
+    interval_spec = _parse_flag(args, "--interval")
+    show_private = "--show-private" in args
+    resolve = "--resolve" in args
+    include_client_only = "--include-client-only" in args
+    # Extraction is archival/briefing oriented: preserve turn numbering across all
+    # compaction intervals by default. read/read-file keep the live-context default.
+    all_intervals = True
+    expand = _parse_memorex_expand(_parse_flag(args, "--expand"))
+    targets = _strip_flags(args, ["--format", "--platform", "--range", "--turns", "--interval", "--expand"], multi_flags=["--type", "--types"])
+    targets = [t for t in targets if t not in ("--include-client-only", "--all-intervals")]
+    if not targets:
+        return usage
+
+    # Targets can be UUIDs or direct files. Resolve each independently.
+    loaded: list[Message] = []
+    for target in targets:
+        p = Path(target)
+        if p.exists():
+            msgs, err = _read_file_targets([target], platform=platform, resolve=resolve,
+                                           include_client_only=include_client_only,
+                                           interval_spec=interval_spec,
+                                           all_intervals=all_intervals)
+        else:
+            msgs, err = _read_targets([target], platform=platform, resolve=resolve,
+                                      include_client_only=include_client_only,
+                                      interval_spec=interval_spec,
+                                      all_intervals=all_intervals)
+        if err:
+            return err
+        loaded.extend(msgs or [])
+
+    return _filter_and_format_messages(loaded, fmt=fmt, type_filter=type_filter,
+                                       range_str=range_str, turns_str=turns_str,
+                                       show_private=show_private, expand=expand)
 
 def cmd_find(args: list[str]) -> str:
     """Find session file by UUID."""
@@ -2420,9 +2980,8 @@ def _format_context_caveat() -> str:
     out.append(c("  These statistics cover the TRANSCRIPT (the message stream in this JSONL) ONLY.", Colors.DIM))
     out.append(c("  The model's ACTUAL per-request context ALSO includes the preamble Claude Code", Colors.DIM))
     out.append(c("  builds from config and does NOT store in the JSONL: the system prompt, tool/MCP", Colors.DIM))
-    out.append(c("  schemas, and injected CLAUDE.md / memory / context files. That preamble typically", Colors.DIM))
-    out.append(c("  DOMINATES context. So 'model-facing' here = the conversation's contribution, NOT", Colors.DIM))
-    out.append(c("  total context. Run /context for the true split.", Colors.DIM))
+    out.append(c("  schemas, and injected CLAUDE.md / memory / context files. So 'model-facing' here", Colors.DIM))
+    out.append(c("  = the conversation's contribution, NOT total context. Run /context for the true split.", Colors.DIM))
     return "\n".join(out)
 
 
@@ -2430,17 +2989,27 @@ def cmd_stats(args: list[str]) -> str:
     """Show detailed session statistics."""
     if not args:
         return ("Usage: stats <uuid> [--platform P] [--format text|json] [--tools] "
-                "[--split-offloaded]")
+                "[--split-offloaded] [--interval SPEC]  (SPEC: N | live | last | 2-4; scopes the LEDGER)")
     fmt = _parse_flag(args, "--format") or "text"
     platform = _parse_flag(args, "--platform")
+    interval_spec = _parse_flag(args, "--interval")
     show_tools = "--tools" in args
     split_offloaded = "--split-offloaded" in args
     bool_flags = {"--tools", "--split-offloaded"}
     args = [a for a in args if a not in bool_flags]
-    query = _strip_flags(args, ["--format", "--platform"])[0] if _strip_flags(args, ["--format", "--platform"]) else args[0]
+    _stripped = _strip_flags(args, ["--format", "--platform", "--interval"])
+    query = _stripped[0] if _stripped else args[0]
     path = find_jsonl(query)
     if not path:
         return c(f"Session not found: {query}", Colors.RED)
+    # --interval scopes the LEDGER to the requested compaction interval(s); default
+    # (None) shows OVERALL + LIVE. Accepts a number, 'live'/'last', or a range.
+    show_intervals = None
+    if interval_spec:
+        selected, err = _select_intervals(interval_spec, compaction_intervals(path))
+        if err:
+            return c(err, Colors.RED)
+        show_intervals = [iv["index"] for iv in selected]
     result = session_stats(path, platform=platform, fmt=fmt, show_tools=show_tools,
                            split_offloaded=split_offloaded)
     bd = raw_line_breakdown(path)
@@ -2457,7 +3026,7 @@ def cmd_stats(args: list[str]) -> str:
         result["context_caveat"] = (
             "Stats cover the TRANSCRIPT only; the model's per-request context also "
             "includes the system prompt + tool/MCP schemas + injected "
-            "CLAUDE.md/memory/context files (NOT stored in JSONL, usually dominant). "
+            "CLAUDE.md/memory/context files (NOT stored in JSONL). "
             "Run /context for the true split.")
         return json.dumps(result, indent=2)
     # semantic-total chars (Totals block) for the bottom-up/semantic ratio
@@ -2473,10 +3042,193 @@ def cmd_stats(args: list[str]) -> str:
         "\n" + _format_raw_line_breakdown(bd),
         "\n" + _format_stub_accounting(sa),
         "\n" + _format_conversation_client_only_fields(cf, bd),
-        "\n" + _format_model_facing_ledger(ml, cf, semantic_chars),
+        "\n" + _format_model_facing_ledger(ml, cf, semantic_chars, show_intervals=show_intervals),
     ]
     parts.append("\n" + _format_context_caveat())
     return "".join(parts)
+
+
+_HISTO_CATS = ("user", "response", "thinking", "signature", "tool_use", "tool_result", "compaction", "other")
+
+
+def _signatures_by_line(path: "Path") -> "dict":
+    """Map raw 1-indexed JSONL line -> total thinking-block signature chars.
+
+    The standardized Message.raw drops the `signature`, so read the original file
+    to recover the encrypted-blob byte cost and key it by source_line.
+    """
+    out: dict = {}
+    try:
+        with open(path, encoding="utf-8") as f:
+            for i, ln in enumerate(f):
+                if not ln.strip():
+                    continue
+                try:
+                    o = json.loads(ln)
+                except Exception:
+                    continue
+                content = (o.get("message") or {}).get("content")
+                if isinstance(content, list):
+                    s = sum(len(b.get("signature") or "")
+                            for b in content
+                            if isinstance(b, dict) and b.get("type") == "thinking")
+                    if s:
+                        out[i + 1] = s
+    except OSError:
+        pass
+    return out
+
+
+def turn_histogram(messages: list, sig_by_line: "dict | None" = None,
+                   include_off_chain: bool = False) -> "dict":
+    """Per-turn char tally, broken out by category.
+
+    By default counts only ACTIVE-CHAIN records (what's actually in the model's
+    context); off-chain dead-retry/rewind records are skipped (set
+    include_off_chain=True to count them). `thinking` = readable plaintext;
+    `signature` = the encrypted thinking blob (recovered from the raw file via
+    source_line); `compaction` = isCompactSummary continuations. Returns an
+    ordered {turn: {cat: chars, ts, nmsg}} by absolute turn.
+    """
+    from collections import OrderedDict
+    sig_by_line = sig_by_line or {}
+    turns: "OrderedDict" = OrderedDict()
+    seen_sig: set = set()
+    for m in messages:
+        if not include_off_chain and not getattr(m, "on_chain", True):
+            continue
+        t = m.turn_number if m.turn_number is not None else 0   # -1 = `pre` prologue
+        d = turns.get(t)
+        if d is None:
+            d = {k: 0 for k in _HISTO_CATS}
+            d["ts"] = m.timestamp
+            d["nmsg"] = 0
+            turns[t] = d
+        d["nmsg"] += 1
+        typ = m.type
+        if getattr(m, "is_compaction", False):
+            d["compaction"] += len(m.content or "")
+        elif typ == MessageType.USER:
+            d["user"] += len(m.content or "")
+        elif typ == MessageType.RESPONSE:
+            d["response"] += len(m.content or "")
+        elif typ == MessageType.THINKING:
+            d["thinking"] += len(m.content or "")
+            sl = m.source_line
+            if sl and sl not in seen_sig:                 # one record's sig counted once
+                seen_sig.add(sl)
+                d["signature"] += sig_by_line.get(sl, 0)
+        elif typ == MessageType.TOOL_USE:
+            try:
+                d["tool_use"] += len(json.dumps(m.tool_input or {}, ensure_ascii=False))
+            except Exception:
+                d["tool_use"] += len(str(m.tool_input or ""))
+        elif typ == MessageType.TOOL_RESULT:
+            d["tool_result"] += len(m.content or "")
+        else:
+            d["other"] += len(m.content or "")
+    return turns
+
+
+def _format_histogram(turns: "dict", width: int = 24, other_breakdown: "dict | None" = None) -> str:
+    """Render the per-turn char histogram: per-type columns, total, stacked bar."""
+    def total(d):
+        return sum(d[k] for k in _HISTO_CATS)
+    maxtot = max((total(d) for d in turns.values()), default=0) or 1
+    H = lambda s: c(s, Colors.BOLD, Colors.BRIGHT_CYAN)
+    D = lambda s: c(s, Colors.DIM)
+    # Column/segment order + colors match the message-type labels used elsewhere.
+    # thinking includes its signature bytes; other = system/meta/skill/etc.
+    segdef = [
+        ("user", Colors.BRIGHT_BLUE, lambda d: d["user"]),
+        ("tools", Colors.YELLOW, lambda d: d["tool_use"] + d["tool_result"]),
+        ("thinking", Colors.MAGENTA, lambda d: d["thinking"] + d["signature"]),
+        ("response", Colors.BRIGHT_GREEN, lambda d: d["response"]),
+        ("compact", Colors.CYAN, lambda d: d["compaction"]),
+        ("other", Colors.DIM, lambda d: d["other"]),
+    ]
+    cw = 10
+    hdr = (f" {'turn':<5}"
+           + "".join(c(f"{name:>{cw}}", col) for name, col, _ in segdef)
+           + f"{'total':>12}  bar")
+    lines = [
+        H("TURN HISTOGRAM") + D("  chars per turn by message type (active chain only)"),
+        hdr,
+    ]
+    grand = {k: 0 for k in _HISTO_CATS}
+    for t, d in turns.items():
+        tot = total(d)
+        for k in _HISTO_CATS:
+            grand[k] += d[k]
+        vals = [fn(d) for _, _, fn in segdef]
+        cols = "".join(f"{v:>{cw},}" for v in vals)
+        nbar = max(1, round(width * tot / maxtot)) if tot else 0
+        bar, acc, cum = "", 0, 0      # cumulative rounding → segments sum to nbar
+        for (_, col, fn) in segdef:
+            cum += fn(d)
+            tgt = round(nbar * cum / tot) if tot else 0
+            seg = max(0, tgt - acc)
+            acc = tgt
+            if seg:
+                bar += c("█" * seg, col)
+        t_label = "pre" if t < 0 else "T" + str(t)
+        lines.append(f" {t_label:<5}{cols}{tot:>12,}  {bar}")
+    # totals row
+    gv = [fn(grand) for _, _, fn in segdef]
+    gt = sum(gv)
+    lines.append(" " + D("─" * (5 + cw * len(segdef) + 12)))
+    lines.append(f" {'Σ':<5}" + "".join(f"{v:>{cw},}" for v in gv) + f"{gt:>12,}")
+    lines.append("")
+    lines.append(D(
+        f" thinking total {grand['thinking']+grand['signature']:,} = "
+        f"plaintext {grand['thinking']:,} + signature {grand['signature']:,} (encrypted blob)"))
+    if other_breakdown:
+        parts = " · ".join(f"{k} {v:,}" for k, v in
+                           sorted(other_breakdown.items(), key=lambda kv: -kv[1]) if v)
+        lines.append(D(f" other ({sum(other_breakdown.values()):,}) = "
+                       + (parts or "none") + "  ← message types pooled into 'other'"))
+    else:
+        lines.append(D(" other = skill bodies / agent_result / injected / system / meta"))
+    lines.append(D(
+        " compact = compaction-summary continuations · "
+        "off-chain dead-retry/rewind records excluded"))
+    return "\n".join(lines)
+
+
+def cmd_histo(args: list[str]) -> str:
+    """Per-turn histogram of char usage (offload target highlighted)."""
+    usage = "Usage: histo <uuid|path> [--platform P] [--format text|json] [--interval SPEC]"
+    if not args:
+        return usage
+    fmt = _parse_flag(args, "--format") or "text"
+    platform = _parse_flag(args, "--platform")
+    interval_spec = _parse_flag(args, "--interval")
+    queries = _strip_flags(args, ["--format", "--platform", "--interval"])
+    if not queries:
+        return usage
+    path = find_jsonl(queries[0])
+    if not path:
+        return c(f"Session not found: {queries[0]}", Colors.RED)
+    msgs = parse_session(path, platform=platform)
+    if interval_spec:
+        selected, err = _select_intervals(interval_spec, compaction_intervals(path))
+        if err:
+            return c(err, Colors.RED)
+        msgs = _apply_interval_filter(msgs, selected)
+    turns = turn_histogram(msgs, sig_by_line=_signatures_by_line(path))
+    # Break down the 'other' bucket by message type (on-chain, non-compaction).
+    _main = {MessageType.USER, MessageType.RESPONSE, MessageType.THINKING,
+             MessageType.TOOL_USE, MessageType.TOOL_RESULT}
+    other_breakdown: dict = {}
+    for m in msgs:
+        if not getattr(m, "on_chain", True) or getattr(m, "is_compaction", False):
+            continue
+        if m.type not in _main:
+            other_breakdown[m.type.value] = other_breakdown.get(m.type.value, 0) + len(m.content or "")
+    if fmt == "json":
+        return json.dumps({"turns": {str(t): d for t, d in turns.items()},
+                           "other_breakdown": other_breakdown}, indent=2)
+    return _format_histogram(turns, other_breakdown=other_breakdown)
 
 
 def cmd_compactions(args: list[str]) -> str:
@@ -2576,17 +3328,55 @@ def _command_help_entries() -> dict[str, dict]:
                 "In REPL mode, toggle and range state are applied automatically.",
             ],
             "options": [
-                ("--format json|text|markdown", "Output format (default: text)"),
+                ("--format json|text|markdown|memorex", "Output format (default: text). 'memorex' = colored, labeled, collapsible section cards matching the UAI Memorex overlay"),
+                ("--expand SECTIONS", "memorex format: unfold collapse-by-default sections (e.g. --expand tool,thinking or --expand all)"),
                 ("--platform claude|codex|gemini|agy", "Force platform detection (default: auto)"),
-                ("--type TYPE[,TYPE]", f"Filter by message type: {types_list}"),
+                ("--type/--types TYPE[,TYPE]", f"Filter by message type: {types_list}; aliases: assistant, tools, conversation"),
                 ("--range RANGE", "Message range: 1-10, -20, 5-, t1-5, t-4"),
+                ("--turns RANGE", "Absolute Tn turn range: 10-20, 10-, -5, 12"),
                 ("--interval SPEC", "Keep only messages in compaction interval(s): 0=prologue, 1..N, last|live, -1, '1,3', '2-4'"),
-                ("--include-client-only", "Merge client-only raw lines (attachment, file-history-snapshot, system, ...) inline as META"),
-                ("--sort newest|oldest", "Sort all messages by timestamp across files"),
-                ("--show-private", "Include private thinking blocks (hidden by default)"),
+                ("--all-intervals", "Parse all compaction intervals for whole-history turn numbering (default: off — only the selected interval(s))"),
+                ("--include-client-only", "Merge client-only raw lines (attachment, file-history-snapshot, system, ...) inline as META (default: off)"),
+                ("--sort newest|oldest", "Flatten multiple targets and sort all messages by timestamp (default: group by file, source order)"),
+                ("--show-private", "Include private thinking blocks marked [/PRIVATE] (default: hidden)"),
+                ("--resolve", "Rehydrate Offload/Engram stubs from their archive so you read the ORIGINAL content in place (default: off; disk is not modified — a Restore-for-reading)"),
+                ("--no-color", "Disable ANSI color (default: color on a TTY) — use when piping to tools that choke on escape codes"),
             ],
-            "examples": ["read 7edf", "read 7edf a1b2 --sort newest", "read 7edf --type user,response", "read 7edf --range t1-5 --format markdown", "read 7edf --interval last", "read 7edf --interval 0 --include-client-only"],
+            "examples": ["read 7edf", "read 7edf a1b2 --sort newest", "read 7edf --type user,response", "read 7edf --range t1-5 --format markdown", "read 7edf --interval last", "read 7edf --interval 0 --include-client-only", "read 7edf --resolve   # rehydrate offloaded tool_results for reading"],
             "aliases": ["r"],
+            "repl_only": False,
+        },
+        "extract": {
+            "usage": "extract <uuid|path> [target2 ...] [options]",
+            "summary": "Extract scoped messages for briefing/Recall workflows",
+            "detail": [
+                "Briefing-oriented wrapper around read/read-file selection.",
+                "Unlike read, extract preserves turn numbering across all compaction",
+                "intervals by default, so already-compacted sessions can be mined for",
+                "historical user/assistant/thinking/tool slices.",
+                "Use --types to choose message kinds, --interval for compaction",
+                "intervals, and --turns for absolute Tn ranges shown in read_jsonl",
+                "headers. Default format is markdown for direct briefing input.",
+                "Context-reclaim role: this is the 'read it back out' half — feed a summarized or",
+                "offloaded region's turns into a briefing, or pull an archived slice for a manual",
+                "Recall (surfacing remembered-not-current content into a live session).",
+            ],
+            "options": [
+                ("--format markdown|text|json|flat|structured|raw|memorex", "Output format (default: markdown, for direct briefing input)"),
+                ("--types TYPE[,TYPE] / --type TYPE[,TYPE]", f"Filter by message type: {types_list}; aliases: assistant=response, tools=tool_use+tool_result, conversation=user+response (default: all types)"),
+                ("--interval SPEC", "Compaction intervals: 0=prologue, 1..N, last|live, -1, '1,3', '2-4' (default: all intervals — extract mines whole history)"),
+                ("--turns RANGE", "Absolute turn-number range using Tn values from headers: 10-20, 10-, -5, 12"),
+                ("--range RANGE", "Legacy message range or t-range; prefer --turns for briefing extraction"),
+                ("--resolve", "Rehydrate Offload/Engram stubs to their original content before extracting (default: off)"),
+                ("--include-client-only", "Merge client-only raw lines inline as META (default: off)"),
+                ("--platform claude|codex|gemini|agy", "Force platform detection (default: auto)"),
+            ],
+            "examples": [
+                "extract 7edf --types user,response --interval 1-3",
+                "extract 7edf --types conversation --turns 40-55 --format markdown",
+                "extract session.jsonl --types thinking,response --interval last --resolve",
+            ],
+            "aliases": ["x"],
             "repl_only": False,
         },
         "read-file": {
@@ -2599,11 +3389,14 @@ def _command_help_entries() -> dict[str, dict]:
                 "Platform is auto-detected from path and file content.",
             ],
             "options": [
-                ("--format json|text|markdown", "Output format (default: text)"),
+                ("--format json|text|markdown|memorex", "Output format (default: text). 'memorex' = colored, labeled, collapsible section cards matching the UAI Memorex overlay"),
+                ("--expand SECTIONS", "memorex format: unfold collapse-by-default sections (e.g. --expand tool,thinking or --expand all)"),
                 ("--platform claude|codex|gemini|agy", "Force platform detection (default: auto)"),
-                ("--type TYPE[,TYPE]", f"Filter by message type: {types_list}"),
+                ("--type/--types TYPE[,TYPE]", f"Filter by message type: {types_list}; aliases: assistant, tools, conversation"),
                 ("--range RANGE", "Message range: 1-10, -20, 5-, t1-5, t-4"),
+                ("--turns RANGE", "Absolute Tn turn range: 10-20, 10-, -5, 12"),
                 ("--interval SPEC", "Keep only messages in compaction interval(s): 0=prologue, 1..N, last|live, -1, '1,3', '2-4'"),
+                ("--all-intervals", "Parse all compaction intervals for whole-history turn numbering"),
                 ("--include-client-only", "Merge client-only raw lines (attachment, file-history-snapshot, system, ...) inline as META"),
                 ("--sort newest|oldest", "Sort all messages by timestamp across files"),
                 ("--show-private", "Include private thinking blocks"),
@@ -2642,21 +3435,51 @@ def _command_help_entries() -> dict[str, dict]:
         },
         "stats": {
             "usage": "stats <uuid|path> [options]",
-            "summary": "Detailed session statistics (types, tools, timing)",
+            "summary": "Detailed session statistics (types, tools, timing) — the 'what's sheddable' surface",
             "detail": [
                 "Accepts a UUID (partial match OK) or a direct file path.",
-                "Shows comprehensive session statistics including message counts by type,",
-                "tool usage breakdown (with --tools), timing, and token estimates.",
+                "Shows comprehensive session statistics including message counts and BYTES by",
+                "type, tool usage breakdown (with --tools), timing, and token estimates.",
+                "In the context-reclaim ladder this is the primary read-side gauge: it tells you",
+                "how heavy a transcript is and where the bytes live, so you can decide whether to",
+                "Offload / Bounce / Summarize. --split-offloaded further separates bytes still Full",
+                "(reclaimable) from bytes already relocated to a Stub (already offloaded).",
             ],
             "options": [
-                ("--format text|json", "Output format (default: text)"),
-                ("--platform claude|codex|gemini|agy", "Force platform detection"),
-                ("--tools", "Include per-tool usage breakdown"),
-                ("--split-offloaded", "Inline a Full/Stub breakout under each User/AI/Tools line"),
+                ("--format text|json", "Output format (default: text; json is model-readable, no ANSI)"),
+                ("--platform claude|codex|gemini|agy", "Force platform detection (default: auto from path/content)"),
+                ("--tools", "Include per-tool usage breakdown (default: off)"),
+                ("--split-offloaded", "Inline a Full/Stub byte breakout under each User/AI/Tools line — Full = still reclaimable, Stub = already Offloaded (default: off)"),
             ],
             "examples": ["stats 7edf", "stats 7edf --tools", "stats 7edf --format json",
                          "stats 7edf --split-offloaded"],
             "aliases": ["st"],
+            "repl_only": False,
+        },
+        "histo": {
+            "usage": "histo <uuid|path> [options]",
+            "summary": "Per-turn char histogram, stacked by message type — locate the heavy turns",
+            "detail": [
+                "One row per conversation turn with per-type char columns, total, and",
+                "a compact stacked bar scaled to the heaviest turn:",
+                "  blue=user  yellow=tools(tool_use+tool_result)  magenta=thinking(+signature)  green=response.",
+                "Counts transcript chars (not tokens); thinking includes its encrypted",
+                "signature bytes. 'other' = system/meta/skill/etc.",
+                "Reclaim use: the bar instantly shows WHICH turns and WHICH types dominate — a",
+                "tools-heavy turn is Offload fodder (lossless); a thinking/response-heavy turn can",
+                "only be shed by Summarize (lossy, reversible). Pairs with 'stats' for the totals.",
+                "--format json emits {turns: {N: {user,response,thinking,signature,tool_use,",
+                "tool_result,compaction,other,ts,nmsg}}, other_breakdown: {type: chars}}",
+                "— model-readable, no bars/ANSI.",
+            ],
+            "options": [
+                ("--format text|json", "Output format (default: text; json is model-readable, no bars/ANSI)"),
+                ("--platform claude|codex|gemini|agy", "Force platform detection (default: auto)"),
+                ("--interval SPEC", "Limit to compaction interval(s): 0=prologue, 1..N, last|live, -1, '1,3', '2-4' (default: all turns)"),
+            ],
+            "examples": ["histo 7edf", "hist 004c1360", "histo 7edf --format json",
+                         "histo 7edf --interval last"],
+            "aliases": ["hg", "hist"],
             "repl_only": False,
         },
         "compactions": {
@@ -2806,6 +3629,26 @@ def cmd_help(args: list[str]) -> str:
     lines = [
         c("read_jsonl", Colors.BOLD) + f" v{VERSION}" + D(" -- multi-platform CLI session reader"),
         "",
+        H("OVERVIEW"),
+        D("  read_jsonl is the canonical READER of Claude Code / Codex / Gemini session"),
+        D("  transcripts (the append-only .jsonl files each CLI writes). It walks a transcript,"),
+        D("  classifies every record (user, response, thinking, tool_use, tool_result, system,"),
+        D("  meta, skill, agent_result, injected, compaction-summary, and off-chain client-only"),
+        D("  lines), and renders the slice you ask for in text / markdown / json / memorex."),
+        "",
+        D("  It is the ANALYSIS layer of the context-reclaim ladder (see DESIGN_context_reclaim.md):"),
+        D("  it does not itself shed context -- the write/reclaim levers live in sibling tools"),
+        D("  (chain_skip.py = Offload, memory_manager = Summarize/Recall, session_bounce = Bounce)."),
+        D("  read_jsonl feeds those decisions: 'stats' and 'histo' show WHAT is sheddable and where"),
+        D("  the bytes are; 'extract' mines already-compacted history for briefings and Recall;"),
+        D("  'compactions' + --interval navigate compaction boundaries; and --resolve rehydrates"),
+        D("  Offload/Engram stubs so you read the ORIGINAL archived content in place (a live Restore-"),
+        D("  for-reading, disk untouched)."),
+        "",
+        D("  WHEN to reach for it: inspect any past or current session by UUID / display-name / path,"),
+        D("  audit a transcript before or after a reclaim op, or extract a turn-range to brief another"),
+        D("  session. Run with NO arguments to enter the interactive REPL (persistent toggle + range)."),
+        "",
         H("USAGE"),
         f"  {C('read_jsonl.py')}                                   {D('Start interactive REPL')}",
         f"  {C('read_jsonl.py')} {F('<command>')} {D('[target]')} {D('[options]')}     {D('Run a single command')}",
@@ -2833,22 +3676,24 @@ def cmd_help(args: list[str]) -> str:
     lines.append(f"  {C('quit'):<30s} {D('Exit the REPL')}")
 
     lines.append("")
-    lines.append(H("OPTIONS") + D(" (available on read, read-file, and list)"))
+    lines.append(H("OPTIONS") + D(" (available on read, read-file, extract, and list)"))
     lines.append(f"  {F('--platform')} {D('claude|codex|gemini|agy')}  {D('Filter or force platform (default: all/auto)')}")
-    lines.append(f"  {F('--format')} {D('json|text|markdown')}    {D('Output format (default: text)')}")
-    lines.append(f"  {F('--type')} {D('user,response,...')}       {D('Filter by message type (comma-separated)')}")
-    lines.append(f"          {D('Types: user, response, thinking, tool_use, tool_result, system, meta')}")
-    lines.append(f"  {F('--range')} {D('1-10 | -20 | t1-5 | t-4')}  {D('Message range (1-based) or turn range (t prefix)')}")
+    lines.append(f"  {F('--format')} {D('json|text|markdown|memorex')}    {D('Output format (default: text). memorex = colored Memorex-style cards')}")
+    lines.append(f"  {F('--type/--types')} {D('user,response,...')} {D('Filter by message type (comma-separated); aliases: tools, conversation, assistant')}")
+    lines.append(f"          {D('Types: user, response, thinking, tool_use, tool_result, system, meta, skill, agent_result, injected')}")
+    lines.append(f"  {F('--range')} {D('1-10 | -20 | t1-5 | t-4')}  {D('Message range (1-based) or legacy t-range')}")
+    lines.append(f"  {F('--turns')} {D('10-20 | 10- | -5')}       {D('Absolute Tn turn range; useful with extract/--interval')}")
     lines.append(f"  {F('--limit')} {D('N')}                  {D('Limit number of sessions shown (default: 20)')}")
     lines.append(f"  {F('--no-color')}                    {D('Disable color output (for piping to tools that choke on ANSI)')}")
     lines.append(f"  {F('--resolve')}                     {D('Rehydrate offload stubs from their archive (read/read-file; off by default)')}")
-    lines.append(f"  {F('--interval')} {D('SPEC')}               {D('Filter to compaction interval(s): 0=prologue, 1..N, last|live, -1, 1,3, 2-4 (read/read-file)')}")
-    lines.append(f"  {F('--include-client-only')}         {D('Merge client-only raw lines inline as META (read/read-file). See: compactions')}")
+    lines.append(f"  {F('--interval')} {D('SPEC')}               {D('Filter to compaction interval(s): 0=prologue, 1..N, last|live, -1, 1,3, 2-4')}")
+    lines.append(f"  {F('--all-intervals')}              {D('Whole-history parse for compacted sessions (extract uses this by default)')}")
+    lines.append(f"  {F('--include-client-only')}         {D('Merge client-only raw lines inline as META (read/read-file/extract). See: compactions')}")
 
     lines.append("")
     lines.append(H("OUTPUT FIELDS"))
     lines.append(f"  {D('Message header is')} {c('[Tt #N LMMM]', Colors.BRIGHT_CYAN, Colors.BOLD)}{D(':')}")
-    lines.append(f"    {F('Tt')}   {D('= conversation turn number (1-based; a turn = one user message + all replies until the next user message)')}")
+    lines.append(f"    {F('Tt')}   {D('= conversation turn number (first submitted prompt = T0; `pre` = the pre-first-prompt prologue)')}")
     lines.append(f"    {F('#N')}   {D('= message number (1-based ordinal over CONVERSATION messages only)')}")
     lines.append(f"    {F('LMMM')} {D('= raw JSONL file line this message came from')}")
     lines.append(f"  {D('json fields: turn_number=Tt, line_number=#N, source_line=LMMM')}")
@@ -2856,6 +3701,17 @@ def cmd_help(args: list[str]) -> str:
     lines.append(f"  {D('thinking + a tool_use + text → 3 messages, 1 line), and most JSONL lines are not messages at')}")
     lines.append(f"  {D('all (file-history snapshots, progress, attachments, mode/title/agent state). So #N << LMMM.')}")
 
+    lines.append("")
+    lines.append(H("EXAMPLES"))
+    lines.append(f"  {C('read_jsonl.py 7edf')}                        {D('read session 7edf (partial UUID) in default text')}")
+    lines.append(f"  {C('read_jsonl.py 7edf --type user,response')}   {D('just the conversation, drop tools/thinking')}")
+    lines.append(f"  {C('read_jsonl.py read 7edf --resolve')}         {D('read with Offload/Engram stubs rehydrated (Restore-for-reading)')}")
+    lines.append(f"  {C('read_jsonl.py stats 7edf --split-offloaded')} {D('byte stats + Full/Stub breakout: what is still sheddable')}")
+    lines.append(f"  {C('read_jsonl.py histo 7edf --interval last')}  {D('per-turn byte histogram of the live region')}")
+    lines.append(f"  {C('read_jsonl.py compactions 7edf')}            {D('list compaction boundaries + interval indexes')}")
+    lines.append(f"  {C('read_jsonl.py extract 7edf --types conversation --turns 40-55')}")
+    lines.append(f"      {D('mine turns 40-55 across all intervals as markdown for a briefing / Recall')}")
+    lines.append(f"  {C('read_jsonl.py list --platform claude --limit 50')} {D('recent sessions, newest first')}")
     lines.append("")
     lines.append(D("Type 'help <command>' for detailed help on any command."))
 
@@ -3035,10 +3891,12 @@ def run_command(line: str, interactive: bool = True) -> str | None:
 
     commands = {
         "read": lambda: _cmd_read_with_repl(args, interactive),
+        "extract": lambda: cmd_extract(args),
         "read-file": lambda: _cmd_read_file_with_repl(args, interactive),
         "find": lambda: cmd_find(args),
         "summary": lambda: cmd_summary(args),
         "stats": lambda: cmd_stats(args),
+        "histo": lambda: cmd_histo(args),
         "compactions": lambda: cmd_compactions(args),
         "list": lambda: cmd_list_sessions(args),
         "help": lambda: cmd_help(args),
@@ -3061,13 +3919,17 @@ def _cmd_read_with_repl(args: list[str], interactive: bool) -> str:
     args = [a for a in args if a != "--include-client-only"]
     fmt = _parse_flag(args, "--format") or "text"
     platform = _parse_flag(args, "--platform")
-    type_filter = _parse_type_filter(_parse_flag(args, "--type", multi=True))
+    type_filter = _parse_message_types_arg(args)
     range_str = _parse_flag(args, "--range") or (_repl_range if interactive else None)
+    turns_str = _parse_flag(args, "--turns")
     interval_spec = _parse_flag(args, "--interval")
     sort_order = _parse_flag(args, "--sort")
     show_private = "--show-private" in args
     resolve = "--resolve" in args
-    queries = _strip_flags(args, ["--format", "--platform", "--range", "--interval", "--sort", "--show-private", "--resolve"], multi_flags=["--type"])
+    all_intervals = "--all-intervals" in args
+    expand = _parse_memorex_expand(_parse_flag(args, "--expand"))
+    queries = _strip_flags(args, ["--format", "--platform", "--range", "--turns", "--interval", "--sort", "--show-private", "--resolve", "--expand"], multi_flags=["--type", "--types"])
+    queries = [q for q in queries if q != "--all-intervals"]
 
     if not queries:
         return "Usage: read <uuid|path> [uuid2 ...] [--format F] [--platform P] [--type T] [--range R] [--interval SPEC] [--include-client-only] [--sort newest|oldest] [--show-private] [--resolve]"
@@ -3077,7 +3939,7 @@ def _cmd_read_with_repl(args: list[str], interactive: bool) -> str:
         path = find_jsonl(query)
         if not path:
             return c(f"Session not found: {query}", Colors.RED)
-        m = parse_session(path, platform=platform)
+        m = parse_session(path, platform=platform, all_intervals=(all_intervals or bool(interval_spec)))
         if resolve:
             m = resolve_archived_stubs(m, path)
         if include_client_only:
@@ -3093,14 +3955,10 @@ def _cmd_read_with_repl(args: list[str], interactive: bool) -> str:
     # can see USER messages for boundaries. Filtering to e.g. response,thinking strips
     # USER msgs, which collapses everything into ONE turn and makes t-N select the whole
     # file. Range selects the window; type/private/sort then apply within it.
-    all_msgs, range_offset = _apply_range(all_msgs, range_str)
-    all_msgs = _apply_type_filter(all_msgs, type_filter)
-    all_msgs = _apply_private_filter(all_msgs, show_private=show_private)
-    if interactive:
-        all_msgs = _apply_toggles(all_msgs)
-    if sort_order:
-        all_msgs = _sort_messages_by_ts(all_msgs, sort_order)
-    return format_messages_from_schema(all_msgs, fmt, msg_num_offset=range_offset)
+    return _filter_and_format_messages(all_msgs, fmt=fmt, type_filter=type_filter,
+                                       range_str=range_str, turns_str=turns_str,
+                                       show_private=show_private, sort_order=sort_order,
+                                       apply_toggles=interactive, expand=expand)
 
 
 def _cmd_read_file_with_repl(args: list[str], interactive: bool) -> str:
@@ -3109,13 +3967,17 @@ def _cmd_read_file_with_repl(args: list[str], interactive: bool) -> str:
     args = [a for a in args if a != "--include-client-only"]
     fmt = _parse_flag(args, "--format") or "text"
     platform = _parse_flag(args, "--platform")
-    type_filter = _parse_type_filter(_parse_flag(args, "--type", multi=True))
+    type_filter = _parse_message_types_arg(args)
     range_str = _parse_flag(args, "--range") or (_repl_range if interactive else None)
+    turns_str = _parse_flag(args, "--turns")
     interval_spec = _parse_flag(args, "--interval")
     sort_order = _parse_flag(args, "--sort")
     show_private = "--show-private" in args
     resolve = "--resolve" in args
-    paths = _strip_flags(args, ["--format", "--platform", "--range", "--interval", "--sort", "--show-private", "--resolve"], multi_flags=["--type"])
+    all_intervals = "--all-intervals" in args
+    expand = _parse_memorex_expand(_parse_flag(args, "--expand"))
+    paths = _strip_flags(args, ["--format", "--platform", "--range", "--turns", "--interval", "--sort", "--show-private", "--resolve", "--expand"], multi_flags=["--type", "--types"])
+    paths = [p for p in paths if p != "--all-intervals"]
 
     if not paths:
         return "Usage: read-file <path> [path2 ...] [--format F] [--platform P] [--type T] [--range R] [--interval SPEC] [--include-client-only] [--sort newest|oldest] [--show-private] [--resolve]"
@@ -3125,7 +3987,7 @@ def _cmd_read_file_with_repl(args: list[str], interactive: bool) -> str:
         p = Path(p_str)
         if not p.exists():
             return c(f"File not found: {p}", Colors.RED)
-        m = parse_session(p, platform=platform)
+        m = parse_session(p, platform=platform, all_intervals=(all_intervals or bool(interval_spec)))
         if resolve:
             m = resolve_archived_stubs(m, p)
         if include_client_only:
@@ -3141,19 +4003,15 @@ def _cmd_read_file_with_repl(args: list[str], interactive: bool) -> str:
     # can see USER messages for boundaries. Filtering to e.g. response,thinking strips
     # USER msgs, which collapses everything into ONE turn and makes t-N select the whole
     # file. Range selects the window; type/private/sort then apply within it.
-    all_msgs, range_offset = _apply_range(all_msgs, range_str)
-    all_msgs = _apply_type_filter(all_msgs, type_filter)
-    all_msgs = _apply_private_filter(all_msgs, show_private=show_private)
-    if interactive:
-        all_msgs = _apply_toggles(all_msgs)
-    if sort_order:
-        all_msgs = _sort_messages_by_ts(all_msgs, sort_order)
-    return format_messages_from_schema(all_msgs, fmt, msg_num_offset=range_offset)
+    return _filter_and_format_messages(all_msgs, fmt=fmt, type_filter=type_filter,
+                                       range_str=range_str, turns_str=turns_str,
+                                       show_private=show_private, sort_order=sort_order,
+                                       apply_toggles=interactive, expand=expand)
 
 
 def repl():
     """Interactive REPL mode."""
-    from common_utils.lib_readline import setup_readline
+    from uai_toolkit.common_utils.lib_readline import setup_readline
     setup_readline(history_file=READLINE_HISTORY, history_length=500)
 
     print(c(f"read_jsonl v{VERSION}", Colors.BOLD) + " -- multi-platform CLI session reader")
@@ -3217,7 +4075,7 @@ def main():
     # If the first arg isn't a known command, treat it as a session identifier
     # and prepend "read" — so `read_jsonl.py Cortex` means `read Cortex`
     _KNOWN_CMDS = set(COMMAND_ALIASES.keys()) | set(COMMAND_ALIASES.values()) | {
-        "read", "read-file", "find", "summary", "stats", "compactions", "list", "help",
+        "read", "extract", "read-file", "find", "summary", "stats", "histo", "compactions", "list", "help",
         "toggle", "set", "grep",
     }
     if args and args[0].lower().lstrip("-") not in _KNOWN_CMDS:

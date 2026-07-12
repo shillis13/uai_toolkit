@@ -18,7 +18,7 @@ def handler(hook_input, context):
         _jsonl = str(Path(__file__).resolve().parents[3] / "scripts" / "jsonl")
         if _jsonl not in sys.path:
             sys.path.insert(0, _jsonl)
-        from deferred_self_compact import sweep_orphans
+        from uai_toolkit.jsonl.deferred_self_compact import sweep_orphans
         status = sweep_orphans()
     except Exception as e:
         return HookResult.allow(f"deferred-compact sweep skipped: {e}")

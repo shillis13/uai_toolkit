@@ -78,7 +78,7 @@ def handler(hook_input, context):
         _jsonl = str(Path(__file__).resolve().parents[3] / "scripts" / "jsonl")
         if _jsonl not in _sys.path:
             _sys.path.insert(0, _jsonl)
-        from deferred_self_compact import reconcile_from_stop
+        from uai_toolkit.jsonl.deferred_self_compact import reconcile_from_stop
         defer_status = reconcile_from_stop(
             context.session_dir, context.tracking_id, ctx_pct, threshold)
     except Exception as e:

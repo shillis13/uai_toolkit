@@ -56,3 +56,8 @@ uai_app/**/dist/
 uai_app/**/out/
 uai_app/**/UAI.app/
 uai_app/**/*.tsbuildinfo
+
+# Runtime scratch written by summarizer.py shadow-compare (not package data)
+src/data/
+**/summarizer_shadow/
+*.materialized

@@ -86,7 +86,7 @@ def from_file(path: str | Path) -> StandardizedSession:
                 # that lib_context_analysis + chain_skip make. The inline fallback
                 # preserves the original rules verbatim if that lib isn't importable.
                 try:
-                    from lib_jsonl_archive import classify_user_record
+                    from uai_toolkit.jsonl.lib_jsonl_archive import classify_user_record
                     return classify_user_record(raw_entry)
                 except Exception:
                     origin = raw_entry.get("origin")

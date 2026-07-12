@@ -22,8 +22,8 @@ SESSION_DIR = os.environ.get("AI_SESSION_DIR", "")
 # Path to reserved key registry
 _REGISTRY_PATH = (
     Path.home() / "AI" / "ai_root"
-    / "ai_general" / "ai_traits" / "knowledge"
-    / "50_schemas" / "schema_session_state_keys.latest.yml"
+    / "ai_general" / "ai_context_files" / "knowledge"
+    / "schemas" / "schema_session_state_keys.yml"
 )
 
 STATE_PREFIX = "sessions_state_"

@@ -66,7 +66,7 @@ def _resolve_transcript(session):
         if d not in sys.path:
             sys.path.insert(0, d)
     try:
-        import scrub_files  # noqa: E402 — the offload script's own resolver
+        from uai_toolkit.jsonl import scrub_files  # noqa: E402 — the offload script's own resolver
         found = scrub_files.find_jsonl(session)
         if found:
             return str(found)

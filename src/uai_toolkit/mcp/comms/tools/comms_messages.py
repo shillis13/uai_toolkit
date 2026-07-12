@@ -113,9 +113,16 @@ def tools() -> list[Tool]:
         Tool(
             name="comms_message",
             description=(
-                "Send a message to a specific agent or session. The sender is the "
-                "trusted resolved session — do NOT pass a sender. Returns "
-                "{conversationId, messageId}."
+                "Send a durable, threaded message to an agent/session's inbox. The "
+                "sender is the trusted resolved session — do NOT pass a sender. "
+                "REACHABILITY: an IDLE recipient is actively nudged (a '📬 you have "
+                "unread mail' prompt pushed to their terminal so they read now) ONLY "
+                "when urgency is 'prompt' (default) or 'interrupt'; 'async'/'passive' "
+                "land silently in the inbox and are seen on the recipient's next turn. "
+                "A BUSY recipient is never interrupted — the message waits in their "
+                "inbox regardless of urgency. For a direct, non-threaded terminal "
+                "prompt (not inbox mail), use comms_send_prompt instead. "
+                "Returns {conversationId, messageId}."
             ),
             inputSchema={
                 "type": "object",
@@ -140,10 +147,16 @@ def tools() -> list[Tool]:
                         "type": "string",
                         "description": "Optional path to a file holding a large body; the message references it (read inlines it). Write big content to a file first and pass the path with a short content note — keeps the wire message and your tool args small."
                     },
+                    "urgency": {
+                        "type": "string",
+                        "enum": ["interrupt", "prompt", "async", "passive"],
+                        "description": "How hard to reach the recipient. 'prompt' (default) and 'interrupt' PUSH a nudge to an IDLE recipient's terminal so they read now; a busy recipient is never interrupted and reads it on their next turn. 'async'/'passive' are PULL-ONLY — no push; the message just waits in the inbox. Default: prompt.",
+                        "default": "prompt"
+                    },
                     "notify": {
                         "type": "string",
                         "enum": ["immediate", "batched", "silent"],
-                        "description": "Notification policy (default: derived from urgency). 'batched' coalesces the recipient's nudges to at most one per window — use it for bulk sends (e.g. many confirmations to one session) so you don't flood them with nudges. The message still lands individually in their inbox."
+                        "description": "Advanced override of the nudge policy (default: derived from urgency). 'immediate' = nudge an idle recipient now; 'batched' = coalesce nudges to at most one per short window (use for BULK sends to one recipient so you don't flood them — each message still lands individually); 'silent' = never nudge (inbox-only). Leave unset to let urgency decide."
                     }
                 },
                 "required": ["to_recipient", "content", "reply_to"]
@@ -370,7 +383,14 @@ def tools() -> list[Tool]:
         ),
         Tool(
             name="comms_reply",
-            description="Reply to a specific message. Sends a new message to the original sender, threading it under the same conversation. Automatically resolves any pending reply obligation this satisfies.",
+            description=(
+                "Reply to a specific message, threading it under the same conversation "
+                "to the original sender. Resolves any pending reply obligation. "
+                "REACHABILITY (same rule as comms_message): an IDLE recipient is "
+                "nudged when urgency is 'prompt' (default) or 'interrupt'; "
+                "'async'/'passive' are inbox-only (seen on their next turn); a busy "
+                "recipient is never interrupted."
+            ),
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -389,8 +409,13 @@ def tools() -> list[Tool]:
                     "urgency": {
                         "type": "string",
                         "enum": ["interrupt", "prompt", "async", "passive"],
-                        "description": "Message urgency (default: prompt)",
+                        "description": "How hard to reach the recipient. 'prompt' (default)/'interrupt' PUSH a nudge to an idle recipient; 'async'/'passive' are PULL-ONLY (inbox, no push). Default: prompt.",
                         "default": "prompt"
+                    },
+                    "notify": {
+                        "type": "string",
+                        "enum": ["immediate", "batched", "silent"],
+                        "description": "Advanced override of the nudge policy (default: derived from urgency). 'immediate' = nudge idle recipient now; 'batched' = coalesce nudges (bulk sends); 'silent' = never nudge. Leave unset to let urgency decide."
                     },
                     "response_required": {
                         "type": "boolean",
@@ -403,7 +428,14 @@ def tools() -> list[Tool]:
         ),
         Tool(
             name="comms_reply_all",
-            description="Reply to all participants of a message. For direct messages, sends to all parties except yourself. For broadcasts, sends a broadcast reply. Automatically resolves any pending reply obligation this satisfies.",
+            description=(
+                "Reply to all participants of a message. For direct messages, sends to "
+                "all parties except yourself; for broadcasts, sends a broadcast reply. "
+                "Resolves any pending reply obligation. REACHABILITY (same rule as "
+                "comms_message): each idle recipient is nudged when urgency is 'prompt' "
+                "(default)/'interrupt'; 'async'/'passive' are inbox-only. For a reply "
+                "to MANY recipients, consider notify='batched' to avoid flooding."
+            ),
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -422,8 +454,13 @@ def tools() -> list[Tool]:
                     "urgency": {
                         "type": "string",
                         "enum": ["interrupt", "prompt", "async", "passive"],
-                        "description": "Message urgency (default: prompt)",
+                        "description": "How hard to reach recipients. 'prompt' (default)/'interrupt' PUSH a nudge to idle recipients; 'async'/'passive' are PULL-ONLY (inbox, no push). Default: prompt.",
                         "default": "prompt"
+                    },
+                    "notify": {
+                        "type": "string",
+                        "enum": ["immediate", "batched", "silent"],
+                        "description": "Advanced override of the nudge policy (default: derived from urgency). 'batched' = coalesce nudges to at most one per short window (recommended for reply-all to many recipients); 'immediate' = nudge now; 'silent' = never nudge. Leave unset to let urgency decide."
                     },
                     "response_required": {
                         "type": "boolean",
@@ -684,6 +721,8 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
         ]
         if arguments.get("urgency"):
             args += ["--urgency", arguments["urgency"]]
+        if arguments.get("notify"):
+            args += ["--notify", arguments["notify"]]
         if arguments.get("response_required"):
             args.append("--response-required")
         result = _run_messaging(args)
@@ -697,6 +736,8 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
         ]
         if arguments.get("urgency"):
             args += ["--urgency", arguments["urgency"]]
+        if arguments.get("notify"):
+            args += ["--notify", arguments["notify"]]
         if arguments.get("response_required"):
             args.append("--response-required")
         result = _run_messaging(args)
