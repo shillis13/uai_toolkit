@@ -60,6 +60,10 @@ APP_TEXT_SUFFIXES = CONTENT_TEXT_SUFFIXES | {".ts", ".tsx", ".js", ".jsx", ".mjs
 IMPORT_REWRITES = [
     (r"\bfrom common_utils\.", "from uai_toolkit.common_utils."),
     (r"\bfrom utils\.standard_colors\b", "from uai_toolkit.common_utils.standard_colors"),
+    # shared env-var resolver: Noctis's env-migration writes `from utils.paths` in
+    # source (interim, since uai_toolkit isn't on ai_general's path yet) -> toolkit form.
+    (r"\bfrom utils\.paths\b", "from uai_toolkit.paths"),
+    (r"\bfrom utils import paths\b", "from uai_toolkit import paths"),
     (r"\bfrom lib_readline\b", "from uai_toolkit.common_utils.lib_readline"),
     (r"\bfrom lib_outputColors\b", "from uai_toolkit.common_utils.lib_outputColors"),
     (r"\bfrom lib_dryrun\b", "from uai_toolkit.common_utils.lib_dryrun"),
@@ -175,9 +179,12 @@ MODULES = [
     # with its clean siblings). todo_mgr stays curated (has a TODO_ROOT path edit
     # that Noctis's env-var migration will dissolve, then it flips too).
     {"dest": "guidance/guidance_lib.py",              "source": "ai:context_files/guidance_lib.py",            "kind": "clean"},
-    # scan_registry.py = ported with semantic rewiring (packaged schema, mcps/git
-    # guards); curated so a source change surfaces as a sidecar, never clobbers.
-    {"dest": "guidance/scan_registry.py",             "source": "ai:context_files/scan_traits_registry.py",    "kind": "curated"},
+    # scan_registry.py: source scan_traits_registry.py was RETIRED 2026-07-11
+    # (moved to scripts/.archive/context_files_registry_retired/). The toolkit copy
+    # (heavily rewired: packaged schema, mcps/git guards) is now effectively
+    # toolkit-native — kept for fresh-box registry build, NOT re-materialized.
+    # NOTE: if the guidance system dropped the sqlite registry, revisit whether the
+    # toolkit still needs scan_registry + guidance_lib's DB reads (follow-up).
     {"dest": "memory/memory_cli.py",                  "source": "ai:memories/memory_cli.py",                   "kind": "clean"},
     {"dest": "memory/memory_lib.py",                  "source": "ai:memories/memory_lib.py",                   "kind": "clean"},
     {"dest": "history/search_cli.py",                 "source": "ai:histories/search_cli.py",                  "kind": "clean"},
@@ -241,8 +248,8 @@ MODULE_DIRS = [
      "exclude": ["install_scheduled_tasks.py", "meridian_reflection", "cadence_reflection.py"],
      "overrides": {"launchd_backend.py": "curated", "scheduled_task_mgr.py": "curated"}},  # launchd -> cron/systemd
     {"dest": "git_guardian", "source": "ai:git_guardian", "kind": "curated"},  # osascript notification
-    {"dest": "tasks",        "source": "ai:tasks",        "kind": "clean",
-     "exclude": ["create_topics_tasks.py"]},                          # hardcoded path, one-off
+    # tasks/ (task_coord) REMOVED 2026-07-11 — PianoMan flagged ai:tasks DO_NOT_PORT.
+    # (todo_mgr in todo/ is unrelated, from pylib, and stays.)
     {"dest": "context_files", "source": "ai:context_files", "kind": "clean",
      "exclude": ["guidance_cli.py", "guidance_lib.py", "scan_traits_registry.py", "test_registry.py"],
      "overrides": {"trait_mgr.py": "curated"}},

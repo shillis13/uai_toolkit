@@ -245,6 +245,21 @@ def process_app_tree(entry: dict, apply: bool) -> dict:
     return result
 
 
+def _do_not_port(src_file: Path, src_root: Path) -> bool:
+    """True if a DO_NOT_PORT.flag sits in src_file's dir chain up to src_root.
+
+    PianoMan drops DO_NOT_PORT.flag into a source dir to exclude it from porting
+    (sh->py AND Windows). Respected here so materialize never vendors flagged dirs.
+    """
+    d = src_file.parent
+    while True:
+        if (d / "DO_NOT_PORT.flag").exists():
+            return True
+        if d == src_root or d == d.parent:
+            return False
+        d = d.parent
+
+
 def expand_module_dirs():
     """Expand each MODULE_DIRS dir-glob into concrete per-file MODULE entries.
 
@@ -268,6 +283,11 @@ def expand_module_dirs():
         overrides = spec.get("overrides", {})
         default_kind = spec.get("kind", "clean")
         mcp_pkg = spec.get("mcp_pkg")
+        # Skip a whole dir-glob if its source root is flagged DO_NOT_PORT.
+        if (src_root / "DO_NOT_PORT.flag").exists():
+            expanded.append({"dest": spec["dest"] + "/<DO_NOT_PORT>", "source": spec["source"],
+                             "kind": "native", "_skip": "DO_NOT_PORT.flag at source root"})
+            continue
         for src in sorted(src_root.rglob("*.py")):
             rel = src.relative_to(src_root)
             relstr = str(rel)
@@ -276,8 +296,11 @@ def expand_module_dirs():
                 continue
             if include_only and parts[0] not in include_only:
                 continue
-            if any(p in ("__pycache__", "archive", "_shelved", "tests", "test_files")
+            if any(p in ("__pycache__", "archive", ".archive", "_shelved", "tests", "test_files")
                    or p.startswith(("_backup", "_archive")) for p in parts):
+                continue
+            # honor a DO_NOT_PORT.flag anywhere between src_root and this file
+            if _do_not_port(src, src_root):
                 continue
             kind = overrides.get(relstr, overrides.get(rel.name, default_kind))
             entry = {"dest": f"{spec['dest']}/{relstr}", "source": f"{spec['source'].split(':')[0]}:{src.relative_to(_resolve_root(spec['source'].split(':')[0]))}", "kind": kind}
