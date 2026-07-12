@@ -46,8 +46,5 @@ where = ["src"]
 [tool.setuptools.package-data]
 # The knowledge base (ai_context_files) + composition layer (ai_profiles) ship
 # as package data; `uai-toolkit install` copies them into AI_ROOT and builds the
-# guidance registry from them on a fresh box.
+# guidance index (context.db, via context_mgr reindex) from them on a fresh box.
 "uai_toolkit" = ["py.typed", "content/**/*", "ai_env.sh"]
-# Registry schema ships with the package so a fresh AI_ROOT (no
-# scripts/context_files/schema.sql) can still build its guidance registry.
-"uai_toolkit.guidance" = ["schema.sql"]

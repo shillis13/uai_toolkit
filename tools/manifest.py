@@ -179,12 +179,10 @@ MODULES = [
     # with its clean siblings). todo_mgr stays curated (has a TODO_ROOT path edit
     # that Noctis's env-var migration will dissolve, then it flips too).
     {"dest": "guidance/guidance_lib.py",              "source": "ai:context_files/guidance_lib.py",            "kind": "clean"},
-    # scan_registry.py: source scan_traits_registry.py was RETIRED 2026-07-11
-    # (moved to scripts/.archive/context_files_registry_retired/). The toolkit copy
-    # (heavily rewired: packaged schema, mcps/git guards) is now effectively
-    # toolkit-native — kept for fresh-box registry build, NOT re-materialized.
-    # NOTE: if the guidance system dropped the sqlite registry, revisit whether the
-    # toolkit still needs scan_registry + guidance_lib's DB reads (follow-up).
+    # scan_registry.py + schema.sql REMOVED 2026-07-11 — the legacy
+    # context_files_registry.db was retired; guidance_lib now reads context.db via
+    # context_mgr.ContextIndex, and `uai-toolkit install` builds it with
+    # `context_mgr reindex` (context_files/context_mgr.py, already vendored).
     {"dest": "memory/memory_cli.py",                  "source": "ai:memories/memory_cli.py",                   "kind": "clean"},
     {"dest": "memory/memory_lib.py",                  "source": "ai:memories/memory_lib.py",                   "kind": "clean"},
     {"dest": "history/search_cli.py",                 "source": "ai:histories/search_cli.py",                  "kind": "clean"},

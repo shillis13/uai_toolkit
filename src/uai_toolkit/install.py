@@ -211,21 +211,24 @@ def materialize_content(root: Path, dry: bool, tag: str) -> None:
         if not dry:
             shutil.copytree(src, dest)
 
-    # Build the guidance registry from the now-populated instance.
-    print(f"  {tag}build guidance registry (scan_registry --full)")
+    # Build the guidance index (context.db) from the now-populated instance.
+    # context_mgr `reindex` is the sole builder of context.db, which guidance_lib
+    # reads via context_mgr.ContextIndex. (The legacy scan_traits_registry /
+    # context_files_registry.db was retired 2026-07-11.)
+    print(f"  {tag}build guidance index (context_mgr reindex -> context.db)")
     if not dry:
         env = {**os.environ, "AI_ROOT": str(root)}
         proc = subprocess.run(
-            [sys.executable, "-m", "uai_toolkit.guidance.scan_registry", "--full"],
+            [sys.executable, "-m", "uai_toolkit.context_files.context_mgr", "reindex"],
             env=env, capture_output=True, text=True,
         )
         if proc.returncode != 0:
-            print(f"  ! registry build failed (rc={proc.returncode}); guidance tools "
-                  f"will report a missing registry until rebuilt:\n"
+            print(f"  ! index build failed (rc={proc.returncode}); guidance tools "
+                  f"will report a missing index until rebuilt:\n"
                   f"    {(proc.stderr or proc.stdout).strip().splitlines()[-1] if (proc.stderr or proc.stdout).strip() else '(no output)'}")
         else:
             tail = (proc.stdout or "").strip().splitlines()
-            print(f"    {tail[-1] if tail else 'registry built'}")
+            print(f"    {tail[-1] if tail else 'index built'}")
 
 
 def _packaged_example() -> Path | None:
