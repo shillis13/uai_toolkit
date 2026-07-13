@@ -276,8 +276,8 @@ MODULE_DIRS = [
     {"dest": "cli",          "source": "ai:cli",          "kind": "clean",
      # gemini_*_lock: gemini SHARD subsystem, retired 2026-07-12 (source archived).
      # gemini PARSING/data-model is kept elsewhere (jsonl/platform_adapters/gemini).
-     "exclude": ["archive", "gemini_mcp_lock.py", "gemini_memory_lock.py"],
-     "overrides": {"capture_uuid_playwright.py": "curated"}},          # heavy playwright dep -> optional
+     "exclude": ["archive", "gemini_mcp_lock.py", "gemini_memory_lock.py",
+                 "capture_uuid_playwright.py"]},   # capture_uuid: deleted (dead recovery tool, retired 2026-07-12)
     {"dest": "mcp/comms/tools",    "source": "mcps:comms/tools",    "kind": "clean", "mcp_pkg": "comms"},
     {"dest": "mcp/sessions/tools", "source": "mcps:sessions/tools", "kind": "clean", "mcp_pkg": "sessions",
      "overrides": {"sessions_local_llm.py": "curated"}},              # hardcoded /opt/homebrew python -> AI_PYTHON (WSL); source-side fix pending

@@ -124,23 +124,13 @@ Reference-counted lock for temporarily disabling MCP servers in Gemini. When mul
 ### gemini_memory_lock.py
 Reference-counted lock for suppressing `~/.gemini/GEMINI.md` during shard operations. Works identically to `gemini_mcp_lock.py` but hides the global memory file instead of MCP config.
 
-### capture_uuid_playwright.py
-Captures the CLI session UUID from a running UnifiedCLI Electron app using Playwright automation + zellij screen dump. Connects to the app via CDP on port 9224, sends `/status`, and reads the UUID from the terminal output. Run manually when a session UUID was not captured at launch time.
-
-**Usage:**
-```
-capture_uuid_playwright.py <zellij_session_name>
-capture_uuid_playwright.py --all
-```
-
 ## Dependencies
 
 - `pyyaml` — required by `lib_cli_common.py` and `generate_skill_artifacts.py`
 - `~/bin/ai/utils/standard_colors` — color output in multiple scripts
 - `~/bin/ai/session_mgmt/` — `lib_session.py`, `lib_session_substrate.py`, `session_store.py`
-- `playwright` (pip) — required only for `capture_uuid_playwright.py`
 - `zellij` or `tmux` — terminal substrate
 
 ## Notes
 
-The `archive/` subdirectory contains retired launcher implementations and the old per-platform scripts (`claude_cli.py`, `codex_cli.py`, `gemini_cli.py`). Do not use them. The `gemini_mcp_lock.py` and `gemini_memory_lock.py` files predate the current architecture and may need review; they reference a "shard" approach that is no longer the primary execution model. `capture_uuid_playwright.py` requires the UnifiedCLI Electron app to be running and is primarily a recovery tool.
+The `archive/` subdirectory contains retired launcher implementations and the old per-platform scripts (`claude_cli.py`, `codex_cli.py`, `gemini_cli.py`). Do not use them. The `gemini_mcp_lock.py` and `gemini_memory_lock.py` files predate the current architecture and may need review; they reference a "shard" approach that is no longer the primary execution model.
