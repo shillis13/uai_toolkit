@@ -177,6 +177,11 @@ def process_content(entry: dict, apply: bool) -> dict:
         rel = src.relative_to(src_root)
         if any(_excluded_dir(part) for part in rel.parts):
             continue
+        # Dangling symlink (target removed, e.g. a *.latest.* pointing at a pruned
+        # version): is_dir()/is_file() are both False and read would throw. Skip it.
+        if src.is_symlink() and not src.exists():
+            skipped += 1
+            continue
         if src.is_dir():
             continue
         if src.name in CONTENT_EXCLUDE_FILES:
@@ -224,6 +229,8 @@ def process_app_tree(entry: dict, apply: bool) -> dict:
     for src in src_root.rglob("*"):
         rel = src.relative_to(src_root)
         if any(p in APP_EXCLUDE_DIRS for p in rel.parts):
+            continue
+        if src.is_symlink() and not src.exists():  # dangling symlink — skip
             continue
         if src.is_dir() or src.name in APP_EXCLUDE_FILES:
             continue

@@ -35,8 +35,9 @@ CONTENT = [
     {"dest": "content/ai_context_files", "source": "aigen:ai_context_files"},  # knowledge base (~4.7M)
     {"dest": "content/ai_profiles",      "source": "aigen:ai_profiles"},       # composition layer (~328K)
 ]
-CONTENT_EXCLUDE_DIRS = {"__pycache__", ".obsidian", ".claude", "node_modules", ".venv",
-                        "versions", ".drafts", "_archive", "_backups", ".git"}
+CONTENT_EXCLUDE_DIRS = {"__pycache__", ".pytest_cache", ".obsidian", ".claude",
+                        "node_modules", ".venv", "versions", ".drafts",
+                        "archive", ".archive", "_archive", "_backups", ".git"}
 CONTENT_EXCLUDE_DIR_PREFIXES = ("_archive", "_backup")
 CONTENT_EXCLUDE_FILES = {".DS_Store"}
 CONTENT_TEXT_SUFFIXES = {".md", ".yml", ".yaml", ".txt", ".json", ".toml", ".sql"}
