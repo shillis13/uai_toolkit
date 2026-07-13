@@ -24,7 +24,7 @@ surface drifts.
 | Var | Kind | Default |
 |---|---|---|
 | `AI_ROOT` | anchor | env `AI_ROOT` → platform default (`~/AI/ai_root`) |
-| `AI_ROOT_MAIN` | **independent** | env `AI_ROOT_MAIN` → `[paths]` toml → `~/AI/ai_root` |
+| `AI_ROOT_MAIN` | **independent** | env `AI_ROOT_MAIN` → `[paths]` toml → **`AI_ROOT`** (the resolved root, not a hardcoded path) |
 | `AI_DATA` | derived | `AI_ROOT/ai_general/data` |
 | `AI_SCRIPTS` | derived | `AI_ROOT/ai_general/scripts` |
 | `AI_BIN` | derived | `AI_ROOT/ai_general/apps` (apps dir, **not** scripts) |
@@ -70,10 +70,19 @@ an **independent** var (`env > [paths] toml > default ~/AI/ai_root`). Inside a d
 independent, so it cannot derive. One definition unifies Python + shell + TS and
 retires the scatter.
 
-**PianoMan approved this (option a) on 2026-07-12.** Noctis is landing `AI_ROOT_MAIN`
-as an independent var in `paths.py`/`ai_env.sh`; `paths.ts` (below) already uses it,
-and the shared default-map doc becomes the one definition all three surfaces cite —
-retiring the Python scatter (`cli/lib_cli_common.py`, `devTrees/*`).
+**Approved and LANDED (2026-07-13):** `AI_ROOT_MAIN` is now a first-class shared var in
+`paths.py` + `ai_env.sh` (with anti-drift test). Exact semantics —
+`AI_ROOT_MAIN = _v("AI_ROOT_MAIN", AI_ROOT)`: precedence `env > [paths] toml > default
+AI_ROOT` where the default is the **resolved `AI_ROOT`**, NOT a hardcoded `~/AI/ai_root`
+(keeps it portable). On a normal install `AI_ROOT_MAIN == AI_ROOT`; inside a devTree the
+devTree tooling sets `$AI_ROOT_MAIN` to the production main, so they differ. This
+retires the Python scatter (`cli/lib_cli_common.py`, `devTrees/*`) and unifies Python +
+shell + TS on one definition. PianoMan's rationale: "it was added to solve a real
+problem — keep it until it proves to be its own problem."
+
+Canonical var order (parity across all three surfaces, 11 vars): `AI_ROOT`,
+`AI_ROOT_MAIN`, `AI_DATA`, `AI_SCRIPTS`, `AI_BIN`, `AI_LOGS`, `AI_HOOKS`, `AI_UAI_APP`,
+`AI_CONTEXT_FILES`, `AI_JSONL`, `AI_PYTHON`.
 
 ## §4 — `buildChildEnv()` / `resolveBin()`
 
@@ -90,6 +99,11 @@ PATH = `dirname(AI_PYTHON)` + the same fallback bin dirs Python already enumerat
 `AI_ROOT` (not bolted onto the Python `test_paths_consistency.py`). The durable guard is
 the shared default-map doc all three cite; an optional CI step can run all three
 surfaces for one `AI_ROOT` and diff the resolved values.
+
+**Harness note (from Noctis):** the test MUST clear all non-`AI_ROOT` ambient env vars
+before probing — he caught a latent bug where ambient `AI_*` overrides leaked into the
+shell-side harness and masked drift. Set only `AI_ROOT` (and, for the devTree case,
+`AI_ROOT_MAIN`); unset the rest so you test defaults, not the tester's environment.
 
 ## Reference implementation (app/main/paths.ts)
 
@@ -123,9 +137,12 @@ function v(name: string, def: string): string {
 export function aiRoot(): string {
   return env.AI_ROOT || path.join(home, 'AI', 'ai_root');   // platform default
 }
-/** Canonical MAIN root — independent of AI_ROOT (a devTree's AI_ROOT != main). */
+/** Canonical MAIN root — independent var, DEFAULTS TO THE RESOLVED AI_ROOT (not a
+ *  hardcoded path). Normal install: AI_ROOT_MAIN == AI_ROOT. Inside a devTree the
+ *  devTree tooling sets $AI_ROOT_MAIN to the production main, so they differ.
+ *  Mirrors paths.py: AI_ROOT_MAIN = _v("AI_ROOT_MAIN", AI_ROOT). */
 export function aiRootMain(): string {
-  return v('AI_ROOT_MAIN', path.join(home, 'AI', 'ai_root'));
+  return v('AI_ROOT_MAIN', aiRoot());
 }
 
 // ---- derived (default under AI_ROOT, independently overridable) ----------
