@@ -1,9 +1,9 @@
 # Design: `paths.ts` — the TypeScript twin of `paths.py`
 
-Status: **proposal / reference impl** — reconciled with Noctis (owner of the Python
-env-var model) on 2026-07-12. Not landed in the app. The uai_app owner integrates it
-and migrates the ~17 call sites. One item (`AI_ROOT_MAIN` promotion into the shared
-model) is gated on PianoMan's bless; see §1.
+Status: **standard / reference impl** — reconciled with Noctis (owner of the Python
+env-var model) on 2026-07-12; `AI_ROOT_MAIN` promotion **approved by PianoMan
+2026-07-12** (Noctis landing it in `paths.py`/`ai_env.sh`). Not landed in the app —
+the uai_app owner integrates it and migrates the ~17 call sites. See §1.
 
 ## Problem
 
@@ -24,7 +24,7 @@ surface drifts.
 | Var | Kind | Default |
 |---|---|---|
 | `AI_ROOT` | anchor | env `AI_ROOT` → platform default (`~/AI/ai_root`) |
-| `AI_ROOT_MAIN` | **independent** | env `AI_ROOT_MAIN` → `[paths]` toml → `~/AI/ai_root` — *pending §1* |
+| `AI_ROOT_MAIN` | **independent** | env `AI_ROOT_MAIN` → `[paths]` toml → `~/AI/ai_root` |
 | `AI_DATA` | derived | `AI_ROOT/ai_general/data` |
 | `AI_SCRIPTS` | derived | `AI_ROOT/ai_general/scripts` |
 | `AI_BIN` | derived | `AI_ROOT/ai_general/apps` (apps dir, **not** scripts) |
@@ -57,7 +57,7 @@ db_path = "..."              # reached via get("file_access.db_path")
 - AI_* resolution: `env > _CFG["paths"][NAME] > _CFG["paths"][name.lower()] > default`.
 - `get(dotted, default)`: walks the **whole** doc for arbitrary keys.
 
-## §1 — `AI_ROOT_MAIN` (the one open decision)
+## §1 — `AI_ROOT_MAIN` (APPROVED — now part of the shared model)
 
 `paths.py` has no `AI_ROOT_MAIN`: it answers "the CURRENT root," which *inside a
 devTree is the devTree*. But the app needs "the canonical MAIN root even from inside a
@@ -70,10 +70,10 @@ an **independent** var (`env > [paths] toml > default ~/AI/ai_root`). Inside a d
 independent, so it cannot derive. One definition unifies Python + shell + TS and
 retires the scatter.
 
-Adding a var to the core resolver touches devTree semantics, so it needs PianoMan's
-bless before it lands in `paths.py`/`ai_env.sh`. **`paths.ts` is designed WITH it now
-either way**; if PianoMan declines, it stays app-local (documented as outside the
-shared model) with zero code change.
+**PianoMan approved this (option a) on 2026-07-12.** Noctis is landing `AI_ROOT_MAIN`
+as an independent var in `paths.py`/`ai_env.sh`; `paths.ts` (below) already uses it,
+and the shared default-map doc becomes the one definition all three surfaces cite —
+retiring the Python scatter (`cli/lib_cli_common.py`, `devTrees/*`).
 
 ## §4 — `buildChildEnv()` / `resolveBin()`
 
