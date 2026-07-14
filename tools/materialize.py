@@ -337,6 +337,108 @@ def expand_module_dirs():
     return expanded
 
 
+# Package scaffolding / noise that lives under a managed dest root but is NOT
+# materialized from source — never flag these as orphans.
+_PRUNE_SKIP_NAMES = {"__init__.py", "py.typed", ".gitkeep", ".DS_Store", ".gitignore"}
+_PRUNE_SKIP_DIRS = {"__pycache__", ".pytest_cache"}
+
+
+def _expected_and_roots():
+    """Compute (expected_dest_paths, managed_roots) WITHOUT writing anything.
+
+    expected = every dest path materialize would (re)create from a live source.
+    managed_roots = the dest dir trees materialize owns (MODULE_DIRS + CONTENT +
+    APP), each paired with its base (PKG_ROOT or REPO_ROOT) for display.
+    Individual MODULES are pinpoint files, handled directly in collect_prune.
+    """
+    from manifest import MODULE_DIRS
+    expected: set[Path] = set()
+    roots: list[tuple[Path, Path]] = []
+
+    for e in list(MODULES) + expand_module_dirs():
+        d = e["dest"]
+        if "/<MISSING>" in d or "/<DO_NOT_PORT>" in d:   # synthetic marker entries
+            continue
+        dest = PKG_ROOT / d
+        expected.add(dest)
+        if e["kind"] == "curated":                       # curated keeps a .materialized sidecar
+            expected.add(dest.with_suffix(dest.suffix + ".materialized"))
+
+    for spec in MODULE_DIRS:
+        roots.append((PKG_ROOT / spec["dest"], PKG_ROOT))
+
+    for e in CONTENT:
+        root = PKG_ROOT / e["dest"]
+        roots.append((root, PKG_ROOT))
+        src_root = _resolve_source(e["source"])
+        if src_root.exists():
+            for s in src_root.rglob("*"):
+                rel = s.relative_to(src_root)
+                if any(_excluded_dir(p) for p in rel.parts):
+                    continue
+                if (s.is_symlink() and not s.exists()) or s.is_dir() or s.name in CONTENT_EXCLUDE_FILES:
+                    continue
+                expected.add(root / rel)
+
+    for e in APP_TREES:
+        root = REPO_ROOT / e["dest"]
+        roots.append((root, REPO_ROOT))
+        src_root = _resolve_source(e["source"])
+        if src_root.exists():
+            for s in src_root.rglob("*"):
+                rel = s.relative_to(src_root)
+                if any(p in APP_EXCLUDE_DIRS for p in rel.parts):
+                    continue
+                if (s.is_symlink() and not s.exists()) or s.is_dir() or s.name in APP_EXCLUDE_FILES:
+                    continue
+                expected.add(root / rel)
+
+    return expected, roots
+
+
+def collect_prune(only_prefix: str = "") -> list[Path]:
+    """REPORT dest files whose source is gone — orphans left by source-side
+    deletions (materialize adds/updates but never deletes). Report only.
+
+    NOTE: `native` files (no source: discovery.py, platform_compat/*, etc.) that
+    live under a managed root must be manifest-listed (MODULES, kind=native) so
+    they land in `expected`; otherwise they would false-flag here.
+    """
+    expected, roots = _expected_and_roots()
+    orphans: list[Path] = []
+
+    # 1. Individual MODULES whose source vanished — pinpoint orphans.
+    for e in MODULES:
+        if not _resolve_source(e["source"]).exists():
+            dest = PKG_ROOT / e["dest"]
+            for p in (dest, dest.with_suffix(dest.suffix + ".materialized")):
+                if p.exists():
+                    orphans.append(p.relative_to(REPO_ROOT))
+
+    # 2. Managed tree roots — actual files with no expected counterpart.
+    #    Paths are emitted relative to REPO_ROOT so `git rm <path>` works from the
+    #    repo root regardless of whether the root lives under PKG_ROOT or REPO_ROOT.
+    for root, base in roots:
+        if not root.exists():
+            continue
+        if only_prefix and not str(root.relative_to(base)).startswith(only_prefix):
+            continue
+        for f in root.rglob("*"):
+            if f.is_dir():
+                continue
+            if any(p in _PRUNE_SKIP_DIRS for p in f.relative_to(root).parts):
+                continue
+            if f.name in _PRUNE_SKIP_NAMES or f.suffix == ".pyc":
+                continue
+            if f in expected:
+                continue
+            if f.suffix == ".materialized" and f.with_suffix("") in expected:
+                continue
+            orphans.append(f.relative_to(REPO_ROOT))
+
+    return sorted(set(orphans))
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="Materialize uai_toolkit from source.")
     ap.add_argument("--apply", action="store_true", help="write changes (default: dry run)")
@@ -345,10 +447,24 @@ def main(argv=None) -> int:
     ap.add_argument("--content", action="store_true", help="also materialize content trees (ai_context_files, ai_profiles)")
     ap.add_argument("--app", action="store_true", help="also materialize app source trees (uai_app)")
     ap.add_argument("--dirs", action="store_true", help="also materialize MODULE_DIRS dir-globs (session_mgmt, messages, ...)")
+    ap.add_argument("--prune", action="store_true",
+                    help="REPORT dest files whose source is gone (orphans from source-side deletions); never deletes")
     args = ap.parse_args(argv)
 
     global _MODULE_INDEX
     _MODULE_INDEX = build_module_index()  # for auto-derived sibling import rewrites
+
+    if args.prune:
+        orphans = collect_prune(args.only)
+        print("=== materialize --prune (orphan report — REPORT ONLY, nothing deleted) ===\n")
+        if not orphans:
+            print("  none — every materialized dest has a live source.")
+        else:
+            print(f"  {len(orphans)} orphan(s): dest files whose source was deleted.")
+            print("  Remove by hand after confirming (materialize never auto-deletes):\n")
+            for o in orphans:
+                print(f"    git rm {o}")
+        return 0
 
     all_modules = list(MODULES)
     if args.dirs:
