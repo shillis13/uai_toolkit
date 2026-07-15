@@ -15,10 +15,12 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { executeCommand } from '../utils/execute-command';
 import { TabNavArrows } from './TabNavArrows';
 import NoteDialog from './NoteDialog';
+import { consumePendingNoteFocus, TodoLink, ensureRefIndexLoaded } from './RefLink';
 import { sessionColor } from '../utils/session-color';
 import { useMention, MentionPopover, makeRecipientSource } from './mention';
 import { useSessionStore } from '../stores/session-store';
 import { useViewport } from '../viewport';
+import { showContextMenu, type ContextMenuItem } from '../utils/context-menu';
 
 // @-token for a session name (quote if it contains whitespace) — matches PromptBox.
 function mentionToken(name: string): string {
@@ -165,6 +167,21 @@ function fmtTime(ts?: string): string {
   return d.toLocaleString();
 }
 
+// Involved parties in a note (note_0039): every session that commented in the
+// thread PLUS every @-mentioned name in the body or any comment. De-duped, order
+// = comment authors first, then mention-only names.
+function involvedSessions(detail: NoteDetail): string[] {
+  const set = new Set<string>();
+  for (const m of detail.messages || []) if (m.author) set.add(m.author);
+  const scan = (t?: string) => {
+    if (!t) return;
+    for (const mm of t.matchAll(/@("[^"]+"|[A-Za-z0-9_.\-]+)/g)) set.add(mm[1].replace(/^"|"$/g, ''));
+  };
+  scan(detail.content);
+  for (const m of detail.messages || []) scan(m.body);
+  return [...set];
+}
+
 function replyToText(rt?: NoteReplyTo | null): string | null {
   if (!rt) return null;
   if (rt.type === 'turn') {
@@ -289,6 +306,8 @@ export default function NotesManagerPane(): JSX.Element {
 
   // Persist pane-level state (selected note + status filter) on every change.
   useEffect(() => { savePane({ selectedId, statusFilter, listView }); }, [selectedId, statusFilter, listView]);
+  // Load the todo/note ref index so linked-todo chips resolve their tooltips (note_0039).
+  useEffect(() => { ensureRefIndexLoaded(); }, []);
 
   // Opening a note marks it seen at its current message count (so it drops out
   // of the unseen badges). Re-fires if its count grows while it stays selected.
@@ -316,8 +335,9 @@ export default function NotesManagerPane(): JSX.Element {
   const { sessions } = useSessionStore();
   const replyRef = useRef<HTMLTextAreaElement>(null);
   const mentionTargets = useMemo(
+    // Active (running) sessions only — no stale ghosts in the @ list (note_0035).
     () => sessions
-      .filter((s) => !s.archived && s.display_name)
+      .filter((s) => !s.archived && s.display_name && s.process_status === 'running')
       .map((s) => {
         const name = s.display_name || s.tracking_id;
         return { token: mentionToken(name), label: name, kind: 'session' as const, count: 1, memberIds: [s.tracking_id] };
@@ -393,6 +413,22 @@ export default function NotesManagerPane(): JSX.Element {
     setDetailLoading(false);
   }, []);
 
+  // Focus a specific note when a linkified note_#### ref is clicked elsewhere
+  // (RefLink.focusNoteInNotesMgr). Consume a pending focus on mount and listen
+  // for live events. Clear the status filter so the target isn't hidden; the
+  // [selectedId] effect loads its detail.
+  const focusNote = useCallback((id: string) => { setStatusFilter(''); setSelectedId(id); }, []);
+  useEffect(() => {
+    const pending = consumePendingNoteFocus();
+    if (pending) focusNote(pending);
+    const onFocus = (e: Event) => {
+      const id = (e as CustomEvent<{ id: string }>).detail?.id;
+      if (id) focusNote(id);
+    };
+    window.addEventListener('uai:notesMgr:focusNote', onFocus);
+    return () => window.removeEventListener('uai:notesMgr:focusNote', onFocus);
+  }, [focusNote]);
+
   // Clicking a DRAFT reopens it in the floating Add Note dialog (rather than the
   // read/thread panel) so you can finish it. Reads its body/title first.
   const openDraft = useCallback(async (id: string) => {
@@ -450,6 +486,30 @@ export default function NotesManagerPane(): JSX.Element {
       if (selectedId === id) await loadDetail(id);
     }
   }, [loadList, loadDetail, selectedId]);
+
+  // Right-click a list row → change its status (note_0444). Set-status is the
+  // only note-mutation command wired; 'archived' is the soft-delete.
+  const handleRowContextMenu = useCallback((e: React.MouseEvent, n: { id: string; status?: string }) => {
+    const cur = (n.status || '').toLowerCase();
+    const items: ContextMenuItem[] = STATUSES.map((s) => ({
+      label: cur === s ? `✓ ${s}` : `Mark ${s}`,
+      action: () => handleSetStatus(n.id, s),
+      disabled: cur === s,
+    }));
+    showContextMenu(e, items);
+  }, [handleSetStatus]);
+
+  // Keep the open note visible (note_0036): when a note is opened whose status
+  // the active filter would hide, switch the filter to the pill matching it.
+  // Fires once per newly-selected note so it never fights a manual filter change.
+  const lastAutoFilterId = useRef<string | null>(null);
+  useEffect(() => {
+    if (!selectedId || !detail) return;
+    if (lastAutoFilterId.current === selectedId) return;
+    const st = ((detail.meta?.status as string) || '').toLowerCase();
+    if (st && statusFilter && statusFilter !== st) setStatusFilter(st);
+    lastAutoFilterId.current = selectedId;
+  }, [selectedId, detail, statusFilter]);
 
   // ── Comment: append a message to the note's thread ─────────────────────────
   // Any @name tokens in the body are treated as mentions: after the comment is
@@ -603,6 +663,7 @@ export default function NotesManagerPane(): JSX.Element {
   }, [detail, mentionTarget, mentionMsg, loadDetail, flashMsg, patchDraft]);
 
   const detailStatus = (detail?.meta?.status as string) || '';
+  const selNote = notes.find((n) => n.id === selectedId);
 
   // Client-side status filter + per-status unseen-update counts (for pill badges).
   const filteredNotes = statusFilter
@@ -634,7 +695,7 @@ export default function NotesManagerPane(): JSX.Element {
         <button
           onClick={loadList}
           disabled={loading}
-          style={{ marginLeft: 'auto', background: 'var(--accent-blue-bg)', border: '1px solid var(--accent-blue)', color: 'var(--text)', borderRadius: 6, padding: '4px 11px', fontSize: 12, cursor: 'pointer' }}
+          style={{ background: 'var(--accent-blue-bg)', border: '1px solid var(--accent-blue)', color: 'var(--text)', borderRadius: 6, padding: '4px 11px', fontSize: 12, cursor: 'pointer' }}
         >
           {loading ? 'Refreshing…' : 'Refresh'}
         </button>
@@ -716,6 +777,7 @@ export default function NotesManagerPane(): JSX.Element {
               <div
                 key={n.id}
                 onClick={() => handleRowClick(n)}
+                onContextMenu={(e) => handleRowContextMenu(e, n)}
                 style={{
                   padding: compact ? '6px 14px' : '10px 14px', cursor: 'pointer',
                   borderBottom: '1px solid var(--border)',
@@ -799,6 +861,53 @@ export default function NotesManagerPane(): JSX.Element {
           )}
           {selectedId && !detailLoading && detail && (
             <div style={{ padding: '16px 18px' }}>
+              {/* Note header — id · name · tagged sessions, ABOVE the status (note_0036). */}
+              <div style={{ marginBottom: 12, paddingBottom: 10, borderBottom: '1px solid var(--border)' }}>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+                  <span style={{ color: 'var(--accent-cyan)', fontFamily: 'var(--font-mono)', fontSize: 12 }}>{detail.id}</span>
+                  <span style={{ color: 'var(--text)', fontWeight: 700, fontSize: 14 }}>
+                    {selNote?.title || (detail.content || '').trim().split('\n')[0].slice(0, 90) || '(untitled)'}
+                  </span>
+                </div>
+                {(selNote?.recipients || []).length > 0 && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 5, flexWrap: 'wrap' }}>
+                    <span style={{ color: 'var(--text-muted)', fontSize: 10.5, textTransform: 'uppercase', letterSpacing: '.05em' }}>Tagged</span>
+                    {(selNote?.recipients || []).map((r) => (
+                      <span key={r} style={{ color: senderColor(r), fontWeight: 600, fontSize: 11.5 }}>{r}</span>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Metadata (note_0039): created / updated, linked todos, involved sessions. */}
+              {(() => {
+                const created = (selNote?.created_at || detail.meta?.created_at) as string | undefined;
+                const updated = (selNote?.updated_at || detail.meta?.updated_at) as string | undefined;
+                const linked = Array.isArray(detail.meta?.resulted_in) ? (detail.meta!.resulted_in as string[]) : [];
+                const involved = involvedSessions(detail);
+                const LBL = { color: 'var(--text-muted)', fontSize: 10, textTransform: 'uppercase' as const, letterSpacing: '.05em', fontWeight: 700, marginRight: 4 };
+                const rows: JSX.Element[] = [];
+                if (created) rows.push(<div key="c"><span style={LBL}>Created</span><span style={{ color: 'var(--text-sec)', fontSize: 11.5 }}>{fmtTime(created)}</span></div>);
+                if (updated && updated !== created) rows.push(<div key="u"><span style={LBL}>Updated</span><span style={{ color: 'var(--text-sec)', fontSize: 11.5 }}>{fmtTime(updated)}</span></div>);
+                if (linked.length) rows.push(
+                  <div key="t"><span style={LBL}>Todos</span>
+                    {linked.map((id) => <span key={id} style={{ marginRight: 8 }}><TodoLink id={id} /></span>)}
+                  </div>
+                );
+                if (involved.length) rows.push(
+                  <div key="i" style={{ display: 'flex', alignItems: 'baseline', gap: 6, flexWrap: 'wrap' }}>
+                    <span style={LBL}>Involved</span>
+                    {involved.map((s) => <span key={s} style={{ color: senderColor(s), fontWeight: 600, fontSize: 11.5 }}>{s}</span>)}
+                  </div>
+                );
+                if (!rows.length) return null;
+                return (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 12, padding: '8px 11px', background: 'var(--bg-panel)', border: '1px solid var(--border)', borderRadius: 8 }}>
+                    {rows}
+                  </div>
+                );
+              })()}
+
               {/* Actions toolbar — status + Edit / Convert / @session */}
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
                 <span style={{ color: 'var(--text-muted)', fontSize: 11, textTransform: 'uppercase', letterSpacing: '.05em', fontWeight: 700 }}>Status</span>
@@ -834,11 +943,6 @@ export default function NotesManagerPane(): JSX.Element {
                   }}
                   style={ACT_BTN}
                 >{'@ Add session'}</button>
-                {Array.isArray(detail.meta?.resulted_in) && (detail.meta!.resulted_in as string[]).length > 0 && (
-                  <span style={{ color: 'var(--accent-blue)', fontSize: 11, marginLeft: 'auto' }}>
-                    → {(detail.meta!.resulted_in as string[]).join(', ')}
-                  </span>
-                )}
               </div>
 
               {flash && (

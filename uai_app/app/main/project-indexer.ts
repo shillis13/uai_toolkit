@@ -17,12 +17,8 @@ import * as os from 'node:os';
 import { execFile } from 'node:child_process';
 import type { ProjectCard } from '@uai/shared/cards';
 import type { EntityId } from '@uai/shared/types';
+import { aiRootMain as getAiRootMain } from './paths';
 
-// ─── Paths ───────────────────────────────────────────────────────────────
-
-function getAiRootMain(): string {
-  return process.env.AI_ROOT_MAIN || path.join(os.homedir(), 'AI/ai_root');
-}
 
 function getDevTreesDir(): string {
   return path.join(os.homedir(), 'Documents/AI/devTrees');
@@ -255,6 +251,27 @@ function countSessionsForProject(projectDir: string, allSessionDirs: string[]): 
 
 export interface ProjectListOptions {
   sessionProjectDirs?: string[];  // project_dir values from all sessions, for counting
+  includeHidden?: boolean;        // include ui_hidden entities (todo_0532); default false
+}
+
+/**
+ * Flip the `ui_hidden` visibility flag in an entity's source yml (todo_0532).
+ * This is a PURE flag edit — it never moves, renames, or deletes any directory or
+ * file. `sourcePath` is the exact yml the card was read from (registry entry,
+ * project marker, etc.), so the write always lands on the file the UI reads.
+ * Rewrites (or appends) a single `ui_hidden: true|false` line, preserving the rest.
+ */
+export function setEntityHidden(sourcePath: string, hidden: boolean): void {
+  if (!sourcePath || !fs.existsSync(sourcePath)) {
+    throw new Error(`setEntityHidden: source file not found: ${sourcePath}`);
+  }
+  const raw = fs.readFileSync(sourcePath, 'utf-8');
+  const lines = raw.split('\n');
+  const kept = lines.filter(l => !/^ui_hidden:\s*/.test(l));
+  // Drop a trailing empty line so we re-append cleanly, then restore one newline.
+  while (kept.length && kept[kept.length - 1].trim() === '') kept.pop();
+  kept.push(`ui_hidden: ${hidden ? 'true' : 'false'}`);
+  fs.writeFileSync(sourcePath, kept.join('\n') + '\n');
 }
 
 // ─── Registry: ai_general/data/projects/<id>.{proj,team}.yml ─────────────────
@@ -277,7 +294,7 @@ function regList(content: string, key: string): string[] {
   return m[1].split(',').map(s => s.trim().replace(/^["']|["']$/g, '')).filter(Boolean);
 }
 
-function listRegistryEntities(): ProjectCard[] {
+function listRegistryEntities(includeHidden = false): ProjectCard[] {
   const dir = getRegistryDir();
   if (!fs.existsSync(dir)) return [];
   const cards: ProjectCard[] = [];
@@ -287,6 +304,9 @@ function listRegistryEntities(): ProjectCard[] {
     const id = f.replace(/\.(proj|team)\.yml$/, '');
     let content = '';
     try { content = fs.readFileSync(path.join(dir, f), 'utf-8'); } catch { continue; }
+    // ui_hidden: a pure UI visibility flag (todo_0532). Hidden entities are dropped
+    // from the default list; nothing on disk is moved or deleted. includeHidden shows them.
+    if (!includeHidden && regScalar(content, 'ui_hidden') === 'true') continue;
     const members = regList(content, 'members');
     const tags = regList(content, 'tags').filter(t => t !== 'project' && t !== 'team');
     const workingDir = regScalar(content, 'working_dir');
@@ -403,7 +423,7 @@ export async function listProjects(opts?: ProjectListOptions): Promise<ProjectCa
 
   // Registry entities (ai_general/data/projects) are authoritative — prepend them
   // and drop any scanned dir that a registry entry already represents (by id).
-  const registryCards = listRegistryEntities();
+  const registryCards = listRegistryEntities(opts?.includeHidden);
   const regIds = new Set(registryCards.map(c => c.project_id));
   return [...registryCards, ...cards.filter(c => !regIds.has(c.project_id))];
 }

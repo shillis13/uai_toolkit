@@ -4,7 +4,7 @@ metadata:
   created: 2026-04-16
   status: active
   description: 'Structured workflow for reviewing code, designs, and other artifacts.
-    Can be self-performed or delegated to another CLI agent (Codex, Gemini, or another
+    Can be self-performed or delegated to another CLI agent (Codex or another
     Claude session). Produces a review report with verdict.
 
     '
@@ -30,8 +30,7 @@ tools:
     mcp_server: cli-agent
     operations:
     - launch_peer_review: Launch a dedicated peer review agent
-    - launch_agent: Launch reviewer on specific platform (Gemini for broad review,
-        Codex for code-focused)
+    - launch_agent: Launch reviewer on specific platform (Codex for code-focused review)
     - read_session: Collect review results
   prompting:
     description: Monitor and collect from reviewer
@@ -74,13 +73,12 @@ workflow:
       - 6. Act on findings or escalate disagreements
     cross_platform_review:
       name: Cross-Platform Review
-      description: Use Gemini or Codex for different review perspectives
+      description: Use Codex for a different review perspective
       steps:
-      - '1. Gemini: Good for broad design review, architecture consistency'
-      - '2. Codex: Good for focused code review, implementation correctness'
-      - '3. Claude: Good for complex logic review, edge case analysis'
-      - '4. Launch on chosen platform: cli-agent:launch_agent with platform param'
-      - 5. Provide the same review context regardless of platform
+      - '1. Codex: Good for focused code review, implementation correctness'
+      - '2. Claude: Good for complex logic review, edge case analysis'
+      - '3. Launch on chosen platform: cli-agent:launch_agent with platform param'
+      - 4. Provide the same review context regardless of platform
   assessment_criteria:
     code_review:
     - 'Correctness: Does it do what the task/spec requires?'

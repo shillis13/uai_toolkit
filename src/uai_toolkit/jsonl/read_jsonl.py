@@ -16,10 +16,10 @@ Usage:
     read_jsonl.py list [project_dir] [--limit N]
 
     # Read messages from a specific session UUID (searches all platforms)
-    read_jsonl.py read <uuid> [--format json|text|markdown|memorex] [--platform claude|codex|gemini|agy]
+    read_jsonl.py read <uuid> [--format json|text|markdown|memorex] [--platform claude|codex|gemini|agy|grok]
 
     # Read messages from one or more JSONL files directly
-    read_jsonl.py read-file <path> [path2 ...] [--format json|text|markdown|memorex] [--platform claude|codex|gemini|agy]
+    read_jsonl.py read-file <path> [path2 ...] [--format json|text|markdown|memorex] [--platform claude|codex|gemini|agy|grok]
 
     # Extract scoped messages for briefing/Recall workflows
     read_jsonl.py extract <uuid|path> [--types user,response] [--interval 1-3] [--turns 40-55]
@@ -28,12 +28,13 @@ Usage:
     read_jsonl.py find <uuid>
 
     # Summary of a session
-    read_jsonl.py summary <uuid> [--platform claude|codex|gemini|agy]
+    read_jsonl.py summary <uuid> [--platform claude|codex|gemini|agy|grok]
 """
 
 from __future__ import annotations
 
 import atexit
+import importlib.util
 import json
 import os
 import re
@@ -67,6 +68,24 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from uai_toolkit.jsonl import lib_jsonl_archive as _lja  # noqa: E402
 
 
+_LCC = None
+
+
+def _lib_cli_common():
+    """Load the JSONL-local lib_cli_common, avoiding same-name module collisions."""
+    global _LCC
+    if _LCC is not None:
+        return _LCC
+    path = Path(__file__).resolve().parent / "lib_cli_common.py"
+    spec = importlib.util.spec_from_file_location("_jsonl_lib_cli_common", path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Unable to load JSONL lib_cli_common from {path}")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    _LCC = mod
+    return mod
+
+
 from uai_toolkit.jsonl.platform_adapters import adapter_for_platform, detect_platform as _detect_platform_adapter
 from uai_toolkit.jsonl.standardized_session import load_standardized_session, is_standardized_session_file
 
@@ -80,6 +99,8 @@ CODEX_SESSIONS_DIR = CODEX_DIR / "sessions"
 CODEX_ARCHIVE_DIR = CODEX_DIR / "archived_sessions"
 GEMINI_DIR = Path.home() / ".gemini"
 GEMINI_HISTORY_DIR = GEMINI_DIR / "tmp"
+GROK_DIR = Path.home() / ".grok"
+GROK_SESSIONS_DIR = GROK_DIR / "sessions"
 
 VERSION = "3.0.0"
 READLINE_HISTORY = Path.home() / ".read_jsonl_history"
@@ -295,11 +316,10 @@ COMMAND_ALIASES = {
     "rf": "read-file",
     "f": "find",
     "s": "summary",
-    "st": "stats",
+    "m": "msg",
     "ls": "list",
     "cx": "compactions",
-    "hg": "histo",
-    "hist": "histo",
+    "br": "branches",
 }
 
 
@@ -578,6 +598,7 @@ def find_jsonl(query: str) -> Path | None:
 
     # 2. Codex: rollout-{date}-{uuid}.jsonl in date tree
     # 3. Gemini: session-{date}-{partial_uuid}.json in tmp/*/chats/
+    # 4. Grok: ~/.grok/sessions/<urlencoded-cwd>/<session_uuid>/chat_history.jsonl
     search_paths = [
         (CODEX_SESSIONS_DIR, "*.jsonl"),
         (GEMINI_HISTORY_DIR, "session-*.json"),
@@ -612,6 +633,13 @@ def find_jsonl(query: str) -> Path | None:
                                     candidates.append(f)
                         except (json.JSONDecodeError, OSError):
                             pass
+
+    # Grok: session UUID is the parent directory of chat_history.jsonl
+    if GROK_SESSIONS_DIR.exists():
+        for f in GROK_SESSIONS_DIR.rglob("chat_history.jsonl"):
+            session_uuid = f.parent.name.lower()
+            if session_uuid == query or session_uuid.startswith(query) or query in session_uuid:
+                candidates.append(f)
 
     if len(candidates) == 1:
         return candidates[0]
@@ -667,7 +695,7 @@ def _ts_to_local(ts: str) -> str:
 def detect_platform(jsonl_path: Path) -> str:
     """Detect which CLI platform produced a JSONL/JSON file.
 
-    Returns one of: agy, claude, codex, gemini, standardized.
+    Returns one of: agy, grok, claude, codex, gemini, standardized.
     """
     return _detect_platform_adapter(jsonl_path)
 
@@ -2277,6 +2305,12 @@ def list_sessions(platform: str | None = None, limit: int = 20) -> list[dict[str
                     except: pass
                 add_session(f, "gemini", uuid)
 
+    # 4. Grok: ~/.grok/sessions/<cwd>/<session_uuid>/chat_history.jsonl
+    if not platform or platform == "grok":
+        if GROK_SESSIONS_DIR.exists():
+            for f in GROK_SESSIONS_DIR.rglob("chat_history.jsonl"):
+                add_session(f, "grok", f.parent.name)
+
     # Sort by timestamp (mtime)
     sessions.sort(key=lambda x: x["timestamp"], reverse=True)
     return sessions[:limit]
@@ -2536,7 +2570,7 @@ def _select_turn_numbers(spec: str, messages: list[Message]) -> tuple[set[int] |
     is the CANONICAL shared one in lib_cli_common.select_turn_numbers — this delegates
     to it (passing the turn numbers visible in scope) so context_stats / turn_digest
     interpret --turns identically."""
-    from uai_toolkit.cli import lib_cli_common as _lcc
+    _lcc = _lib_cli_common()
     return _lcc.select_turn_numbers(spec, _turn_numbers_in_scope(messages))
 
 
@@ -2898,13 +2932,71 @@ def cmd_find(args: list[str]) -> str:
 def cmd_summary(args: list[str]) -> str:
     """Show session summary."""
     if not args:
-        return "Usage: summary <uuid> [--platform claude|codex|gemini|agy]"
+        return "Usage: summary <uuid> [--platform claude|codex|gemini|agy|grok]"
     platform = _parse_flag(args, "--platform")
     path = find_jsonl(args[0])
     if not path:
         return c(f"Session not found: {args[0]}", Colors.RED)
     summary = session_summary(path)
     return json.dumps(summary, indent=2)
+
+
+def cmd_msg(args: list[str]) -> str:
+    """Retrieve raw record(s) by RECORD uuid (the record's own `uuid` field — one JSONL line;
+    NOT the assistant `message.id`, which groups the 1+ records of an API message). The uuid(s)
+    come FIRST; the session is optional (a --session flag OR a path/uuid positional,
+    order-independent) — if none is given, all Claude sessions are searched for the id(s)."""
+    usage = "Usage: msg <record-uuid> [uuid2 ...] [--session <uuid|path>]  [--format json|compact]"
+    if not args:
+        return usage
+    fmt = _parse_flag(args, "--format") or "json"
+    session = _parse_flag(args, "--session")
+    ids = []
+    for a in _strip_flags(args, ["--format", "--platform", "--session"]):
+        if session is None and (a.endswith(".jsonl") or Path(a).expanduser().exists()):
+            session = a          # an explicit transcript path/.jsonl is the session
+        else:
+            ids.append(a)        # everything else is a record uuid (bare-uuid session -> use --session)
+    if not ids:
+        return usage + "\n(no record uuid given)"
+    want = set(ids)
+    if session:
+        # find_jsonl takes a path or a uuid STEM; a bare '<uuid>.jsonl' filename needs the .jsonl stripped
+        path = find_jsonl(session) or (find_jsonl(session[:-6]) if session.endswith(".jsonl") else None)
+        if not path or not Path(path).exists():
+            return c(f"Session not found: {session}", Colors.RED)
+        paths = [Path(path)]
+    else:
+        import subprocess
+        files = ([str(f) for pd in PROJECTS_DIR.iterdir() if pd.is_dir() for f in pd.glob("*.jsonl")]
+                 if PROJECTS_DIR.exists() else [])
+        hit = set()
+        for mid in want:
+            if files:
+                hit.update(subprocess.run(["grep", "-lF", mid, *files],
+                                          capture_output=True, text=True).stdout.split())
+        paths = [Path(p) for p in sorted(hit)]
+        if not paths:
+            return c(f"No session contains message id(s) {sorted(want)}.", Colors.RED)
+    found, out = set(), []
+    for path in paths:
+        for line in open(path, encoding="utf-8", errors="replace"):
+            try:
+                r = json.loads(line)
+            except Exception:
+                continue
+            if isinstance(r, dict) and r.get("uuid") in want:
+                found.add(r["uuid"])
+                hdr = f"# {path.name}\n" if len(paths) > 1 else ""
+                out.append(hdr + (json.dumps(r, indent=2) if fmt != "compact"
+                                  else json.dumps(r, separators=(",", ":"))))
+    if not out:
+        return c(f"No record(s) with id(s) {sorted(want)} found.", Colors.RED)
+    text = ("\n" + "-" * 70 + "\n").join(out)
+    missing = want - found
+    if missing:
+        text += c(f"\n\n[not found: {sorted(missing)}]", Colors.YELLOW)
+    return text
 
 
 # =============================================================================
@@ -2988,250 +3080,42 @@ def _format_context_caveat() -> str:
     return "\n".join(out)
 
 
-def cmd_stats(args: list[str]) -> str:
-    """Show detailed session statistics."""
-    if not args:
-        return ("Usage: stats <uuid> [--platform P] [--format text|json] [--tools] "
-                "[--split-offloaded] [--interval SPEC]  (SPEC: N | live | last | 2-4; scopes the LEDGER)")
-    fmt = _parse_flag(args, "--format") or "text"
-    platform = _parse_flag(args, "--platform")
-    interval_spec = _parse_flag(args, "--interval")
-    show_tools = "--tools" in args
-    split_offloaded = "--split-offloaded" in args
-    bool_flags = {"--tools", "--split-offloaded"}
-    args = [a for a in args if a not in bool_flags]
-    _stripped = _strip_flags(args, ["--format", "--platform", "--interval"])
-    query = _stripped[0] if _stripped else args[0]
-    path = find_jsonl(query)
+def cmd_branches(args: list[str]) -> str:
+    """Branch-aware TOPOLOGY (lib_branch_index) — the branch-aware counterpart to `compactions`
+    (which is line-based). Segment starts, VALID forks (genuine rewind/resume branches, with
+    parallel-tool + offload-reclaim structure excluded), reclaim re-points, recomputed active leaf."""
+    import collections as _cl
+    positionals = _strip_flags(args, ["--platform"])
+    if not positionals:
+        return "Usage: branches <uuid|path>"
+    path = find_jsonl(positionals[0])
     if not path:
-        return c(f"Session not found: {query}", Colors.RED)
-    # --interval scopes the LEDGER to the requested compaction interval(s); default
-    # (None) shows OVERALL + LIVE. Accepts a number, 'live'/'last', or a range.
-    show_intervals = None
-    if interval_spec:
-        selected, err = _select_intervals(interval_spec, compaction_intervals(path))
-        if err:
-            return c(err, Colors.RED)
-        show_intervals = [iv["index"] for iv in selected]
-    result = session_stats(path, platform=platform, fmt=fmt, show_tools=show_tools,
-                           split_offloaded=split_offloaded)
-    bd = raw_line_breakdown(path)
-    sa = stub_accounting(path)
-    cf = conversation_client_only_fields(path)
-    ml = model_facing_ledger(path)
-    if isinstance(result, dict):
-        result["raw_line_breakdown"] = bd
-        result["stub_accounting"] = sa
-        result["conversation_client_only_fields"] = cf
-        result["model_facing_ledger"] = ml
-        if split_offloaded:
-            result["split_offloaded"] = split_offloaded_tally(parse_session(path, platform=platform))
-        result["context_caveat"] = (
-            "Stats cover the TRANSCRIPT only; the model's per-request context also "
-            "includes the system prompt + tool/MCP schemas + injected "
-            "CLAUDE.md/memory/context files (NOT stored in JSONL). "
-            "Run /context for the true split.")
-        return json.dumps(result, indent=2)
-    # semantic-total chars (Totals block) for the bottom-up/semantic ratio
-    semantic_chars = None
-    try:
-        _sd = session_stats(path, platform=platform, fmt="json")
-        if isinstance(_sd, dict):
-            semantic_chars = _sd.get("totals", {}).get("chars")
-    except Exception:
-        semantic_chars = None
-    parts = [
-        result,
-        "\n" + _format_raw_line_breakdown(bd),
-        "\n" + _format_stub_accounting(sa),
-        "\n" + _format_conversation_client_only_fields(cf, bd),
-        "\n" + _format_model_facing_ledger(ml, cf, semantic_chars, show_intervals=show_intervals),
-    ]
-    parts.append("\n" + _format_context_caveat())
-    return "".join(parts)
-
-
-_HISTO_CATS = ("user", "response", "thinking", "signature", "tool_use", "tool_result", "compaction", "other")
-
-
-def _signatures_by_line(path: "Path") -> "dict":
-    """Map raw 1-indexed JSONL line -> total thinking-block signature chars.
-
-    The standardized Message.raw drops the `signature`, so read the original file
-    to recover the encrypted-blob byte cost and key it by source_line.
-    """
-    out: dict = {}
-    try:
-        with open(path, encoding="utf-8") as f:
-            for i, ln in enumerate(f):
-                if not ln.strip():
-                    continue
-                try:
-                    o = json.loads(ln)
-                except Exception:
-                    continue
-                content = (o.get("message") or {}).get("content")
-                if isinstance(content, list):
-                    s = sum(len(b.get("signature") or "")
-                            for b in content
-                            if isinstance(b, dict) and b.get("type") == "thinking")
-                    if s:
-                        out[i + 1] = s
-    except OSError:
-        pass
-    return out
-
-
-def turn_histogram(messages: list, sig_by_line: "dict | None" = None,
-                   include_off_chain: bool = False) -> "dict":
-    """Per-turn char tally, broken out by category.
-
-    By default counts only ACTIVE-CHAIN records (what's actually in the model's
-    context); off-chain dead-retry/rewind records are skipped (set
-    include_off_chain=True to count them). `thinking` = readable plaintext;
-    `signature` = the encrypted thinking blob (recovered from the raw file via
-    source_line); `compaction` = isCompactSummary continuations. Returns an
-    ordered {turn: {cat: chars, ts, nmsg}} by absolute turn.
-    """
-    from collections import OrderedDict
-    sig_by_line = sig_by_line or {}
-    turns: "OrderedDict" = OrderedDict()
-    seen_sig: set = set()
-    for m in messages:
-        if not include_off_chain and not getattr(m, "on_chain", True):
-            continue
-        t = m.turn_number if m.turn_number is not None else 0   # -1 = `pre` prologue
-        d = turns.get(t)
-        if d is None:
-            d = {k: 0 for k in _HISTO_CATS}
-            d["ts"] = m.timestamp
-            d["nmsg"] = 0
-            turns[t] = d
-        d["nmsg"] += 1
-        typ = m.type
-        if getattr(m, "is_compaction", False):
-            d["compaction"] += len(m.content or "")
-        elif typ == MessageType.USER:
-            d["user"] += len(m.content or "")
-        elif typ == MessageType.RESPONSE:
-            d["response"] += len(m.content or "")
-        elif typ == MessageType.THINKING:
-            d["thinking"] += len(m.content or "")
-            sl = m.source_line
-            if sl and sl not in seen_sig:                 # one record's sig counted once
-                seen_sig.add(sl)
-                d["signature"] += sig_by_line.get(sl, 0)
-        elif typ == MessageType.TOOL_USE:
-            try:
-                d["tool_use"] += len(json.dumps(m.tool_input or {}, ensure_ascii=False))
-            except Exception:
-                d["tool_use"] += len(str(m.tool_input or ""))
-        elif typ == MessageType.TOOL_RESULT:
-            d["tool_result"] += len(m.content or "")
-        else:
-            d["other"] += len(m.content or "")
-    return turns
-
-
-def _format_histogram(turns: "dict", width: int = 24, other_breakdown: "dict | None" = None) -> str:
-    """Render the per-turn char histogram: per-type columns, total, stacked bar."""
-    def total(d):
-        return sum(d[k] for k in _HISTO_CATS)
-    maxtot = max((total(d) for d in turns.values()), default=0) or 1
-    H = lambda s: c(s, Colors.BOLD, Colors.BRIGHT_CYAN)
-    D = lambda s: c(s, Colors.DIM)
-    # Column/segment order + colors match the message-type labels used elsewhere.
-    # thinking includes its signature bytes; other = system/meta/skill/etc.
-    segdef = [
-        ("user", Colors.BRIGHT_BLUE, lambda d: d["user"]),
-        ("tools", Colors.YELLOW, lambda d: d["tool_use"] + d["tool_result"]),
-        ("thinking", Colors.MAGENTA, lambda d: d["thinking"] + d["signature"]),
-        ("response", Colors.BRIGHT_GREEN, lambda d: d["response"]),
-        ("compact", Colors.CYAN, lambda d: d["compaction"]),
-        ("other", Colors.DIM, lambda d: d["other"]),
-    ]
-    cw = 10
-    hdr = (f" {'turn':<5}"
-           + "".join(c(f"{name:>{cw}}", col) for name, col, _ in segdef)
-           + f"{'total':>12}  bar")
-    lines = [
-        H("TURN HISTOGRAM") + D("  chars per turn by message type (active chain only)"),
-        hdr,
-    ]
-    grand = {k: 0 for k in _HISTO_CATS}
-    for t, d in turns.items():
-        tot = total(d)
-        for k in _HISTO_CATS:
-            grand[k] += d[k]
-        vals = [fn(d) for _, _, fn in segdef]
-        cols = "".join(f"{v:>{cw},}" for v in vals)
-        nbar = max(1, round(width * tot / maxtot)) if tot else 0
-        bar, acc, cum = "", 0, 0      # cumulative rounding → segments sum to nbar
-        for (_, col, fn) in segdef:
-            cum += fn(d)
-            tgt = round(nbar * cum / tot) if tot else 0
-            seg = max(0, tgt - acc)
-            acc = tgt
-            if seg:
-                bar += c("█" * seg, col)
-        t_label = "pre" if t < 0 else "T" + str(t)
-        lines.append(f" {t_label:<5}{cols}{tot:>12,}  {bar}")
-    # totals row
-    gv = [fn(grand) for _, _, fn in segdef]
-    gt = sum(gv)
-    lines.append(" " + D("─" * (5 + cw * len(segdef) + 12)))
-    lines.append(f" {'Σ':<5}" + "".join(f"{v:>{cw},}" for v in gv) + f"{gt:>12,}")
-    lines.append("")
-    lines.append(D(
-        f" thinking total {grand['thinking']+grand['signature']:,} = "
-        f"plaintext {grand['thinking']:,} + signature {grand['signature']:,} (encrypted blob)"))
-    if other_breakdown:
-        parts = " · ".join(f"{k} {v:,}" for k, v in
-                           sorted(other_breakdown.items(), key=lambda kv: -kv[1]) if v)
-        lines.append(D(f" other ({sum(other_breakdown.values()):,}) = "
-                       + (parts or "none") + "  ← message types pooled into 'other'"))
+        return c(f"Session not found: {positionals[0]}", Colors.RED)
+    import lib_branch_index as _bi
+    rep = _bi.get_or_build(str(path))
+    H = lambda s: c(s, Colors.BOLD, Colors.BRIGHT_CYAN)  # noqa: E731
+    D = lambda s: c(s, Colors.DIM)                        # noqa: E731
+    B = lambda s: c(s, Colors.BOLD)                       # noqa: E731
+    al = (rep.get("active_leaf") or "")
+    out = [H(f"BRANCHES — {path.name}"),
+           D(f"  {rep['n_msgs']} msgs · active leaf {al[:8] or '—'} · "
+             f"{len(rep['segments'])} segment(s) · {len(rep['valid_forks'])} valid fork(s) · "
+             f"{len(rep['reclaim'])} reclaim re-point(s) · {len(rep['leaves'])} branch tip(s)"), ""]
+    by = _cl.Counter(s["reason"] for s in rep["segments"])
+    out.append(B("  SEGMENT STARTS by reason"))
+    for reason, k in by.most_common():
+        out.append(f"    {reason:<12} {k}")
+    forks = rep["valid_forks"]
+    out.append("")
+    if forks:
+        out.append(B("  VALID FORKS  (genuine rewind/resume branches)"))
+        for s in forks[:30]:
+            out.append(f"    seq {s['seq']:<7} birth {s['birth_uuid'][:8]}  <- parent {str(s['parent_id'])[:8]}")
+        if len(forks) > 30:
+            out.append(D(f"    … (+{len(forks) - 30} more)"))
     else:
-        lines.append(D(" other = skill bodies / agent_result / injected / system / meta"))
-    lines.append(D(
-        " compact = compaction-summary continuations · "
-        "off-chain dead-retry/rewind records excluded"))
-    return "\n".join(lines)
-
-
-def cmd_histo(args: list[str]) -> str:
-    """Per-turn histogram of char usage (offload target highlighted)."""
-    usage = "Usage: histo <uuid|path> [--platform P] [--format text|json] [--interval SPEC]"
-    if not args:
-        return usage
-    fmt = _parse_flag(args, "--format") or "text"
-    platform = _parse_flag(args, "--platform")
-    interval_spec = _parse_flag(args, "--interval")
-    queries = _strip_flags(args, ["--format", "--platform", "--interval"])
-    if not queries:
-        return usage
-    path = find_jsonl(queries[0])
-    if not path:
-        return c(f"Session not found: {queries[0]}", Colors.RED)
-    msgs = parse_session(path, platform=platform)
-    if interval_spec:
-        selected, err = _select_intervals(interval_spec, compaction_intervals(path))
-        if err:
-            return c(err, Colors.RED)
-        msgs = _apply_interval_filter(msgs, selected)
-    turns = turn_histogram(msgs, sig_by_line=_signatures_by_line(path))
-    # Break down the 'other' bucket by message type (on-chain, non-compaction).
-    _main = {MessageType.USER, MessageType.RESPONSE, MessageType.THINKING,
-             MessageType.TOOL_USE, MessageType.TOOL_RESULT}
-    other_breakdown: dict = {}
-    for m in msgs:
-        if not getattr(m, "on_chain", True) or getattr(m, "is_compaction", False):
-            continue
-        if m.type not in _main:
-            other_breakdown[m.type.value] = other_breakdown.get(m.type.value, 0) + len(m.content or "")
-    if fmt == "json":
-        return json.dumps({"turns": {str(t): d for t, d in turns.items()},
-                           "other_breakdown": other_breakdown}, indent=2)
-    return _format_histogram(turns, other_breakdown=other_breakdown)
+        out.append(D("  no valid forks — single linear branch"))
+    return "\n".join(out)
 
 
 def cmd_compactions(args: list[str]) -> str:
@@ -3333,7 +3217,7 @@ def _command_help_entries() -> dict[str, dict]:
             "options": [
                 ("--format json|text|markdown|memorex", "Output format (default: text). 'memorex' = colored, labeled, collapsible section cards matching the UAI Memorex overlay"),
                 ("--expand SECTIONS", "memorex format: unfold collapse-by-default sections (e.g. --expand tool,thinking or --expand all)"),
-                ("--platform claude|codex|gemini|agy", "Force platform detection (default: auto)"),
+                ("--platform claude|codex|gemini|agy|grok", "Force platform detection (default: auto)"),
                 ("--type/--types TYPE[,TYPE]", f"Filter by message type: {types_list}; aliases: assistant, tools, conversation"),
                 ("--range RANGE", "Message range: 1-10, -20, 5-, t1-5, t-4"),
                 ("--turns RANGE", "Absolute Tn turn range: 10-20, 10-, -5, 12"),
@@ -3372,7 +3256,7 @@ def _command_help_entries() -> dict[str, dict]:
                 ("--range RANGE", "Legacy message range or t-range; prefer --turns for briefing extraction"),
                 ("--resolve", "Rehydrate Offload/Engram stubs to their original content before extracting (default: off)"),
                 ("--include-client-only", "Merge client-only raw lines inline as META (default: off)"),
-                ("--platform claude|codex|gemini|agy", "Force platform detection (default: auto)"),
+                ("--platform claude|codex|gemini|agy|grok", "Force platform detection (default: auto)"),
             ],
             "examples": [
                 "extract 7edf --types user,response --interval 1-3",
@@ -3394,7 +3278,7 @@ def _command_help_entries() -> dict[str, dict]:
             "options": [
                 ("--format json|text|markdown|memorex", "Output format (default: text). 'memorex' = colored, labeled, collapsible section cards matching the UAI Memorex overlay"),
                 ("--expand SECTIONS", "memorex format: unfold collapse-by-default sections (e.g. --expand tool,thinking or --expand all)"),
-                ("--platform claude|codex|gemini|agy", "Force platform detection (default: auto)"),
+                ("--platform claude|codex|gemini|agy|grok", "Force platform detection (default: auto)"),
                 ("--type/--types TYPE[,TYPE]", f"Filter by message type: {types_list}; aliases: assistant, tools, conversation"),
                 ("--range RANGE", "Message range: 1-10, -20, 5-, t1-5, t-4"),
                 ("--turns RANGE", "Absolute Tn turn range: 10-20, 10-, -5, 12"),
@@ -3430,59 +3314,31 @@ def _command_help_entries() -> dict[str, dict]:
                 "first and last timestamps, platform, and total message count.",
             ],
             "options": [
-                ("--platform claude|codex|gemini|agy", "Force platform detection"),
+                ("--platform claude|codex|gemini|agy|grok", "Force platform detection"),
             ],
             "examples": ["summary 7edf"],
             "aliases": ["s"],
             "repl_only": False,
         },
-        "stats": {
-            "usage": "stats <uuid|path> [options]",
-            "summary": "Detailed session statistics (types, tools, timing) — the 'what's sheddable' surface",
+        "msg": {
+            "usage": "msg <record-uuid> [uuid2 ...] [--session <uuid|path>]",
+            "summary": "Retrieve raw record(s) by RECORD uuid — inspect one JSONL record",
             "detail": [
-                "Accepts a UUID (partial match OK) or a direct file path.",
-                "Shows comprehensive session statistics including message counts and BYTES by",
-                "type, tool usage breakdown (with --tools), timing, and token estimates.",
-                "In the context-reclaim ladder this is the primary read-side gauge: it tells you",
-                "how heavy a transcript is and where the bytes live, so you can decide whether to",
-                "Offload / Bounce / Summarize. --split-offloaded further separates bytes still Full",
-                "(reclaimable) from bytes already relocated to a Stub (already offloaded).",
+                "Matches on the record's own `uuid` field (one JSONL line) — NOT the assistant",
+                "`message.id` that groups the 1+ records of an API message; passing a message.id",
+                "returns not-found. The uuid(s) come FIRST. The session is optional: pass --session",
+                "<uuid|path> (or a direct .jsonl path as a positional) to scope to one session; with",
+                "none given, all Claude sessions are searched. Prints the raw JSONL record(s) — so",
+                "you see exactly what a record contains (block types, parentUuid, isMeta, tool ids).",
             ],
             "options": [
-                ("--format text|json", "Output format (default: text; json is model-readable, no ANSI)"),
-                ("--platform claude|codex|gemini|agy", "Force platform detection (default: auto from path/content)"),
-                ("--tools", "Include per-tool usage breakdown (default: off)"),
-                ("--split-offloaded", "Inline a Full/Stub byte breakout under each User/AI/Tools line — Full = still reclaimable, Stub = already Offloaded (default: off)"),
+                ("--session <uuid|path>", "Scope to one session (default: search all sessions)"),
+                ("--format json|compact", "Pretty JSON (default) or one compact line per record"),
             ],
-            "examples": ["stats 7edf", "stats 7edf --tools", "stats 7edf --format json",
-                         "stats 7edf --split-offloaded"],
-            "aliases": ["st"],
-            "repl_only": False,
-        },
-        "histo": {
-            "usage": "histo <uuid|path> [options]",
-            "summary": "Per-turn char histogram, stacked by message type — locate the heavy turns",
-            "detail": [
-                "One row per conversation turn with per-type char columns, total, and",
-                "a compact stacked bar scaled to the heaviest turn:",
-                "  blue=user  yellow=tools(tool_use+tool_result)  magenta=thinking(+signature)  green=response.",
-                "Counts transcript chars (not tokens); thinking includes its encrypted",
-                "signature bytes. 'other' = system/meta/skill/etc.",
-                "Reclaim use: the bar instantly shows WHICH turns and WHICH types dominate — a",
-                "tools-heavy turn is Offload fodder (lossless); a thinking/response-heavy turn can",
-                "only be shed by Summarize (lossy, reversible). Pairs with 'stats' for the totals.",
-                "--format json emits {turns: {N: {user,response,thinking,signature,tool_use,",
-                "tool_result,compaction,other,ts,nmsg}}, other_breakdown: {type: chars}}",
-                "— model-readable, no bars/ANSI.",
-            ],
-            "options": [
-                ("--format text|json", "Output format (default: text; json is model-readable, no bars/ANSI)"),
-                ("--platform claude|codex|gemini|agy", "Force platform detection (default: auto)"),
-                ("--interval SPEC", "Limit to compaction interval(s): 0=prologue, 1..N, last|live, -1, '1,3', '2-4' (default: all turns)"),
-            ],
-            "examples": ["histo 7edf", "hist 004c1360", "histo 7edf --format json",
-                         "histo 7edf --interval last"],
-            "aliases": ["hg", "hist"],
+            "examples": ["msg f4f228dd-3c95-4452-a23b-a84cd4e45c0e",
+                         "msg f4f228dd-3c95-4452-a23b-a84cd4e45c0e --session 004c1360",
+                         "msg <uuid1> <uuid2> session.jsonl --format compact"],
+            "aliases": ["m"],
             "repl_only": False,
         },
         "compactions": {
@@ -3497,10 +3353,26 @@ def _command_help_entries() -> dict[str, dict]:
                 "Use the interval indexes here with 'read --interval'.",
             ],
             "options": [
-                ("--platform claude|codex|gemini|agy", "Force platform detection"),
+                ("--platform claude|codex|gemini|agy|grok", "Force platform detection"),
             ],
             "examples": ["compactions 7edf", "cx 004c1360"],
             "aliases": ["cx"],
+            "repl_only": False,
+        },
+        "branches": {
+            "usage": "branches <uuid|path>",
+            "summary": "Branch-aware topology (segments, valid forks) via lib_branch_index",
+            "detail": [
+                "The branch-aware counterpart to 'compactions' (which is raw-line based). Walks the",
+                "parentId chain, not file lines. Reports segment starts (root / compaction / valid",
+                "fork), the VALID forks (genuine rewind/resume branches — parallel-tool structure and",
+                "offload-reclaim re-points are correctly NOT counted), reclaim re-point totals, and",
+                "the recomputed active leaf (last-prompt.leafUuid lags, so it is recomputed).",
+                "Cached in a <uuid>.branch_index.json sidecar keyed on file mtime+size.",
+            ],
+            "options": [],
+            "examples": ["branches 7edf", "br 004c1360"],
+            "aliases": ["br"],
             "repl_only": False,
         },
         "list": {
@@ -3511,7 +3383,7 @@ def _command_help_entries() -> dict[str, dict]:
                 "By default searches Claude, Codex, and Gemini session directories.",
             ],
             "options": [
-                ("--platform claude|codex|gemini|agy", "Show only sessions for one platform"),
+                ("--platform claude|codex|gemini|agy|grok", "Show only sessions for one platform"),
                 ("--limit N", "Number of sessions to show (default: 20)"),
             ],
             "examples": ["list", "list --platform claude --limit 50"],
@@ -3642,8 +3514,9 @@ def cmd_help(args: list[str]) -> str:
         D("  It is the ANALYSIS layer of the context-reclaim ladder (see DESIGN_context_reclaim.md):"),
         D("  it does not itself shed context -- the write/reclaim levers live in sibling tools"),
         D("  (chain_skip.py = Offload, memory_manager = Summarize/Recall, session_bounce = Bounce)."),
-        D("  read_jsonl feeds those decisions: 'stats' and 'histo' show WHAT is sheddable and where"),
-        D("  the bytes are; 'extract' mines already-compacted history for briefings and Recall;"),
+        D("  (byte/sheddability analysis moved to context_stats --mode stats/histo.) read_jsonl feeds"),
+        D("  decisions: 'extract' mines already-compacted history for briefings and Recall; 'msg'"),
+        D("  fetches a specific record by uuid;"),
         D("  'compactions' + --interval navigate compaction boundaries; and --resolve rehydrates"),
         D("  Offload/Engram stubs so you read the ORIGINAL archived content in place (a live Restore-"),
         D("  for-reading, disk untouched)."),
@@ -3680,7 +3553,7 @@ def cmd_help(args: list[str]) -> str:
 
     lines.append("")
     lines.append(H("OPTIONS") + D(" (available on read, read-file, extract, and list)"))
-    lines.append(f"  {F('--platform')} {D('claude|codex|gemini|agy')}  {D('Filter or force platform (default: all/auto)')}")
+    lines.append(f"  {F('--platform')} {D('claude|codex|gemini|agy|grok')}  {D('Filter or force platform (default: all/auto)')}")
     lines.append(f"  {F('--format')} {D('json|text|markdown|memorex')}    {D('Output format (default: text). memorex = colored Memorex-style cards')}")
     lines.append(f"  {F('--type/--types')} {D('user,response,...')} {D('Filter by message type (comma-separated); aliases: tools, conversation, assistant')}")
     lines.append(f"          {D('Types: user, response, thinking, tool_use, tool_result, system, meta, skill, agent_result, injected')}")
@@ -3709,8 +3582,7 @@ def cmd_help(args: list[str]) -> str:
     lines.append(f"  {C('read_jsonl.py 7edf')}                        {D('read session 7edf (partial UUID) in default text')}")
     lines.append(f"  {C('read_jsonl.py 7edf --type user,response')}   {D('just the conversation, drop tools/thinking')}")
     lines.append(f"  {C('read_jsonl.py read 7edf --resolve')}         {D('read with Offload/Engram stubs rehydrated (Restore-for-reading)')}")
-    lines.append(f"  {C('read_jsonl.py stats 7edf --split-offloaded')} {D('byte stats + Full/Stub breakout: what is still sheddable')}")
-    lines.append(f"  {C('read_jsonl.py histo 7edf --interval last')}  {D('per-turn byte histogram of the live region')}")
+    lines.append(f"  {C('read_jsonl.py msg <record-uuid> --session 7edf')}  {D('inspect a specific record by its uuid')}")
     lines.append(f"  {C('read_jsonl.py compactions 7edf')}            {D('list compaction boundaries + interval indexes')}")
     lines.append(f"  {C('read_jsonl.py extract 7edf --types conversation --turns 40-55')}")
     lines.append(f"      {D('mine turns 40-55 across all intervals as markdown for a briefing / Recall')}")
@@ -3898,9 +3770,9 @@ def run_command(line: str, interactive: bool = True) -> str | None:
         "read-file": lambda: _cmd_read_file_with_repl(args, interactive),
         "find": lambda: cmd_find(args),
         "summary": lambda: cmd_summary(args),
-        "stats": lambda: cmd_stats(args),
-        "histo": lambda: cmd_histo(args),
+        "msg": lambda: cmd_msg(args),
         "compactions": lambda: cmd_compactions(args),
+        "branches": lambda: cmd_branches(args),
         "list": lambda: cmd_list_sessions(args),
         "help": lambda: cmd_help(args),
     }
@@ -4078,7 +3950,7 @@ def main():
     # If the first arg isn't a known command, treat it as a session identifier
     # and prepend "read" — so `read_jsonl.py Cortex` means `read Cortex`
     _KNOWN_CMDS = set(COMMAND_ALIASES.keys()) | set(COMMAND_ALIASES.values()) | {
-        "read", "extract", "read-file", "find", "summary", "stats", "histo", "compactions", "list", "help",
+        "read", "extract", "read-file", "find", "summary", "msg", "compactions", "list", "help",
         "toggle", "set", "grep",
     }
     if args and args[0].lower().lstrip("-") not in _KNOWN_CMDS:

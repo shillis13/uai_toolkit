@@ -26,6 +26,7 @@ interface ProjectOverviewProps {
   onSelectFile: (entry: FsEntry) => void;
   onGotoTeam: () => void;
   workSummary?: React.ReactNode;   // Work vital-signs bar — rendered below Docs (todo_0416)
+  showDocs?: boolean;              // Docs is a Project-only ASPECT now; Overview hides it (isProject inversion)
 }
 
 function Row({ k, v, color }: { k: string; v: string; color?: string }): JSX.Element {
@@ -66,7 +67,7 @@ export function WorkerNotes({ names }: { names: string[] }): JSX.Element | null 
   );
 }
 
-export default function ProjectOverview({ project, sessions, selectedFilePath, onSelectFile, onGotoTeam, workSummary }: ProjectOverviewProps): JSX.Element {
+export default function ProjectOverview({ project, sessions, selectedFilePath, onSelectFile, onGotoTeam, workSummary, showDocs = true }: ProjectOverviewProps): JSX.Element {
   const [docsOpen, setDocsOpen] = useState(true);
   const [filesOpen, setFilesOpen] = useState(false);
   const [teamOpen, setTeamOpen] = useState(true);
@@ -114,7 +115,9 @@ export default function ProjectOverview({ project, sessions, selectedFilePath, o
       {/* Notes this worker is tagged on (todo_0419) */}
       <WorkerNotes names={[project.display_name, (project as any).project_id, project.entity_id].filter(Boolean) as string[]} />
 
-      {/* Docs (documentation) — conceptually separate from Files (#3) */}
+      {/* Docs (documentation) — now a Project-only ASPECT (isProject inversion); Overview
+          only renders it inline when the host opts in (showDocs). */}
+      {showDocs && (
       <div className="pe-collapse">
         <div className="pe-collapse-head" onClick={() => setDocsOpen(o => !o)}>
           <span className="pe-collapse-chev">{docsOpen ? '▾' : '▸'}</span> Docs
@@ -126,6 +129,7 @@ export default function ProjectOverview({ project, sessions, selectedFilePath, o
             : <div className="pe-note">No working directory on this project.</div>
         )}
       </div>
+      )}
 
       {/* Work summary (vital-signs bar) — below Docs (todo_0416) */}
       {workSummary}

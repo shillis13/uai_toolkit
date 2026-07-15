@@ -84,6 +84,9 @@ export interface SystemMetrics {
   // ── Overall Claude token counters (day/month/year/inception to date) ──
   claude_tokens?: { dtd?: TokenBucket; mtd?: TokenBucket; ytd?: TokenBucket; itd?: TokenBucket };
 
+  // ── 1-hour sparkline series per metric (for the inline gauge graphs) ──
+  sparks?: Record<string, number[]>;
+
   // ── Claude Code usage (bridged from the statusline via ~/.claude/rate_limits.json) ──
   claude_5h_pct?: number | null;
   claude_5h_reset?: string | null;
@@ -496,6 +499,14 @@ export function getSystemMetrics(activeSessionCount: number): SystemMetrics {
       top_cpu_processes: readTopProcesses(d.top_cpu_processes),
       top_mem_processes: readTopProcesses(d.top_mem_processes),
       claude_tokens: d.claude?.tokens,
+      sparks: {
+        cpu: d.cpu_spark_1h,
+        mem: m.spark_1h,
+        swap: m.swap_spark_1h,
+        disk: disk.used_spark_1h,
+        claude_7d: d.claude?.rate_7d_spark_1h,
+        tokens: d.claude?.tokens_spark_1h,
+      },
       mem_pressure: m.pressure,
       mem_committed_gb: Number(m.committed_gb),
       mem_total_gb: Number(m.total_gb),

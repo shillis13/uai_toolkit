@@ -203,14 +203,14 @@ Specifically:
 | Dev Lead | Claude | Deep integration with CLI wrappers, forking, coordination tools |
 | Developers | Claude (pool) | Consistent coding style, tool integration, fork-compatible |
 | Testing Lead | Codex | Different "tested" threshold, spec compliance focus |
-| Lead Peer Reviewer | Codex or Gemini | Different strictness calibration, different blind spots |
+| Lead Peer Reviewer | Codex | Different strictness calibration, different blind spots |
 | Architect | Claude | Advisory, deep project context needed |
 | UX Designer | Claude | Advisory, deep design context needed |
-| Validator/QA | Claude or Gemini | Process compliance verification |
+| Validator/QA | Claude or Codex | Process compliance verification |
 
 **Implementation notes:**
 - Cross-platform roles need reliable file-based communication, not prompt-based notifications
-- Testing Lead and Lead Peer Reviewer manage pools of same-platform workers (Codex test runners, Codex/Gemini reviewers) for throughput
+- Testing Lead and Lead Peer Reviewer manage pools of same-platform workers (Codex test runners, Codex reviewers) for throughput
 - The diversity rule applies to LEADS, not all pool members. A Claude reviewer in the pool is fine — the lead who decides verdicts must be cross-platform
 
 **The principle:** Implementation and verification should never share a platform. The verifiers must have different priors, different blind spots, and different standards of completeness than the implementers. This is not about one platform being "better" — it's about ensuring the verification layer catches what the implementation layer assumes.

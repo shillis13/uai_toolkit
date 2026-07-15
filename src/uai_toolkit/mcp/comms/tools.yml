@@ -1184,10 +1184,6 @@ tools:
         type: string
         description: Slash command to send (e.g. '/compact', '/color cyan', 'compact'). Auto-prefixed
           with '/' if missing.
-      authorization_token:
-        type: string
-        description: One-time authorization token for guarded commands (e.g. /compact). Provided by the
-          system when authorization is granted. Do not fabricate.
     required:
     - identifier
     - command

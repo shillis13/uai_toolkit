@@ -154,7 +154,10 @@ export default function GitFileViewPane({ tabId, dir: dirProp, since: sinceProp,
   // restores the selected file, filter, scope, handles, zoom, etc. Only for the
   // standalone tab — embedded instances are driven by props, not a saved snapshot.
   const restored = useRef(embedded ? undefined : getGfvSnapshot(tabId)).current;
-  const [dir, setDir] = useState(dirProp ?? restored?.dir ?? 'ai_general/work/projects/uai_app/unified_ai_interface');
+  // Default to the ai_general repo ROOT so the standalone view is repo-wide — its
+  // todo/AI/contributor filters then list everything in the repo (not just commits
+  // under one subdir), matching what the embedded todo Files view shows.
+  const [dir, setDir] = useState(dirProp ?? restored?.dir ?? 'ai_general');
   const [since, setSince] = useState(sinceProp ?? restored?.since ?? daysAgoISO(30));
   const [until, setUntil] = useState(untilProp ?? restored?.until ?? '');
   // Scope-bar visibility (#5): whether the user may change scope, and whether the
@@ -174,6 +177,7 @@ export default function GitFileViewPane({ tabId, dir: dirProp, since: sinceProp,
   const [zoom, setZoom] = useState<{ lo: number; hi: number } | null>(restored?.zoom ?? null);
   const trackRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef<null | 'from' | 'to'>(null);
+  const paneRef = useRef<HTMLDivElement | null>(null);
 
   const commits = data?.ok ? (data.commits ?? []) : [];
   const n = commits.length;
@@ -264,8 +268,9 @@ export default function GitFileViewPane({ tabId, dir: dirProp, since: sinceProp,
   const matchFilter = useCallback((c: GfvCommit): boolean => {
     if (!filter) return true;
     if (filter.kind === 'author') return c.author === filter.value;
-    if (filter.kind === 'ai') return (c.requesters ?? []).includes(filter.value);
-    return (c.todos ?? []).includes(filter.value);
+    if (filter.kind === 'ai') return (c.requesters ?? []).includes(filter.value ?? '');
+    if (filter.kind === 'todos') { const set = filter.values ?? []; return (c.todos ?? []).some((t) => set.includes(t)); }
+    return (c.todos ?? []).includes(filter.value ?? '');
   }, [filter]);
   // Controlled filter: when a host passes a `filter` prop it drives the delta
   // filter (the Work Mgr Files tab pins it to the selected todo). Omitted = uncontrolled.
@@ -304,7 +309,64 @@ export default function GitFileViewPane({ tabId, dir: dirProp, since: sinceProp,
   }, [filter, firstMatch, lastMatch, n, embedded]);
 
   const delta = useMemo(() => (n > 0 ? computeNetDelta(commits, fromIdx, toIdx, matchFilter) : new Map<string, Status>()), [commits, fromIdx, toIdx, n, matchFilter]);
-  const tree = useMemo(() => buildTree(delta, data?.dir_rel ?? ''), [delta, data]);
+
+  // File-list search (filename / metadata / contents). Contents runs a backend
+  // grep (debounced) against the file contents at the To commit.
+  const [fileSearch, setFileSearch] = useState('');
+  const [searchMode, setSearchMode] = useState<'name' | 'meta' | 'content'>('name');
+  const [contentMatches, setContentMatches] = useState<Set<string> | null>(null);
+  const [searchGrepping, setSearchGrepping] = useState(false);
+
+  // Contents search (debounced): grep the changed files' content at the To commit.
+  useEffect(() => {
+    const q = fileSearch.trim();
+    if (searchMode !== 'content' || !q || n === 0) { setContentMatches(null); setSearchGrepping(false); return; }
+    let cancelled = false;
+    setSearchGrepping(true);
+    const timer = setTimeout(() => {
+      window.uai.gitFileView.grep(dir, q, commits[toIdx].hash)
+        .then((r: any) => { if (!cancelled) setContentMatches(new Set<string>(r?.ok ? (r.matches ?? []) : [])); })
+        .catch(() => { if (!cancelled) setContentMatches(new Set<string>()); })
+        .finally(() => { if (!cancelled) setSearchGrepping(false); });
+    }, 300);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [searchMode, fileSearch, dir, commits, toIdx, n]);
+
+  // tracking_id -> display name, so the AI-session contributors resolve to names
+  // (also used by the metadata search below).
+  const [sessNames, setSessNames] = useState<Record<string, string>>({});
+  const [todoMap, setTodoMap] = useState<Record<string, { title: string; status: string }>>({});
+
+  // Apply the file-list search to the delta (filename / metadata / contents).
+  const searchedDelta = useMemo(() => {
+    const q = fileSearch.trim().toLowerCase();
+    if (!q) return delta;
+    const out = new Map<string, Status>();
+    if (searchMode === 'content') {
+      if (!contentMatches) return delta;   // results pending → show all meanwhile
+      for (const [p, s] of delta) if (contentMatches.has(p)) out.set(p, s);
+      return out;
+    }
+    if (searchMode === 'name') {
+      for (const [p, s] of delta) if (p.toLowerCase().includes(q)) out.set(p, s);
+      return out;
+    }
+    // metadata: net status + the authors / AI-sessions / todos of the commits that touch each file
+    const lo = Math.max(0, Math.min(fromIdx, toIdx)), hi = Math.min(n - 1, Math.max(fromIdx, toIdx));
+    for (const [p, s] of delta) {
+      const parts: string[] = [STATUS_LABEL[s]];
+      for (let i = lo; i <= hi; i++) {
+        if (!commits[i].files.some((f) => f.path === p)) continue;
+        parts.push(commits[i].author);
+        (commits[i].requesters ?? []).forEach((r) => parts.push(sessNames[r] || r));
+        (commits[i].todos ?? []).forEach((t) => parts.push(t));
+      }
+      if (parts.join(' ').toLowerCase().includes(q)) out.set(p, s);
+    }
+    return out;
+  }, [delta, fileSearch, searchMode, contentMatches, commits, fromIdx, toIdx, n, sessNames]);
+
+  const tree = useMemo(() => buildTree(searchedDelta, data?.dir_rel ?? ''), [searchedDelta, data]);
 
   // Nearest commit index to a client X on the track.
   const idxFromClientX = useCallback((clientX: number): number => {
@@ -425,11 +487,14 @@ export default function GitFileViewPane({ tabId, dir: dirProp, since: sinceProp,
   const [diffLoading, setDiffLoading] = useState(false);
   // View toggle (#1): the unified diff, or the whole file BEFORE / AFTER the span.
   const [diffView, setDiffView] = useState<'diff' | 'before' | 'after'>(restored?.diffView ?? 'diff');
+  // File-view (diff) panel sizing: explicit px height (null = default 40%), a
+  // maximized flag (fills the Git File View), and the last non-max height so
+  // "restore previous" can return to it.
+  const [diffH, setDiffH] = useState<number | null>(restored?.diffHeight ?? null);
+  const [diffMax, setDiffMax] = useState<boolean>(restored?.diffMax ?? false);
+  const diffPrevH = useRef<number | null>(restored?.diffHeight ?? null);
   const [contentRes, setContentRes] = useState<{ content: string; exists: boolean; view: 'before' | 'after' } | null>(null);
   const [contentLoading, setContentLoading] = useState(false);
-  // tracking_id -> display name, so the AI-session contributors resolve to names.
-  const [sessNames, setSessNames] = useState<Record<string, string>>({});
-  const [todoMap, setTodoMap] = useState<Record<string, { title: string; status: string }>>({});
   useEffect(() => {
     let cancelled = false;
     window.uai.sessions.list().then((list) => {
@@ -511,14 +576,36 @@ export default function GitFileViewPane({ tabId, dir: dirProp, since: sinceProp,
     setCollapsed((prev) => { const s = new Set(prev); if (s.has(path)) s.delete(path); else s.add(path); return s; });
   }, []);
 
+  // ── File-view (diff) panel: manual vertical resize + maximize/restore/default ──
+  // Drag the handle above the panel: its height = pane bottom → cursor. Clamped to
+  // leave room for the controls + tree above.
+  const startDiffResize = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    const pane = paneRef.current; if (!pane) return;
+    const rect = pane.getBoundingClientRect();
+    document.body.style.cursor = 'row-resize'; document.body.style.userSelect = 'none';
+    const onMove = (ev: MouseEvent) => {
+      const h = Math.max(120, Math.min(rect.bottom - ev.clientY, rect.height - 160));
+      setDiffMax(false); setDiffH(h); diffPrevH.current = h;
+    };
+    const onUp = () => {
+      document.body.style.cursor = ''; document.body.style.userSelect = '';
+      window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mousemove', onMove); window.addEventListener('mouseup', onUp);
+  }, []);
+  const maximizeDiff = useCallback(() => { if (diffH != null) diffPrevH.current = diffH; setDiffMax(true); }, [diffH]);
+  const restorePrevDiff = useCallback(() => { setDiffMax(false); setDiffH(diffPrevH.current); }, []);
+  const defaultDiff = useCallback(() => { setDiffMax(false); setDiffH(null); diffPrevH.current = null; }, []);
+
   // Persist this tab's UI state on every change so it survives unmount (#6).
   useEffect(() => {
     if (embedded || !tabId) return;
     setGfvSnapshot(tabId, {
       dir, since, until, data, fromIdx, toIdx, lockSide, zoom, selPath, diffView, filter, barOpen,
-      collapsed: [...collapsed], expandedCommits: [...expandedCommits],
+      collapsed: [...collapsed], expandedCommits: [...expandedCommits], diffHeight: diffH, diffMax,
     });
-  }, [embedded, tabId, dir, since, until, data, fromIdx, toIdx, lockSide, zoom, selPath, diffView, filter, barOpen, collapsed, expandedCommits]);
+  }, [embedded, tabId, dir, since, until, data, fromIdx, toIdx, lockSide, zoom, selPath, diffView, filter, barOpen, collapsed, expandedCommits, diffH, diffMax]);
 
   // ── Render ─────────────────────────────────────────────────────────────────
   const totals = tree.counts;
@@ -595,8 +682,9 @@ export default function GitFileViewPane({ tabId, dir: dirProp, since: sinceProp,
     return rows;
   };
 
+  const maximized = diffMax && !!selPath;
   return (
-    <div className="gfv-pane">
+    <div className={`gfv-pane${maximized ? ' gfv-maximized' : ''}`} ref={paneRef}>
       {/* Scope bar (#5): the editable Repo / Dir / Date Range controls. Hideable —
           collapses to the slim "⚙ Scope" chip below. Suppressed entirely when the
           host locks scope (allowScopeChange=false). */}
@@ -628,8 +716,10 @@ export default function GitFileViewPane({ tabId, dir: dirProp, since: sinceProp,
             <span className="gfv-scopechip-dir">{data?.dir_rel || dir || '(root)'}</span>
             <span className="gfv-scopechip-range">{since || 'earliest'} → {until || 'latest'}</span>
             {filter && (
-              <span className="gfv-scopechip-filter" title={`filtered by ${filter.kind}: ${filter.value}`}>
-                ⧗ {filter.kind === 'ai' ? 'AI' : filter.kind}: {filter.kind === 'ai' ? (sessNames[filter.value] || filter.value.slice(0, 12)) : filter.value}
+              <span className="gfv-scopechip-filter" title={`filtered by ${filter.kind}`}>
+                ⧗ {filter.kind === 'todos'
+                  ? `${filter.values?.length ?? 0} todos`
+                  : `${filter.kind === 'ai' ? 'AI' : filter.kind}: ${filter.kind === 'ai' ? (sessNames[filter.value ?? ''] || (filter.value ?? '').slice(0, 12)) : (filter.value ?? '')}`}
               </span>
             )}
           </span>
@@ -711,17 +801,17 @@ export default function GitFileViewPane({ tabId, dir: dirProp, since: sinceProp,
           {canChange && barOpen && (
           <div className="gfv-filterbar">
             <span className="gfv-filter-lbl">Filter</span>
-            <select className="gfv-filter-sel" value={filter?.kind === 'author' ? filter.value : ''}
+            <select className="gfv-filter-sel" value={filter?.kind === 'author' ? (filter.value ?? '') : ''}
               onChange={(e) => setFilter(e.target.value ? { kind: 'author', value: e.target.value } : null)}>
               <option value="">Contributor…</option>
               {filterOpts.authors.map((a) => <option key={a} value={a}>{a}</option>)}
             </select>
-            <select className="gfv-filter-sel" value={filter?.kind === 'ai' ? filter.value : ''}
+            <select className="gfv-filter-sel" value={filter?.kind === 'ai' ? (filter.value ?? '') : ''}
               onChange={(e) => setFilter(e.target.value ? { kind: 'ai', value: e.target.value } : null)}>
               <option value="">AI session…</option>
               {filterOpts.ais.map((a) => <option key={a} value={a}>{sessNames[a] || a.slice(0, 15)}</option>)}
             </select>
-            <select className="gfv-filter-sel" value={filter?.kind === 'todo' ? filter.value : ''}
+            <select className="gfv-filter-sel" value={filter?.kind === 'todo' ? (filter.value ?? '') : ''}
               onChange={(e) => setFilter(e.target.value ? { kind: 'todo', value: e.target.value } : null)}>
               <option value="">Todo…</option>
               {filterOpts.todos.map((t) => <option key={t} value={t}>{t}</option>)}
@@ -731,11 +821,28 @@ export default function GitFileViewPane({ tabId, dir: dirProp, since: sinceProp,
           )}
 
           {/* main row: delta tree (left) + selected-file details (right, #4) */}
-          <div className="gfv-main">
-            <div className="gfv-tree">
-              {totals.A + totals.M + totals.D === 0
-                ? <div className="gfv-empty">No net changes between these commits.</div>
-                : renderNode(tree, 0)}
+          <div className="gfv-main" style={diffMax && selPath ? { display: 'none' } : undefined}>
+            <div className="gfv-listcol">
+              {/* file-list search: by filename / metadata / contents (contents greps
+                  the file content at the To commit via the backend). */}
+              <div className="gfv-filesearch">
+                <span className="gfv-filesearch-ic">🔍</span>
+                <input className="gfv-filesearch-input" value={fileSearch} onChange={(e) => setFileSearch(e.target.value)}
+                  placeholder={searchMode === 'content' ? 'Search file contents…' : searchMode === 'meta' ? 'Search author / AI / todo / status…' : 'Search filenames…'}
+                  spellCheck={false} />
+                <select className="gfv-filesearch-mode" value={searchMode} onChange={(e) => setSearchMode(e.target.value as 'name' | 'meta' | 'content')} title="What to search">
+                  <option value="name">Filename</option>
+                  <option value="meta">Metadata</option>
+                  <option value="content">Contents</option>
+                </select>
+                {searchMode === 'content' && searchGrepping && <span className="gfv-filesearch-busy">…</span>}
+                {fileSearch && <button className="gfv-filesearch-clear" onClick={() => setFileSearch('')} title="Clear search">✕</button>}
+              </div>
+              <div className="gfv-tree">
+                {totals.A + totals.M + totals.D === 0
+                  ? <div className="gfv-empty">{fileSearch.trim() ? 'No files match this search.' : 'No net changes between these commits.'}</div>
+                  : renderNode(tree, 0)}
+              </div>
             </div>
             {selPath && fileDetail && (
               <div className="gfv-detail">
@@ -788,9 +895,12 @@ export default function GitFileViewPane({ tabId, dir: dirProp, since: sinceProp,
             )}
           </div>
 
+          {/* drag handle to resize the file-view panel (hidden when maximized) */}
+          {selPath && !diffMax && <div className="gfv-vresize" onMouseDown={startDiffResize} title="Drag to resize the file view" />}
+
           {/* bottom: unified diff of the selected file across [From..To] (#3) */}
           {selPath && (
-            <div className="gfv-diff">
+            <div className="gfv-diff" style={diffMax ? { flex: '1 1 auto', height: 'auto' } : (diffH != null ? { flex: 'none', height: diffH } : undefined)}>
               <div className="gfv-diff-head">
                 {/* #1: view toggle sits all the way left; filename follows. */}
                 <div className="gfv-diff-views">
@@ -801,6 +911,12 @@ export default function GitFileViewPane({ tabId, dir: dirProp, since: sinceProp,
                 <span className="gfv-diff-file">{selPath.split('/').pop()}</span>
                 <span className="gfv-diff-span">{diffView === 'diff' ? `diff · ${fromC?.short} → ${toC?.short}` : diffView === 'before' ? `before · ${fromC?.short}^` : `after · ${toC?.short}`}</span>
                 {(diffLoading || contentLoading) && <span className="gfv-diff-loading">loading…</span>}
+                {/* file-view size controls: maximize within the pane / restore previous / default */}
+                <div className="gfv-diff-size">
+                  <button className={`gfv-diff-sizebtn${diffMax ? ' active' : ''}`} onClick={maximizeDiff} disabled={diffMax} title="Maximize the file view to fill the Git File View">⤢ Maximize</button>
+                  <button className="gfv-diff-sizebtn" onClick={restorePrevDiff} title="Restore the previous size">⤡ Restore</button>
+                  <button className="gfv-diff-sizebtn" onClick={defaultDiff} title="Reset to the default size">⭯ Default</button>
+                </div>
               </div>
               <div className="gfv-diff-body">
                 {diffView === 'diff' ? (

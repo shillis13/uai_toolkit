@@ -22,20 +22,28 @@ import ProjectFolderTree, { type FsEntry } from './ProjectFolderTree';
 import ProjectCommsDetail, { useProjectConversations, formatTime, type Conversation } from './ProjectComms';
 import ProjectTeamDetail, { TeamMemberPanel } from './ProjectTeam';
 import TodoItemView from './TodoItemView';
+import GitFileViewPane from './GitFileViewPane';
 import { executeCommand } from '../utils/execute-command';
 
-type AspectKey = 'overview' | 'work' | 'team' | 'comms' | 'files';
+type AspectKey = 'overview' | 'work' | 'team' | 'comms' | 'files' | 'docs';
 type WorkerKind = 'project' | 'team' | 'session';
 
 interface AspectDef { key: AspectKey; label: string; icon: string; }
-// Panel order (todo_0418): Overview · Team · Comms · Files · Work List.
-// (Files aspect content is git-derived — todo_0417.)
+// isProject inversion: a worker is a TEAM by default — the base aspects below are
+// what any Team (and Project) has. Being a Project (isProject) UNLOCKS the extra
+// PROJECT_ASPECTS on top (Docs today; Board/DevTree later). Panel order (todo_0418):
+// Overview · Team · Comms · Files · Work List; Docs slots in before Work List.
 const ASPECTS: AspectDef[] = [
   { key: 'overview', label: 'Overview', icon: '◉' },
   { key: 'team', label: 'Team', icon: '👥' },
   { key: 'comms', label: 'Comms', icon: '💬' },
   { key: 'files', label: 'Files', icon: '📁' },
   { key: 'work', label: 'Work List', icon: '☑' },
+];
+// Project-only aspects — only surfaced when isProject (a Team never has a working_dir,
+// so Docs is meaningless for it). This is the "Project unlocks more than a Team".
+const PROJECT_ASPECTS: AspectDef[] = [
+  { key: 'docs', label: 'Docs', icon: '📄' },
 ];
 
 interface TodoItem { id?: string; name: string; dirName: string; path: string; status: string; tags: string[]; flags: string[]; assigned?: string[]; project?: string | null; }
@@ -80,31 +88,31 @@ const statusLabelPE = (s: string) => (s || '').replace(/_/g, ' ');
 // worker's (non-archived) todos, via the `Todo:` commit trailer. Leaf view — no
 // sub-item list; click a file to open it. Git = ground-truth change history.
 export function WorkerFilesView({ todoIds }: { todoIds: string[] }): JSX.Element {
-  const [files, setFiles] = useState<string[] | null>(null);
-  const key = todoIds.slice().sort().join(',');
-  useEffect(() => {
-    let alive = true;
-    setFiles(null);
-    if (!todoIds.length) { setFiles([]); return; }
-    (window.uai as any).git.filesForTodos(todoIds)
-      .then((f: string[]) => { if (alive) setFiles(f); })
-      .catch(() => { if (alive) setFiles([]); });
-    return () => { alive = false; };
-  }, [key]);   // eslint-disable-line react-hooks/exhaustive-deps
+  // The worker-wide Files view = the full Git File View (timeline, diff, before/
+  // after, per-file attribution) scoped to the UNION of this worker's todos, via
+  // the `Todo:` commit trailer. Normalize to leaf ids (todo_NNNN) — the trailer
+  // form the Git File View filters on. Empty (data sparsity) → a clear note; never
+  // broaden the filter to fake-populate.
+  const leafIds = useMemo(() => {
+    const s = new Set<string>();
+    for (const id of todoIds) { const m = (id || '').match(/todo_\d+/g); if (m) s.add(m[m.length - 1]); }
+    return [...s];
+  }, [todoIds]);
+  // The `Todo:` trailer discipline is recent, so a ~180-day window captures a
+  // worker's todo-attributed commits without loading the whole repo history.
+  const since = useMemo(() => new Date(Date.now() - 180 * 86400000).toISOString().slice(0, 10), []);
+  const gitFilter = useMemo(() => ({ kind: 'todos' as const, values: leafIds }), [leafIds]);
+  if (leafIds.length === 0) {
+    return (
+      <div className="pe-detail-body pe-files">
+        <div className="pe-note">No todos assigned to this worker yet — nothing to show. (Files are attributed via the <code>Todo:</code> commit trailer.)</div>
+      </div>
+    );
+  }
   return (
-    <div className="pe-detail-body pe-files">
-      <div className="pe-section-label">Files &nbsp;<span className="pe-files-sub">git-tracked changes across this worker's {todoIds.length} active todo{todoIds.length === 1 ? '' : 's'}</span></div>
-      {files === null && <div className="pe-note">Reading git history…</div>}
-      {files !== null && files.length === 0 && <div className="pe-note">No git-attributed file changes yet. (Files are attributed via the <code>Todo:</code> commit trailer — coverage grows as todo-tagged commits land.)</div>}
-      {files && files.length > 0 && (
-        <div className="pe-files-list">
-          {files.map(f => (
-            <div key={f} className="pe-file-row" onClick={() => window.uai.openPath?.(f)} title="Open">
-              <span className="pe-file-ic">📄</span><span className="pe-file-path">{f}</span>
-            </div>
-          ))}
-        </div>
-      )}
+    <div className="pe-files-git">
+      <GitFileViewPane embedded showScopeBar={false} allowScopeChange={false}
+        dir="ai_general" since={since} filter={gitFilter} />
     </div>
   );
 }
@@ -269,8 +277,18 @@ interface ProjectEditorProps {
 
 export default function ProjectEditor({ project, session, sessions = [] }: ProjectEditorProps): JSX.Element {
   const kind: WorkerKind = session ? 'session' : (project?.tags.includes('team') ? 'team' : 'project');
-  // a session worker has no Team aspect
-  const aspects = useMemo(() => kind === 'session' ? ASPECTS.filter(a => a.key !== 'team') : ASPECTS, [kind]);
+  // isProject inversion: Team is the base worker; only a genuine Project unlocks the
+  // Project-only aspects (Docs, …). (Discriminant still reads the registry type via
+  // the tag today; a future step can make isProject a first-class registry field.)
+  const isProject = kind === 'project';
+  const aspects = useMemo(() => {
+    // Base = a Team's aspects; a session worker also drops the Team aspect.
+    const base = kind === 'session' ? ASPECTS.filter(a => a.key !== 'team') : ASPECTS;
+    if (!isProject) return base;
+    // Project unlocks the extra aspects — insert them just before Work List.
+    const i = base.findIndex(a => a.key === 'work');
+    return i < 0 ? [...base, ...PROJECT_ASPECTS] : [...base.slice(0, i), ...PROJECT_ASPECTS, ...base.slice(i)];
+  }, [kind, isProject]);
   const [sel, setSel] = useState<Selection>({ aspect: kind === 'team' ? 'team' : 'overview', itemId: null });
   const [navCollapsed, setNavCollapsed] = useState(false); // collapse the active aspect's nav items on re-click (#pt1)
   const [selectedFile, setSelectedFile] = useState<FsEntry | null>(null);
@@ -347,6 +365,26 @@ export default function ProjectEditor({ project, session, sessions = [] }: Proje
   const openSession = (trackingId: string) =>
     executeCommand('workspace.tabs.open', { type: 'session', targetId: trackingId });
 
+  // "Delete" == HIDE (todo_0532). Flips a visibility flag; NEVER deletes/moves any
+  // files or directories. Reversible (restore via CLI: projects_mgr/teams_mgr
+  // `update <id> --hidden false`). Confirm makes the non-destructive nature explicit.
+  const [hiding, setHiding] = useState(false);
+  const hideWorker = useCallback(() => {
+    if (!project) return;
+    const name = project.display_name;
+    const ok = window.confirm(
+      `Hide "${name}" from the workspace?\n\nThis does NOT delete any files or directories — it only hides ${kind === 'team' ? 'the team' : 'the project'} from the lists. You can restore it later.`,
+    );
+    if (!ok) return;
+    setHiding(true);
+    const id = String(project.entity_id || project.project_id || '').replace(/^(project|team):/, '');
+    executeCommand(kind === 'team' ? 'team.setHidden' : 'project.setHidden', {
+      id,
+      hidden: true,
+      sourcePath: project.source_path,
+    }).finally(() => setHiding(false));
+  }, [project, kind]);
+
   const selectedSession = sel.aspect === 'team' && sel.itemId
     ? roster.find(s => s.tracking_id === sel.itemId) || null
     : null;
@@ -364,6 +402,16 @@ export default function ProjectEditor({ project, session, sessions = [] }: Proje
         <span className="pe-crumb-aspect">{aspects.find(a => a.key === sel.aspect)?.label}</span>
         <span className="pe-titlebar-spacer" />
         <span className="pe-titlebar-status">{statusLine}</span>
+        {project && (
+          <button
+            className="pe-titlebar-delete"
+            title={`Hide this ${kind === 'team' ? 'team' : 'project'} from the workspace (does not delete any files)`}
+            disabled={hiding}
+            onClick={hideWorker}
+          >
+            {hiding ? 'Hiding…' : 'Delete'}
+          </button>
+        )}
       </div>
 
       <div className="pe-grid" style={{ gridTemplateColumns: `${navW}px 6px 1fr 6px ${rightW}px` }}>
@@ -374,12 +422,12 @@ export default function ProjectEditor({ project, session, sessions = [] }: Proje
             <div key={a.key}>
               <div
                 className={`pe-aspect${sel.aspect === a.key ? ' on' : ''}`}
-                onClick={() => { if (a.key === 'overview' || a.key === 'files') { setAspect(a.key); } else if (sel.aspect === a.key) setNavCollapsed(c => !c); else { setAspect(a.key); setNavCollapsed(false); } }}
+                onClick={() => { if (a.key === 'overview' || a.key === 'files' || a.key === 'docs') { setAspect(a.key); } else if (sel.aspect === a.key) setNavCollapsed(c => !c); else { setAspect(a.key); setNavCollapsed(false); } }}
               >
                 <span className="pe-aspect-ic">{a.icon}</span>{a.label}
-                {sel.aspect === a.key && a.key !== 'overview' && a.key !== 'files' && <span className="pe-aspect-chev">{navCollapsed ? '▸' : '▾'}</span>}
+                {sel.aspect === a.key && a.key !== 'overview' && a.key !== 'files' && a.key !== 'docs' && <span className="pe-aspect-chev">{navCollapsed ? '▸' : '▾'}</span>}
               </div>
-              {sel.aspect === a.key && !navCollapsed && a.key !== 'overview' && a.key !== 'files' && (
+              {sel.aspect === a.key && !navCollapsed && a.key !== 'overview' && a.key !== 'files' && a.key !== 'docs' && (
                 <NavItems
                   aspect={a.key}
                   todos={visibleTodos}
@@ -409,6 +457,7 @@ export default function ProjectEditor({ project, session, sessions = [] }: Proje
                     onSelectFile={setSelectedFile}
                     onGotoTeam={() => setAspect('team')}
                     workSummary={<VitalSignsBar todos={visibleTodos} />}
+                    showDocs={false}
                   />}
             </div>
           )}
@@ -440,6 +489,14 @@ export default function ProjectEditor({ project, session, sessions = [] }: Proje
           )}
           {sel.aspect === 'files' && (
             <WorkerFilesView todoIds={visibleTodos.map(t => (t.id || t.dirName)).filter(Boolean) as string[]} />
+          )}
+          {/* Docs — Project-only aspect (isProject unlock): the working_dir/docs tree. */}
+          {sel.aspect === 'docs' && (
+            <div className="pe-detail-body">
+              {project?.working_dir
+                ? <ProjectFolderTree rootPath={`${project.working_dir}/docs`} selectedPath={selectedFile?.path} onSelectFile={setSelectedFile} />
+                : <div className="pe-note">No working directory on this project.</div>}
+            </div>
           )}
         </section>
 

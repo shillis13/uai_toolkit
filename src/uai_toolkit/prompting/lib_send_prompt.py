@@ -40,12 +40,16 @@ SESSION_PATTERNS: dict[str, str] = {
     "claude-cli": r"(^(cli_task_|claude_cli_)|_cla$)",
     "codex-cli": r"(^codex_|_cod$)",
     "gemini-cli": r"(^gemini_|_gem$)",
+    "grok-cli": r"_grk$",
+    "antigravity-cli": r"_agy$",
 }
 
 PLATFORM_MAP: dict[str, str] = {
     "claude-cli": "claude_cli",
     "codex-cli": "codex_cli",
     "gemini-cli": "gemini_cli",
+    "grok-cli": "grok_cli",
+    "antigravity-cli": "antigravity_cli",
 }
 
 

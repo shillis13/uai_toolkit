@@ -275,13 +275,13 @@ export default function SessionStoreMgrPane({ tabId, initialSession, initialSubT
                 ))}
               </div>
               <div className="sess-store-platform-filters">
-                {(['all', 'claude_cli', 'codex_cli', 'gemini_cli'] as PlatformFilter[]).map(f => (
+                {(['all', 'claude_cli', 'codex_cli'] as PlatformFilter[]).map(f => (
                   <button
                     key={f}
                     className={`traits-mgr-tab-btn sess-store-plat-btn${platformFilter === f ? ' active' : ''}`}
                     onClick={() => setPlatformFilter(f)}
                   >
-                    {f === 'all' ? 'All' : f === 'claude_cli' ? 'Claude' : f === 'codex_cli' ? 'Codex' : 'Gemini'}
+                    {f === 'all' ? 'All' : f === 'claude_cli' ? 'Claude' : 'Codex'}
                   </button>
                 ))}
               </div>

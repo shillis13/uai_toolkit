@@ -6,10 +6,10 @@ metadata:
   title: Memory Slot Schema
   version: 1.1.0
   created: 2026-01-13
-  maintainer: Claude Desktop
+  maintainer: Librarian CLI agent
   purpose: |
     Standard structure for memory slot files. All slots use this format
-    to ensure consistent parsing by Memory MCP and cross-AI tooling.
+    to ensure consistent parsing by the knowledge MCP memory tools and cross-AI tooling.
 
 structure:
   type: object
@@ -35,8 +35,8 @@ structure:
     
     observations:
       description: |
-        Time-series observations. Memory MCP appends here.
-        Newest entries at end (chronological order).
+        Time-series observations. The knowledge MCP memory tools append here
+        (knowledge_memory_append). Newest entries at end (chronological order).
       type: array
       items:
         type: object
@@ -55,7 +55,7 @@ example:
     slot: 6
     name: current_context
     last_updated: 2026-03-16T05:40:00Z
-    updated_by: Claude Desktop
+    updated_by: Claude Code
   
   reference:
     active_projects:
@@ -77,8 +77,8 @@ notes:
     - Empty slots (08, 09): Add minimal structure
   
   mcp_behavior: |
-    Memory MCP operations:
-    - append: Adds to observations[] with auto-timestamp
-    - read: Returns observations[] (optionally with reference)
-    - search: Searches observations[].content
-    - update/delete: Operates on observations[] by index
+    knowledge MCP memory tools (operate on a slot number, append-only by default):
+    - knowledge_memory_append: Adds to observations[] with auto-timestamp
+    - knowledge_memory_read: Returns observations[] (optionally with reference)
+    - knowledge_memory_search: Searches observations[].content
+    - knowledge_memory_update / knowledge_memory_delete: Operate on observations[] by index

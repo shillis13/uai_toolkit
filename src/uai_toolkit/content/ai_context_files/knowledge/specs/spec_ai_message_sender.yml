@@ -1,24 +1,23 @@
 meta: {v: 1.1.0, created: 2025-11-01, author: PianoMan, status: production}
-location: ~/bin/projects/chat_orchestrators/send_ai_message.sh
+location: comms MCP (mcp__comms) — backed by messaging scripts under ai_comms/
 
-summary: Universal mechanism to send messages to AI desktop apps (Claude, ChatGPT) via AppleScript. Enables notifications, scheduled prompts, CLI alerts, cross-AI comms.
+summary: Universal mechanism to deliver messages/prompts to CLI AI sessions (Claude Code, Codex CLI) via the comms MCP. Enables notifications, scheduled prompts, CLI alerts, cross-AI comms.
 
 interface:
-  command: "send_ai_message.sh <app> <message>"
+  tools: [comms_send_prompt, comms_message]
   params:
-    app: {type: string, required: yes, values: [claude, chatgpt]}
+    recipient: {type: string, required: yes, note: "target session id / name"}
     message: {type: string, required: yes, note: "can be multi-line"}
   returns: {0: success, 1: error}
 
 behavior:
-  activation: activates app, brings to foreground, 1s delay
-  input: keystroke simulation via AppleScript to active conversation
-  timing: {activation: 1.0s, typing: 0.5s, total_min: ~1.5s}
-  targeting: sends to currently active/open conversation
-  concurrency: not thread-safe, serialize with lock/queue
+  delivery: enqueues/injects the prompt into the target session via the comms bus
+  input: written to the recipient session's prompt queue (no keystroke simulation)
+  targeting: addressed by session id / name, not by active window focus
+  concurrency: bus-serialized; safe for concurrent senders
 
 use_cases: [system notifications, CLI completion alerts, scheduled prompts, cross-AI comms, async collaboration]
 
-limitations: [no response reading, no URL targeting, no retry, single-threaded, requires app focus]
+limitations: [delivery is fire-and-forget unless a wait/response tool is used, recipient must be a registered session]
 
-related: [CLI Coordination Protocol v3.1, Chat Orchestrator (Puppeteer), Desktop Claude Prompt Sender v2.0]
+related: [CLI Coordination Protocol, comms MCP scheduled prompts, session prompt delivery]

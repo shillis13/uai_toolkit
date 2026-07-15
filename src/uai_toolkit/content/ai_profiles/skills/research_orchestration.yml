@@ -2,7 +2,10 @@ metadata:
   name: research-orchestration
   version: 1.0.0
   created: 2026-04-16
-  status: active
+  status: retired
+  retired_note: 'RETIRED 2026-07-12 — Gemini discontinued. This skill was built entirely
+    on Gemini search-shard dispatch, which is no longer available. Use knowledge_search
+    / knowledge_grep_search directly for archive lookups.'
   description: 'Orchestrate research across the AI conversation archive (~50MB, ~14M
     tokens, 4+ years). Formulate queries, dispatch to Gemini search shards, collect
     results, synthesize findings, and optionally validate claims.
@@ -24,8 +27,6 @@ trigger:
 context_files:
   processes:
   - ai_context_files/instructions/how_tos/playbooks/playbook_research_orchestration
-  methods:
-  - ai_context_files/instructions/how_tos/instr_search_agent
 tools:
   knowledge_search:
     description: Search the conversation archive
@@ -111,7 +112,7 @@ workflow:
 _registry:
   id: research_orchestration
   name: research-orchestration
-  status: active
+  status: retired
   version: 1.0.0
   created: '2026-04-16'
-  updated: '2026-04-16'
+  updated: '2026-07-12'

@@ -304,7 +304,6 @@ export default function TabManagerPane(_props: { tabId?: string }): JSX.Element 
               ) : (
                 <span className="tabmgr-row-name" style={{ color }}>{t.label}</span>
               )}
-              {isActive && !isRenaming && <span className="tabmgr-active-badge" title="Active tab">active</span>}
               {!isRenaming && (
                 <div className="tabmgr-controls">
                   <button className="tabmgr-row-rename" onClick={(e) => { e.stopPropagation(); startRename(t); }} title="Rename tab">✎</button>
@@ -314,6 +313,9 @@ export default function TabManagerPane(_props: { tabId?: string }): JSX.Element 
                 </div>
               )}
               <span className="tabmgr-spacer" />
+              {/* Active indicator sits at the FAR RIGHT (after the spacer) so it never
+                  shifts the Open/Close controls above. */}
+              {isActive && !isRenaming && <span className="tabmgr-active-badge" title="Active tab">active</span>}
             </div>
           );
         })}

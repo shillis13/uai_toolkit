@@ -23,6 +23,9 @@ import PromptBox from './PromptBox';
 import ContextPanel from './ContextPanel';
 import TranscriptViewer from './TranscriptViewer';
 import { CardListView } from './cards';
+import { folderAccent } from './folders/folderAccent';
+import { marked } from 'marked';
+import DOMPurify from 'dompurify';
 import ProjectDetailView from './ProjectDetailView';
 import ProjectEditor from './ProjectEditor';
 import SessionWorkView from './SessionWorkView';
@@ -42,6 +45,7 @@ import WorkMgrPane from './WorkMgrPane';
 import LiveBoardPane from './LiveBoardPane';
 import NotesManagerPane from './NotesManagerPane';
 import TabManagerPane from './TabManagerPane';
+import AiFeedPane from './AiFeedPane';
 import GitViewerPane from './GitViewerPane';
 import UserMessagesPane from './UserMessagesPane';
 
@@ -260,15 +264,11 @@ function InlineFilterPills({ filter, onFilterChange }: {
   return (
     <>
       {activeCount > 0 && <button className="filter-pill filter-pill-clear" onClick={() => onFilterChange(DEFAULT_FOLDER_FILTER)}>{'\u2715'}</button>}
-      <button className={`filter-pill${filter.entityTypes.has('session') ? ' active' : ''}`} onClick={() => toggle('entityTypes', 'session')}>Session</button>
-      <button className={`filter-pill${filter.entityTypes.has('project') ? ' active' : ''}`} onClick={() => toggle('entityTypes', 'project')}>Project</button>
-      <span className="filter-drawer-sep">|</span>
       <button className={`filter-pill${filter.status.has('running') ? ' active' : ''}`} onClick={() => toggle('status', 'running')}>Active</button>
       <button className={`filter-pill${filter.status.has('stopped') ? ' active' : ''}`} onClick={() => toggle('status', 'stopped')}>Stopped</button>
       <span className="filter-drawer-sep">|</span>
       <button className={`filter-pill platform-claude${filter.platform.has('claude_cli') ? ' active' : ''}`} onClick={() => toggle('platform', 'claude_cli')}>Claude</button>
       <button className={`filter-pill platform-codex${filter.platform.has('codex_cli') ? ' active' : ''}`} onClick={() => toggle('platform', 'codex_cli')}>Codex</button>
-      <button className={`filter-pill platform-gemini${filter.platform.has('gemini_cli') ? ' active' : ''}`} onClick={() => toggle('platform', 'gemini_cli')}>Gemini</button>
       <span className="filter-drawer-sep">|</span>
       <select
         className="filter-drawer-date-field"
@@ -347,15 +347,11 @@ function FolderFilterDrawer({ filter, onFilterChange, availableTags }: {
         {activeFilterCount > 0 && (
           <button className="filter-pill filter-pill-clear" onClick={clearAllFilters}>Clear ({activeFilterCount})</button>
         )}
-        <button className={`filter-pill${filter.entityTypes.has('session') ? ' active' : ''}`} onClick={() => toggleFilter('entityTypes', 'session')}>Session</button>
-        <button className={`filter-pill${filter.entityTypes.has('project') ? ' active' : ''}`} onClick={() => toggleFilter('entityTypes', 'project')}>Project</button>
-        <span className="filter-drawer-sep">|</span>
         <button className={`filter-pill${filter.status.has('running') ? ' active' : ''}`} onClick={() => toggleFilter('status', 'running')}>Active</button>
         <button className={`filter-pill${filter.status.has('stopped') ? ' active' : ''}`} onClick={() => toggleFilter('status', 'stopped')}>Stopped</button>
         <span className="filter-drawer-sep">|</span>
         <button className={`filter-pill platform-claude${filter.platform.has('claude_cli') ? ' active' : ''}`} onClick={() => toggleFilter('platform', 'claude_cli')}>Claude</button>
         <button className={`filter-pill platform-codex${filter.platform.has('codex_cli') ? ' active' : ''}`} onClick={() => toggleFilter('platform', 'codex_cli')}>Codex</button>
-        <button className={`filter-pill platform-gemini${filter.platform.has('gemini_cli') ? ' active' : ''}`} onClick={() => toggleFilter('platform', 'gemini_cli')}>Gemini</button>
         <span className="filter-drawer-sep">|</span>
         <button
           ref={dateBtnRef}
@@ -537,6 +533,8 @@ const PLATFORM_LABELS: Record<string, string> = {
   claude_cli: 'Claude',
   codex_cli: 'Codex',
   gemini_cli: 'Gemini',
+  grok_cli: 'Grok',
+  antigravity_cli: 'Antigravity',
 };
 
 // ─── New Session Card ────────────────────────────────────────────────────
@@ -576,9 +574,13 @@ function NewSessionCard({ onCreateSession }: { onCreateSession: (platform: strin
             onClick={(e: ReactMouseEvent) => { e.stopPropagation(); setShowPicker(false); onCreateSession('codex_cli'); }}
           >Codex</button>
           <button
-            className="new-session-picker-btn gemini"
-            onClick={(e: ReactMouseEvent) => { e.stopPropagation(); setShowPicker(false); onCreateSession('gemini_cli'); }}
-          >Gemini</button>
+            className="new-session-picker-btn grok"
+            onClick={(e: ReactMouseEvent) => { e.stopPropagation(); setShowPicker(false); onCreateSession('grok_cli'); }}
+          >Grok</button>
+          <button
+            className="new-session-picker-btn antigravity"
+            onClick={(e: ReactMouseEvent) => { e.stopPropagation(); setShowPicker(false); onCreateSession('antigravity_cli'); }}
+          >Antigravity</button>
         </div>
       )}
     </div>
@@ -607,15 +609,16 @@ function NewFolderCard({ parentId }: { parentId: string }): JSX.Element {
 
 // ─── Collapsible Section ──────────────────────────────────────────────────
 
-function FolderSection({ title, count, collapsed, onToggle, children }: {
+function FolderSection({ title, count, collapsed, onToggle, color, children }: {
   title: string;
   count: number;
   collapsed: boolean;
   onToggle: () => void;
+  color?: string;              // section accent (CSS color); drives --sc
   children: React.ReactNode;
 }): JSX.Element {
   return (
-    <div className="folder-section">
+    <div className="folder-section" style={color ? ({ ['--sc' as string]: color } as React.CSSProperties) : undefined}>
       <div className="folder-section-header" onClick={onToggle}>
         <span className="folder-section-chevron">{collapsed ? '\u25B6' : '\u25BC'}</span>
         <span className="folder-section-title">{title}</span>
@@ -798,13 +801,18 @@ function FolderContent({ tab }: { tab: Tab }): JSX.Element {
       {filterDrawerOpen && (() => {
         const r = filterBtnRef.current?.getBoundingClientRect();
         const top = r ? r.bottom + 4 : 80;
-        // Right-align to the button, but keep a margin from the window edge.
-        const right = r ? Math.max(8, window.innerWidth - r.right) : 8;
+        // Open to the RIGHT from the Filters button: anchor the panel's LEFT edge
+        // to the button so it grows rightward/downward, not leftward across the
+        // left panel. Clamp so the fixed-width panel never runs off the window.
+        const PANEL_W = 300;
+        const left = r
+          ? Math.max(8, Math.min(r.left, window.innerWidth - PANEL_W - 8))
+          : 8;
         return createPortal(
           <div
             ref={filterPopoverRef}
             className="filter-drawer-popover"
-            style={{ position: 'fixed', top, right, zIndex: 10000 }}
+            style={{ position: 'fixed', top, left, width: PANEL_W, zIndex: 10000 }}
           >
             <InlineFilterPills filter={sessionFilter} onFilterChange={setSessionFilter} />
           </div>,
@@ -819,6 +827,7 @@ function FolderContent({ tab }: { tab: Tab }): JSX.Element {
             count={subfolders.length}
             collapsed={collapsedSections.has('subfolders')}
             onToggle={() => toggleSection('subfolders')}
+            color="var(--accent-blue)"
           >
             <div className={viewMode === 'grid' ? 'folder-section-grid' : 'folder-section-list'}>
               <NewFolderCard parentId={tab.targetId} />
@@ -826,16 +835,20 @@ function FolderContent({ tab }: { tab: Tab }): JSX.Element {
                 const sub = getContainer(subId);
                 if (!sub) return null;
                 const subCards = getCardsInContainer(subId);
+                const fc = folderAccent(sub);
                 return (
                   <div
                     key={subId}
                     className="session-card subfolder-card"
+                    style={{ ['--fc' as string]: fc } as React.CSSProperties}
                     onClick={() => executeCommand('workspace.tabs.open', { type: 'folder', targetId: subId, label: sub.name })}
                     title={`${sub.name} \u2014 ${subCards.length} items`}
                   >
                     <div className="card-content">
                       <div className="card-header">
-                        <span className="subfolder-icon">{'\uD83D\uDCC1'}</span>
+                        <span className="subfolder-icon">
+                          {sub.icon || <span className="folder-tree-swatch" aria-hidden="true" />}
+                        </span>
                         <span className="card-name">{sub.name}</span>
                         <span className="subfolder-count">{subCards.length}</span>
                       </div>
@@ -853,6 +866,7 @@ function FolderContent({ tab }: { tab: Tab }): JSX.Element {
           count={sorted.length}
           collapsed={collapsedSections.has('direct')}
           onToggle={() => toggleSection('direct')}
+          color="var(--accent-green)"
         >
           <div className={viewMode === 'grid' ? 'folder-section-grid' : 'folder-section-list'}>
             {viewMode === 'grid' && !filterText && (
@@ -876,6 +890,7 @@ function FolderContent({ tab }: { tab: Tab }): JSX.Element {
             count={descSorted.length}
             collapsed={collapsedSections.has('descendants')}
             onToggle={() => toggleSection('descendants')}
+            color="var(--accent-purple)"
           >
             <CardListView
               cards={descSorted}
@@ -902,6 +917,71 @@ function FolderContent({ tab }: { tab: Tab }): JSX.Element {
 
 function TerminalContent({ tab }: { tab: Tab }): JSX.Element {
   return <StandaloneTerminal tabId={tab.id} />;
+}
+
+// Markdown document tab — renders a .md file's content formatted, in-app, rather
+// than shelling out to an external editor. targetId is the absolute file path.
+// HTML is sanitized with DOMPurify (same pipeline as ContextMgrPane/TranscriptViewer).
+function MarkdownContent({ tab }: { tab: Tab }): JSX.Element {
+  const filePath = tab.targetId;
+  const [state, setState] = useState<{ loading: boolean; content: string; error: string | null; truncated: boolean }>(
+    { loading: true, content: '', error: null, truncated: false }
+  );
+
+  useViewport('markdown_view', () => ({
+    visible: true,
+    label: `doc: ${tab.label}`,
+    state: { path: filePath },
+    children: [],
+  }));
+
+  useEffect(() => {
+    let cancelled = false;
+    setState(s => ({ ...s, loading: true, error: null }));
+    window.uai.fs.readFile(filePath)
+      .then(r => {
+        if (cancelled) return;
+        if (r.ok) setState({ loading: false, content: r.content || '', error: null, truncated: !!r.truncated });
+        else setState({ loading: false, content: '', error: r.error || 'Failed to read file', truncated: false });
+      })
+      .catch(e => { if (!cancelled) setState({ loading: false, content: '', error: String(e), truncated: false }); });
+    return () => { cancelled = true; };
+  }, [filePath]);
+
+  // Sanitized via DOMPurify — no untrusted HTML reaches the DOM.
+  const safeHtml = useMemo(() => {
+    try {
+      const r = marked.parse(state.content);
+      return DOMPurify.sanitize(typeof r === 'string' ? r : String(r));
+    } catch { return DOMPurify.sanitize(state.content); }
+  }, [state.content]);
+
+  if (state.loading) return <div className="workspace-placeholder"><p>Loading…</p></div>;
+  if (state.error) {
+    return (
+      <div className="workspace-placeholder">
+        <h3>Cannot open file</h3>
+        <p>{filePath}</p>
+        <p style={{ color: 'var(--accent-red)' }}>{state.error}</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="markdown-doc-view">
+      <div className="markdown-doc-header">
+        <span className="markdown-doc-title" title={filePath}>{tab.label}</span>
+        <button
+          className="markdown-doc-openext"
+          onClick={() => window.uai.openPath(filePath)}
+          title="Open in the system default application"
+        >{'Open in Ext App ↗'}</button>
+      </div>
+      {state.truncated && <div className="markdown-doc-truncated">{'⚠'} Large file — showing the first 5 MB.</div>}
+      {/* eslint-disable-next-line react/no-danger -- content sanitized by DOMPurify above */}
+      <div className="context-mgr-md markdown-doc-body" dangerouslySetInnerHTML={{ __html: safeHtml }} />
+    </div>
+  );
 }
 
 function BriefContent({ tab }: { tab: Tab }): JSX.Element {
@@ -1643,6 +1723,7 @@ function SearchContent({ tab }: { tab: Tab }): JSX.Element {
           return (
             <div
               key={s.tracking_id}
+              data-copyrow
               className={`sp-session-card ${platformCls ? `sp-platform-${platformCls}` : ''}`}
               onClick={() => executeCommand('workspace.tabs.open', { type: 'session', targetId: s.tracking_id, label: s.display_name || s.tracking_id })}
             >
@@ -1661,6 +1742,7 @@ function SearchContent({ tab }: { tab: Tab }): JSX.Element {
         {scope === 'transcripts' && viewMode === 'flat' && flatMatches.map((match, idx) => (
           <div
             key={`flat-${idx}`}
+            data-copyrow
             className="sp-match-line sp-flat-match"
             onClick={() => handleMatchClick(match.sessionId, match.lineNumber)}
           >
@@ -1706,6 +1788,7 @@ function SearchContent({ tab }: { tab: Tab }): JSX.Element {
                 {visibleMatches.map((match, idx) => (
                   <div
                     key={idx}
+                    data-copyrow
                     className="sp-match-line"
                     onClick={() => handleMatchClick(group.sessionId, match.lineNumber)}
                   >
@@ -1826,6 +1909,7 @@ const APP_VIEWPORT_IDS: Record<string, string> = {
   'tab-manager': 'tab_manager',
   'git-file-view': 'git_file_view',
   'context-manager': 'context_manager',
+  'ai-feed': 'ai_feed',
 };
 
 // App-tab content wrapper — registers the center-pane `entity_view` node and
@@ -1863,6 +1947,8 @@ function AppContent({ tab }: { tab: Tab }): JSX.Element {
       return <TabManagerPane tabId={tab.id} />;
     case 'git-file-view':
       return <GitViewerPane tabId={tab.id} />;
+    case 'ai-feed':
+      return <AiFeedPane />;
     case 'context-manager':
     default:
       return <ContextMgrPane tabId={tab.id} deepLinkId={tab.deepLinkId} />;
@@ -1879,6 +1965,8 @@ export default function TabContentPane({ tab, memorexEnabled, transcriptOpen, on
       return <TerminalContent tab={tab} />;
     case 'brief':
       return <BriefContent tab={tab} />;
+    case 'markdown':
+      return <MarkdownContent tab={tab} />;
     case 'transcript':
       // Legacy — transcript tabs are now just session tabs that show transcript for stopped sessions
       return <SessionContent tab={{ ...tab, type: 'session' }} memorexEnabled={memorexEnabled} />;

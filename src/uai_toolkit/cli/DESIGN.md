@@ -3,7 +3,9 @@
 ## Canonical entrypoint
 
 - `ai_launch.py` is the only public launcher entrypoint implementation.
-- `claudeCli`, `codexCli`, and `geminiCli` are symlinks to `ai_launch.py`.
+- `claudeCli`, `codexCli`, `antigravityCli`, and `grokCli` are symlinks to `ai_launch.py`.
+  (`geminiCli` retired 2026-07-12 — discontinued upstream; `antigravityCli` (`agy`)
+  is its successor.)
 - No other script in this directory may call vendor CLI binaries directly.
 - Higher-level facades such as `agent_ops_cli.py` must call the launcher entrypoints, not the vendor binaries.
 

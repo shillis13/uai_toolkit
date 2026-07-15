@@ -15,12 +15,8 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import type { ContainerStoreData, ContainerEntry, PlacementRule } from '@uai/shared/cards';
+import { aiRootMain as getAiRootMain } from './paths';
 
-// ─── Path ────────────────────────────────────────────────────────────────
-
-function getAiRootMain(): string {
-  return process.env.AI_ROOT_MAIN || path.join(os.homedir(), 'AI/ai_root');
-}
 
 function getContainersPath(): string {
   // UAI_CONTAINERS_PATH isolates folder writes (and the sibling containers.changed

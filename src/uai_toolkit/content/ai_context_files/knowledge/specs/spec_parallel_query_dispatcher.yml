@@ -2,7 +2,9 @@ metadata:
   title: Parallel Query Dispatcher
   version: 0.1.0
   created: 2026-02-13
-  status: draft
+  status: retired
+  retired_note: 'RETIRED 2026-07-12 — Gemini discontinued. This dispatcher design targeted
+    Gemini search shards, which are no longer available.'
   author: Desktop Claude
   location: ~/bin/ai/orchestration/dispatch_query.py
 

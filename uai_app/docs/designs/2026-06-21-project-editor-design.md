@@ -140,3 +140,28 @@ Each step: typecheck + vite build green before moving on; **render-verify only i
 - IPC intent for `readDir`/`listDocs` — **re-homed** as the `fs.listDir`/doc-discovery work in todo_0317.
 
 **Replaced:** the flat scrolling Detail View (Identity/Paths/Git/Sessions/Files/Docs/Tags stacked) → Navigator Panel + four aspect views.
+
+---
+
+## isProject inversion (2026-07-10, Prism — proceeding in Mullion's stead)
+
+**Model:** a worker rendered by ProjectEditor is a **Team by default**; being a
+genuine **Project** (`isProject`) UNLOCKS the extra Project-only aspects on top of
+the Team base. This inverts the old "project is the default, team is the tagged
+exception + both show the same aspects" framing.
+
+- **Base aspects (every Team, and Project):** Overview · Team · Comms · Files · Work List.
+- **Project-only (isProject unlocks):** `PROJECT_ASPECTS` — **Docs** today (the
+  `working_dir/docs` tree; a Team has no working_dir so Docs is meaningless for it).
+  Board / DevTree slot into the same list later.
+- **Session:** Overview · Work · Comms · Files (drops Team; no project-only).
+- Docs moved from a section inside Overview to its own Project-only aspect
+  (`ProjectOverview showDocs={false}` from the editor). Order: …Files · **Docs** · Work List.
+
+**Discriminant:** still `kind === 'project'` (derived from the registry type via the
+`team` tag today). A future step can promote `isProject` to a first-class registry
+field so it doesn't lean on the tag.
+
+**Constraint honored:** aspect-gating only — the aspect rail structure is untouched
+(the v1.3.87 restructure-broke-Project/Team lesson). CDP-verified v1.3.270: project
+uai_app shows Docs, team uai_core does not.

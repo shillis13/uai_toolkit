@@ -20,6 +20,7 @@ export interface CreateBriefOpts {
   launchName?: string;
   launchPlatform?: string;
   condenserSession?: string;
+  hostSession?: string;   // NEW model (todo_0506): the session that spawns the briefing subagent
 }
 
 interface BriefDialogProps {
@@ -30,18 +31,42 @@ interface BriefDialogProps {
   existingNames: string[];
   folders: string[];
   preCheckLaunch?: boolean;
-  condenserSessions?: Session[];  // active sessions tagged 'condenser'
-  allSessions?: Session[];        // all sessions (for "Show Stopped" toggle)
+  // Host picker (todo_0506): who spawns the briefing subagent.
+  hostCandidates?: Session[];       // all RUNNING sessions (universe when filter is off)
+  condenserHostIds?: Set<string>;   // tracking_ids that are condenser-tagged OR in a *condenser* folder
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-const PLATFORMS = ['claude_cli', 'codex_cli', 'gemini_cli'] as const;
+// Launchable platforms (Gemini retired — no longer a current tool).
+const PLATFORMS = ['claude_cli', 'codex_cli'] as const;
+// Display maps keep gemini_cli so any historical Gemini session still renders.
 const PLATFORM_LABELS: Record<string, string> = {
   claude_cli: 'Claude',
   codex_cli: 'Codex',
   gemini_cli: 'Gemini',
 };
+// Canonical session glyphs/colors (match Navigator + RecipientPicker).
+const PLATFORM_ICONS: Record<string, string> = {
+  claude_cli: '●', codex_cli: '■', gemini_cli: '◆',
+};
+const PLATFORM_COLORS: Record<string, string> = {
+  claude_cli: 'var(--accent-orange)', codex_cli: 'var(--accent-purple)', gemini_cli: 'var(--accent-cyan)',
+};
+
+/** "last active 5m ago" style relative label from an ISO timestamp. */
+function formatIdleAgo(isoStr: string | null | undefined): string {
+  if (!isoStr) return 'idle time unknown';
+  const then = new Date(isoStr).getTime();
+  if (Number.isNaN(then)) return 'idle time unknown';
+  const diffMs = Date.now() - then;
+  if (diffMs < 60000) return 'active just now';
+  const minutes = Math.floor(diffMs / 60000);
+  if (minutes < 60) return `last active ${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `last active ${hours}h ago`;
+  return `last active ${Math.floor(hours / 24)}d ago`;
+}
 
 /** Suggest a non-conflicting brief name by appending _01, _02, etc. */
 function suggestBriefName(baseName: string, existingNames: string[]): string {
@@ -63,17 +88,15 @@ const BriefDialog: React.FC<BriefDialogProps> = ({
   existingNames,
   folders,
   preCheckLaunch = false,
-  condenserSessions = [],
-  allSessions = [],
+  hostCandidates = [],
+  condenserHostIds = new Set<string>(),
 }) => {
-  const [showStopped, setShowStopped] = useState(false);
-
-  // Condenser list: active tagged 'condenser' by default, optionally include stopped
-  const visibleCondensers = showStopped
-    ? [...condenserSessions, ...allSessions.filter(s => s.process_status !== 'running' && s.tags.includes('condenser'))]
-    : condenserSessions;
   const isMulti = sourceSessions.length > 1;
   const primarySession = sourceSessions[0];
+  // The brief target = the primary source session. Its own session is the
+  // default host when it's running (self-brief); otherwise no default.
+  const targetId = primarySession?.tracking_id ?? '';
+  const targetRunning = primarySession?.process_status === 'running';
   const defaultName = isMulti
     ? `combined_${sourceSessions.length}_sessions`
     : (primarySession?.display_name ?? '');
@@ -81,7 +104,9 @@ const BriefDialog: React.FC<BriefDialogProps> = ({
   const [name, setName] = useState(defaultName);
   const [description, setDescription] = useState('');
   const [folder, setFolder] = useState(folders[0] ?? '');
-  const [selectedCondenser, setSelectedCondenser] = useState('');
+  // Host picker (todo_0506): default = target if running, else unset.
+  const [onlyCondenser, setOnlyCondenser] = useState(true);
+  const [selectedHost, setSelectedHost] = useState(targetRunning ? targetId : '');
   const [newFolderMode, setNewFolderMode] = useState(false);
   const [newFolderValue, setNewFolderValue] = useState('');
   const [launch, setLaunch] = useState(preCheckLaunch);
@@ -95,6 +120,8 @@ const BriefDialog: React.FC<BriefDialogProps> = ({
     setName(isMulti ? `combined_${sourceSessions.length}_sessions` : (primarySession?.display_name ?? ''));
     setDescription('');
     setFolder(folders[0] ?? '');
+    setOnlyCondenser(true);
+    setSelectedHost(targetRunning ? targetId : '');
     setNewFolderMode(false);
     setNewFolderValue('');
     setLaunch(preCheckLaunch);
@@ -103,6 +130,15 @@ const BriefDialog: React.FC<BriefDialogProps> = ({
   } else if (!isOpen && prevOpen) {
     setPrevOpen(false);
   }
+
+  // Host list: running sessions, filtered to condenser-tagged/foldered when the
+  // checkbox is on. The target itself is ALWAYS listed when running (it's the
+  // default self-brief host), even if it wouldn't pass the condenser filter.
+  const visibleHosts = hostCandidates.filter(s => {
+    if (s.tracking_id === targetId && targetRunning) return true;
+    if (onlyCondenser) return condenserHostIds.has(s.tracking_id);
+    return true;
+  });
 
   // Keep launchName in sync with name field when user hasn't manually edited it
   const defaultLaunchName = `${name} v2`;
@@ -121,9 +157,11 @@ const BriefDialog: React.FC<BriefDialogProps> = ({
       launch: launch || undefined,
       launchName: launch ? effectiveLaunchName : undefined,
       launchPlatform: launch ? launchPlatform : undefined,
-      condenserSession: selectedCondenser || undefined,
+      hostSession: selectedHost || undefined,
     });
   };
+
+  const confirmDisabled = !selectedHost;
 
   const handleOverlayMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
     if (e.target === e.currentTarget) {
@@ -177,7 +215,7 @@ const BriefDialog: React.FC<BriefDialogProps> = ({
               type="text"
               value={description}
               onChange={(e) => setDescription(e.target.value)}
-              placeholder="Leave blank — Condenser will generate"
+              placeholder="Leave blank — the briefing subagent will generate"
               className="auto-gen-hint"
             />
           </div>
@@ -218,26 +256,53 @@ const BriefDialog: React.FC<BriefDialogProps> = ({
             )}
           </div>
 
-          {/* Condenser session */}
+          {/* Condenser session picker (todo_0506): who spawns the briefing subagent */}
           <div className="field-group">
             <label>
-              Condenser <span style={{ color: 'var(--text-muted)', fontWeight: 'normal' }}>(optional)</span>
+              Condenser session <span style={{ color: 'var(--text-muted)', fontWeight: 'normal' }}>— the session that writes the brief</span>
             </label>
-            <select value={selectedCondenser} onChange={(e) => setSelectedCondenser(e.target.value)}>
-              <option value="">Auto (oldest available)</option>
-              {visibleCondensers.map(s => (
-                <option key={s.tracking_id} value={s.tracking_id}>
-                  {s.display_name ?? s.tracking_id} {s.process_status !== 'running' ? '(stopped)' : ''}
-                </option>
-              ))}
-            </select>
-            <label style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '4px', fontSize: '11px', color: 'var(--text-muted)', cursor: 'pointer' }}>
-              <input type="checkbox" checked={showStopped} onChange={(e) => setShowStopped(e.target.checked)} style={{ margin: 0 }} />
-              Show Stopped Sessions
+            <label style={{ display: 'flex', alignItems: 'center', gap: '6px', margin: '0 0 8px', fontSize: '11px', color: 'var(--text-muted)', cursor: 'pointer' }}>
+              <input type="checkbox" checked={onlyCondenser} onChange={(e) => setOnlyCondenser(e.target.checked)} style={{ margin: 0 }} />
+              Only show condenser-tagged sessions
             </label>
-            {visibleCondensers.length === 0 && (
-              <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontStyle: 'italic', marginTop: '4px' }}>
-                No sessions tagged "condenser". Tag a running session to use it here.
+            <div className="brief-host-list" role="radiogroup" aria-label="Condenser session">
+              {visibleHosts.length === 0 && (
+                <div className="brief-host-empty">
+                  {onlyCondenser
+                    ? 'No running condenser-tagged sessions. Uncheck the filter to pick any running session.'
+                    : 'No running sessions available to condense the brief.'}
+                </div>
+              )}
+              {visibleHosts.map(s => {
+                const selected = selectedHost === s.tracking_id;
+                const isSelf = s.tracking_id === targetId;
+                const glyph = PLATFORM_ICONS[s.platform] ?? '○';
+                const glyphColor = PLATFORM_COLORS[s.platform] ?? 'var(--text-muted)';
+                const ctx = s.context_percent != null ? `${Math.round(s.context_percent)}%` : '—';
+                const idle = s.activity_state === 'idle' ? 'idle now' : formatIdleAgo(s.last_activity);
+                return (
+                  <button
+                    key={s.tracking_id}
+                    type="button"
+                    role="radio"
+                    aria-checked={selected}
+                    className={`brief-host-row${selected ? ' selected' : ''}`}
+                    onClick={() => setSelectedHost(s.tracking_id)}
+                  >
+                    <span className="brief-host-glyph" style={{ color: glyphColor }} title={PLATFORM_LABELS[s.platform] ?? s.platform}>{glyph}</span>
+                    <span className="brief-host-name">
+                      {s.display_name ?? s.tracking_id}
+                      {isSelf && <span className="brief-host-self">this session</span>}
+                    </span>
+                    <span className="brief-host-ctx" title="context used">{ctx}</span>
+                    <span className="brief-host-idle">{idle}</span>
+                  </button>
+                );
+              })}
+            </div>
+            {!targetRunning && (
+              <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontStyle: 'italic', marginTop: '6px' }}>
+                Target isn't running — pick a condenser to brief it from its saved transcript.
               </div>
             )}
           </div>
@@ -284,7 +349,7 @@ const BriefDialog: React.FC<BriefDialogProps> = ({
         {/* Footer */}
         <div className="brief-dialog-footer">
           <button className="cancel-btn" onClick={onClose}>Cancel</button>
-          <button className="confirm-btn" onClick={handleConfirm}>Create Brief</button>
+          <button className="confirm-btn" onClick={handleConfirm} disabled={confirmDisabled} title={confirmDisabled ? 'Pick a condenser session first' : undefined}>Create Brief</button>
         </div>
       </div>
     </div>,

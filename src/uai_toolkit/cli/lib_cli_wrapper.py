@@ -2,8 +2,9 @@
 """Layer 1: CLI wrapper.
 
 Owns platform-specific command construction and binary resolution.
-This layer knows how Claude and Codex expect their command line
-arguments, but it does not decide *when* or *why* to launch them.
+This layer knows how Claude, Codex, Antigravity (`agy`), and Grok Build
+(`grok`) expect their command line arguments, but it does not decide
+*when* or *why* to launch them.
 """
 from __future__ import annotations
 
@@ -61,6 +62,8 @@ def find_binary(platform: str) -> str:
     name_map = {
         'claude_cli': 'claude',
         'codex_cli': 'codex',
+        'antigravity_cli': 'agy',
+        'grok_cli': 'grok',
     }
     binary_name = name_map.get(platform, 'claude')
 
@@ -122,6 +125,28 @@ def build_cmd(
             parent_cli_uuid=parent_cli_uuid,
             system_instructions=system_instructions,
             session_name=session_name,
+            auto_approve=auto_approve,
+            passthrough=passthrough or [],
+            workdir=workdir,
+        )
+    if platform == 'antigravity_cli':
+        return _build_antigravity_cmd(
+            binary, args, cli_uuid,
+            is_resume=is_resume,
+            is_fork=is_fork,
+            bootstrap_prompt=bootstrap_prompt,
+            auto_approve=auto_approve,
+            passthrough=passthrough or [],
+            workdir=workdir,
+        )
+    if platform == 'grok_cli':
+        return _build_grok_cmd(
+            binary, args, cli_uuid,
+            is_resume=is_resume,
+            is_fork=is_fork,
+            parent_cli_uuid=parent_cli_uuid,
+            bootstrap_prompt=bootstrap_prompt,
+            system_instructions=system_instructions,
             auto_approve=auto_approve,
             passthrough=passthrough or [],
             workdir=workdir,
@@ -226,5 +251,130 @@ def _build_codex_cmd(
     prompt = args.prompt
     if prompt:
         cmd.append(prompt)
+
+    return cmd
+
+
+def _build_antigravity_cmd(
+    binary: str,
+    args: argparse.Namespace,
+    cli_uuid: str | None,
+    *,
+    is_resume: bool,
+    is_fork: bool,
+    bootstrap_prompt: str | None,
+    auto_approve: bool,
+    passthrough: list[str],
+    workdir: str | None = None,
+) -> list[str]:
+    """Build the Antigravity CLI (`agy`) command.
+
+    agy is Claude-Code-lineage: `--print/-p <prompt>` for headless single-shot,
+    `--prompt-interactive/-i <prompt>` to seed an interactive session, `-c` /
+    `--conversation <ID>` to resume, `--add-dir` for the workspace, and
+    `--dangerously-skip-permissions` for auto-approve. It generates its own
+    conversation IDs (no `--session-id` on new sessions), so — like Codex/Gemini —
+    it does not take a pre-assigned UUID; transcript/UUID discovery is a follow-on.
+    """
+    if is_fork:
+        raise ValueError('antigravity_cli does not support forking yet')
+
+    cmd = [binary]
+
+    if is_resume:
+        if cli_uuid:
+            cmd.extend(['--conversation', cli_uuid])
+        else:
+            cmd.append('--continue')
+
+    wd = workdir or args.workdir
+    if wd:
+        cmd.extend(['--add-dir', wd])
+
+    if auto_approve:
+        cmd.append('--dangerously-skip-permissions')
+
+    if args.model:
+        cmd.extend(['--model', args.model])
+
+    cmd.extend(passthrough)
+
+    # Prompt delivery: managed launches embed a bootstrap/marker; direct/oneshot
+    # launches carry the user's text in args.prompt. Prefer the marker, fall back
+    # to the positional prompt. Headless single-shot uses --print; a managed
+    # interactive session seeds with --prompt-interactive.
+    prompt_text = bootstrap_prompt or args.prompt
+    if prompt_text:
+        flag = '--print' if args.oneshot else '--prompt-interactive'
+        cmd.extend([flag, prompt_text])
+    elif args.oneshot:
+        cmd.append('--print')
+
+    return cmd
+
+
+def _build_grok_cmd(
+    binary: str,
+    args: argparse.Namespace,
+    cli_uuid: str | None,
+    *,
+    is_resume: bool,
+    is_fork: bool,
+    parent_cli_uuid: str | None,
+    bootstrap_prompt: str | None,
+    system_instructions: str | None,
+    auto_approve: bool,
+    passthrough: list[str],
+    workdir: str | None = None,
+) -> list[str]:
+    """Build the Grok Build (`grok`) command.
+
+    Grok Build is Claude-Code-lineage and — unlike agy — accepts `--session-id`
+    for a *new* conversation, so it gets the same pre-assigned-UUID treatment as
+    Claude (tracking uuid8 == cli_session_id[:8]). `-r/--resume [<ID>]` resumes,
+    `--fork-session` + `--session-id` forks, `--always-approve` auto-approves,
+    `--cwd` sets the workspace, `--rules` appends to the system prompt, `-p
+    <prompt>` is headless single-turn, and a positional prompt seeds interactive.
+    """
+    cmd = [binary]
+
+    if is_resume:
+        cmd.append('--resume')
+        if cli_uuid:
+            cmd.append(cli_uuid)
+    elif is_fork:
+        cmd.extend(['--resume', parent_cli_uuid or ''])
+        cmd.append('--fork-session')
+        if cli_uuid:
+            cmd.extend(['--session-id', cli_uuid])
+    else:
+        if cli_uuid:
+            cmd.extend(['--session-id', cli_uuid])
+
+    cmd.append('--no-alt-screen')
+
+    if auto_approve:
+        cmd.append('--always-approve')
+
+    if args.model:
+        cmd.extend(['--model', args.model])
+
+    cmd.extend(['--cwd', workdir or args.workdir or str(AI_ROOT)])
+
+    if not is_resume and not args.start_clean and system_instructions:
+        cmd.extend(['--rules', system_instructions])
+
+    cmd.extend(passthrough)
+
+    # Prompt delivery: managed launches embed a bootstrap/marker; direct/oneshot
+    # launches carry the user's text in args.prompt. Prefer the marker, fall back
+    # to the positional prompt. Headless single-turn uses -p; interactive takes
+    # the prompt as the positional PROMPT (must come last).
+    prompt_text = bootstrap_prompt or args.prompt
+    if prompt_text:
+        if args.oneshot:
+            cmd.extend(['-p', prompt_text])
+        else:
+            cmd.append(prompt_text)
 
     return cmd

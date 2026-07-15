@@ -14,9 +14,6 @@ import * as os from 'node:os';
 import yaml from 'js-yaml';
 import type { QueueEntry, InboxMessage } from '@uai/shared/types';
 
-function getAiRootMain(): string {
-  return process.env.AI_ROOT_MAIN || path.join(os.homedir(), 'AI/ai_root');
-}
 
 function getCommsRoot(): string {
   // ai_comms lives INSIDE ai_root (ai_root/ai_comms), not as a sibling.
@@ -248,6 +245,7 @@ export function removeQueueEntry(sessionTrackingId: string, entryId: string): bo
 // ─── Message Sending (Phase 3) ──────────────────────────────────────────
 
 import { execFile as execFileCb } from 'node:child_process';
+import { aiRootMain as getAiRootMain, shellPath } from './paths';
 
 function getMessagingScript(): string {
   return path.join(os.homedir(), 'bin', 'ai', 'messages', 'messaging.py');
@@ -290,7 +288,7 @@ export async function sendMessage(opts: {
   const sendEnv = {
     ...process.env,
     AI_TRACKING_ID: opts.from,
-    PATH: [process.env.PATH || '', '/opt/homebrew/bin', '/usr/local/bin'].join(':'),
+    PATH: shellPath(),
   };
 
   return new Promise((resolve) => {

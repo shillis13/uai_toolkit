@@ -92,7 +92,6 @@ workflow:
   - 'Preserve: key decisions, code artifacts, action items, relationship context'
   - 'Strip: tool call boilerplate, repeated greetings, verbose explanations'
   - Quarantine items usually fail for encoding or format issues — check the raw file
-  - For batch work, Gemini workers are effective condensers (large context window)
   anti_patterns:
   - Don't condense without checking pipeline_status first
   - Don't skip quarantine review — those items represent data loss if ignored

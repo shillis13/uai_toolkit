@@ -10,10 +10,8 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import type { BriefCard } from '@uai/shared/cards';
 import type { EntityId } from '@uai/shared/types';
+import { aiRootMain as getAiRootMain } from './paths';
 
-function getAiRootMain(): string {
-  return process.env.AI_ROOT_MAIN || path.join(os.homedir(), 'AI/ai_root');
-}
 
 function getBriefsDir(): string {
   return path.join(getAiRootMain(), 'ai_general', 'data', 'session_briefs');

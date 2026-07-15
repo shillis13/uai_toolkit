@@ -9,7 +9,7 @@ updated: '2026-04-15'
 
 # CLI Agent Global Instructions
 
-These instructions apply to all CLI agents (Claude, Gemini, Codex) regardless of role. Later layers (Agent, Task, Prompt) can override specific rules by restating them.
+These instructions apply to all CLI agents (Claude, Codex) regardless of role. Later layers (Agent, Task, Prompt) can override specific rules by restating them.
 
 ---
 
@@ -138,7 +138,7 @@ You have multiple MCP servers available. Use the RIGHT tool for the job:
 ### Browser Automation
 | Task | Use | NOT |
 |------|-----|-----|
-| Export chats from Claude/ChatGPT | `chat` | osascript, chrome-control |
+| Export chats from a web AI chat UI | `chat` | osascript, chrome-control |
 | Navigate to AI chat URL | `chat:open_chat` | AppleScript |
 | Extract messages from chat | `chat:get_messages` | DOM scraping |
 | Send message to AI chat | `chat:send_message` | keyboard simulation |
@@ -172,9 +172,9 @@ You have multiple MCP servers available. Use the RIGHT tool for the job:
 ### File Operations
 | Task | Use |
 |------|-----|
-| Read/write files | `desktop-commander` (preferred) or native filesystem |
-| Search files | `desktop-commander:start_search` |
-| Process management | `desktop-commander:start_process`, `interact_with_process` |
+| Read/write files | native `Read`/`Write`/`Edit` (preferred) or `bash` |
+| Search files | `Grep`/`Glob` (or `bash` rg/find) |
+| Process management | `bash` (run, background with `&`, manage via shell) |
 
 ### Coordination
 | Task | Use |

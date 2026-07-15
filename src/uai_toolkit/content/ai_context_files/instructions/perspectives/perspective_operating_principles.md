@@ -101,15 +101,11 @@
 
 ## 11. File Reference Formatting
 
-When referencing files the user may need to open, edit, or review, use actionable paths appropriate to the platform:
+When referencing files the user may need to open, edit, or review, use actionable absolute paths:
 
-- **Desktop App (Claude Desktop):** Markdown links with `file://` URIs.
-  - Format: `[filename.ext](file:///absolute/path/to/filename.ext)`
-  - Renders as a clickable link that opens the file directly.
 - **Terminal / CLI (Claude Code, iTerm2, VS Code terminal):** Raw absolute paths.
   - Format: `/absolute/path/to/filename.ext` (optionally with `:line_number`)
   - Most terminals auto-detect these as cmd-clickable.
-- **Web UIs (claude.ai, ChatGPT, Gemini):** Raw absolute paths (not clickable, but copy-pasteable).
 
 **When to use actionable references:**
 - File creation, modification, or review: "created", "updated", "wrote to", "review", "edit", "see", "check"

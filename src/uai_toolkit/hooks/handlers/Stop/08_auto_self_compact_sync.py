@@ -1,12 +1,24 @@
 #!/usr/bin/env python3
 """Stop hook — trigger self-compact when context usage exceeds threshold.
 
-Reads compact.auto_self_pct from session state (default 85%). If context
-usage meets or exceeds that threshold, injects a systemMessage telling
-the AI to run /self-compact.
+Reads compact.auto_self_pct from session state (default 85%). Two cooperating
+delivery paths, both guarded by the compact.self_triggered cycle flag so a
+handoff fires at most once per compaction cycle:
 
-Only triggers once per compaction cycle — sets compact.self_triggered=true
-to prevent re-triggering every response while the AI is writing its brief.
+  1. Deferred idle-gated timer (deferred_self_compact.reconcile_from_stop, armed
+     below): delivers the compact instruction during a lull — the graceful,
+     never-mid-work path. But it ONLY fires when the session goes idle.
+  2. Direct trigger (this hook, at/over threshold): a session that runs
+     continuously past threshold never goes idle, so the deferred timer would
+     never get its window and the session would never hand off. When ctx >=
+     threshold we therefore trigger directly here — mint an auth token, inject
+     the SAME instruction body the deferred path uses (subagent brief ->
+     register -> comms /compact), and set compact.self_triggered.
+
+Setting compact.self_triggered=true also stands the deferred one-shot down (it
+STOPs when it sees that flag), so the two paths never double-fire. Below the
+threshold, this hook only warns in the 80-85 band and keeps the deferred timer
+reconciled.
 """
 
 import json
@@ -99,7 +111,44 @@ def handler(hook_input, context):
 
         return HookResult.allow(f"ctx:{ctx_pct}% < threshold:{threshold}% | {defer_status}")
 
-    return HookResult.allow(f"ctx:{ctx_pct}% >= threshold:{threshold}% | {defer_status}")
+    # At/over threshold — tell the session to self-compact via the /self-compact
+    # skill. The deferred idle-gated timer (armed above) only delivers during a
+    # lull; a session running continuously past threshold never goes idle and
+    # would otherwise never hand off. So we surface a one-line instruction to fire
+    # /self-compact at itself, and set compact.self_triggered (which also stands
+    # the deferred one-shot down, so the two paths never double-fire).
+    #
+    # The steps live in ONE place — the /self-compact skill (condenser subagent ->
+    # register -> /compact). The skill is model-invocable and compaction is unguarded
+    # (no token), so the session just runs /self-compact.
+    try:
+        from uai_toolkit.jsonl.deferred_self_compact import cancel as _cancel_deferred
+    except Exception:
+        _cancel_deferred = None
+
+    msg = (f"Your context is at {ctx_pct}% — over the self-compact threshold "
+           f"({threshold}%) and you're still working past it. Run /self-compact now: "
+           f"it writes your handoff brief via a subagent, registers it, then compacts "
+           f"— the brief auto-loads afterward.")
+
+    # Guard once-per-cycle: persist BEFORE returning so a re-entrant Stop skips
+    # (line ~54) and the deferred one-shot STOPs on its next fire.
+    state["compact.self_triggered"] = True
+    try:
+        state_path.write_text(json.dumps(state, indent=2))
+    except OSError as e:
+        return HookResult.error(f"self-compact state write failed: {e} | {defer_status}")
+
+    # Stand the deferred one-shot down so it doesn't fire later only to no-op.
+    if _cancel_deferred:
+        try:
+            _cancel_deferred(context.tracking_id)
+        except Exception:
+            pass
+
+    output = json.dumps({"systemMessage": msg})
+    return HookResult.output(
+        output, f"ctx:{ctx_pct}% >= threshold:{threshold}% -> /self-compact | {defer_status}")
 
 
 if __name__ == "__main__":

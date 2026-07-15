@@ -14,23 +14,12 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import type { Session, SessionPref } from '@uai/shared/types';
 import { getAppStatePath } from './app-state-path';
-
-function getAiRoot(): string {
-  return process.env.AI_ROOT || path.join(os.homedir(), 'AI/ai_root');
-}
-
-/** Canonical main ai_root — for production data (sessions, briefs) that lives outside devTrees. */
-function getAiRootMain(): string {
-  return process.env.AI_ROOT_MAIN || path.join(os.homedir(), 'AI/ai_root');
-}
+// Root resolution + child-process PATH now come from the shared paths.ts (the TS
+// twin of paths.py). Aliased to the old local names so call sites are unchanged.
+import { aiRoot as getAiRoot, aiRootMain as getAiRootMain, shellPath as getPythonPath } from './paths';
 
 function getSessionStorePath(): string {
   return path.join(getAiRootMain(), 'ai_general/scripts/session_mgmt/session_store.py');
-}
-
-function getPythonPath(): string {
-  const extra = ['/opt/homebrew/bin', '/opt/homebrew/sbin', '/usr/local/bin', `${os.homedir()}/.local/bin`];
-  return [process.env.PATH || '', ...extra].join(':');
 }
 
 export function callStore(args: string[]): Promise<unknown> {
@@ -356,6 +345,7 @@ function reserveDraftViaLauncher(opts: {
     const aiRoot = getAiRootMain();
     const launcherNames: Record<string, string> = {
       claude_cli: 'claudeCli', codex_cli: 'codexCli', gemini_cli: 'geminiCli',
+      grok_cli: 'grokCli', antigravity_cli: 'antigravityCli',
     };
     const launcherName = launcherNames[opts.platform] || 'claudeCli';
     const launcherPath = path.join(aiRoot, 'ai_general/scripts/cli', launcherName);
@@ -417,6 +407,8 @@ export async function launchSession(platform: string, trackingId: string, opts?:
     claude_cli: 'claudeCli',
     codex_cli: 'codexCli',
     gemini_cli: 'geminiCli',
+    grok_cli: 'grokCli',
+    antigravity_cli: 'antigravityCli',
   };
   const launcherName = launcherNames[platform] || 'claudeCli';
   const launcherPath = path.join(aiRoot, 'ai_general/scripts/cli', launcherName);

@@ -141,7 +141,7 @@ def is_idle(target: str, session_name: str) -> bool:
     """True if target is available to send (idle). Mirrors check_if_busy()."""
     if target in ("claude-desktop", "desktop-claude", "claude-web", "chatgpt-web"):
         return True
-    if target in ("claude-cli", "codex-cli", "gemini-cli"):
+    if target in ("claude-cli", "codex-cli", "gemini-cli", "grok-cli", "antigravity-cli"):
         cmd = [sys.executable, str(SCRIPT_DIR / "ai_isBusy.py"), target]
         if session_name:
             cmd += ["--session", session_name]
@@ -339,7 +339,7 @@ def main(argv: list[str] | None = None) -> int:
             if _run([sys.executable, str(SCRIPT_DIR / "lib_send_prompt_webui.py"),"chatgpt", url, message, *submit_args]) == 0:
                 print(f"Message sent successfully to {target}")
                 return 0
-        elif target in ("claude-cli", "codex-cli", "gemini-cli"):
+        elif target in ("claude-cli", "codex-cli", "gemini-cli", "grok-cli", "antigravity-cli"):
             if session_name:
                 cmd = [sys.executable, str(SCRIPT_DIR / "lib_send_prompt.py"), "send",
                        target, message, "--session", session_name, *cli_submit_args]
@@ -352,6 +352,8 @@ def main(argv: list[str] | None = None) -> int:
                     "claude-cli": (["claude", "--print", message], "Message processed by claude --print"),
                     "codex-cli": (["codex", "--prompt", message], "Message processed by codex"),
                     "gemini-cli": (["gemini", "--prompt", message], "Message processed by gemini"),
+                    "grok-cli": (["grok", "-p", message], "Message processed by grok"),
+                    "antigravity-cli": (["agy", "--print", message], "Message processed by agy"),
                 }[target]
                 if _run(oneshot, stderr=subprocess.DEVNULL) == 0:
                     print(success_msg)

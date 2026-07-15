@@ -29,16 +29,13 @@ skill_loading:
     keeping your main context clean. Loading it inline is one of the largest
     avoidable single-shot context costs on this platform.
 context_files:
-  knowledge:
-  - path: ai_context_files/_drafts/platform_instructions/claude_cli/instr_cli_context_and_tools
+  how_tos:
+  - path: ai_context_files/instructions/how_tos/instr_cli_context_and_tools
     purpose: CLI-specific context and tool usage rules
-  - path: ai_context_files/_drafts/platform_instructions/claude_cli/instr_cli_environment_overview
+  - path: ai_context_files/instructions/how_tos/instr_cli_environment_overview
     purpose: CLI platform capabilities — 1M context, full bash, native tools
-  processes:
-  - path: ai_context_files/_drafts/platform_instructions/claude_cli/instr_cli_delegation
-    purpose: CLI delegation patterns — direct execution default, Agent subagents for
-      parallel
-  procedures:
+  - path: ai_context_files/instructions/how_tos/instr_cli_delegation
+    purpose: CLI delegation patterns — direct execution default, Agent subagents for parallel
   - path: ai_context_files/instructions/how_tos/instr_workstate_tracking
     purpose: Session state tracking protocol
 session_identity:

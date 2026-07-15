@@ -220,7 +220,8 @@ interface SystemMetrics {
   cpu_avg_6h?: number;
   top_cpu_processes?: TopProcess[];
   top_mem_processes?: TopProcess[];
-  claude_tokens?: { dtd?: TokenBucket; mtd?: TokenBucket; ytd?: TokenBucket; itd?: TokenBucket };
+  claude_tokens?: { dtd?: TokenBucket; wtd?: TokenBucket; mtd?: TokenBucket; ytd?: TokenBucket; itd?: TokenBucket };
+  sparks?: Record<string, number[]>;
   sysmon_events?: SysmonEvent[];
   claude_5h_pct?: number | null;
   claude_5h_reset?: string | null;
@@ -232,7 +233,7 @@ interface TopProcess {
   name: string; pid: number; cpu_pct: number; phys_gb: number;
 }
 
-interface TokenBucket { in: number; out: number; total: number }
+interface TokenBucket { in: number; out: number; total: number; cost?: number; since?: string }
 
 interface SysmonEvent {
   kind: 'alert' | 'assessment' | 'episode';
@@ -245,6 +246,10 @@ interface SysmonEvent {
 
 interface DiskVolume {
   mount: string; fs: string; total_gb: number; used_gb: number; free_gb: number; used_pct: number;
+}
+
+interface FeedEntry {
+  ts: string; session: string; name: string; channel: string; kind: string; text: string; ref?: string[];
 }
 
 const uaiApi = {
@@ -433,6 +438,8 @@ const uaiApi = {
       ipcRenderer.invoke('uai:gitFileView:content', dir, file, ref),
     repos: (root: string): Promise<any> =>
       ipcRenderer.invoke('uai:gitFileView:repos', root),
+    grep: (dir: string, pattern: string, toRef?: string): Promise<any> =>
+      ipcRenderer.invoke('uai:gitFileView:grep', dir, pattern, toRef),
   },
 
   // ── Globals (context files) ────────────────────────────────────────
@@ -445,6 +452,9 @@ const uaiApi = {
   fs: {
     listDir: (dirPath: string, opts?: { dirsOnly?: boolean; showHidden?: boolean }): Promise<Array<{ name: string; path: string; type: 'file' | 'directory'; size: number | null; modified: string | null }>> =>
       ipcRenderer.invoke('uai:fs:listDir', dirPath, opts),
+    // Read a text file by absolute path — backs the in-app markdown/document tab.
+    readFile: (filePath: string): Promise<{ ok: boolean; content?: string; truncated?: boolean; error?: string }> =>
+      ipcRenderer.invoke('uai:fs:readFile', filePath),
   },
 
   // ── Todo Manager ───────────────────────────────────────────────────
@@ -548,6 +558,11 @@ const uaiApi = {
 
   bootHistory: (limit?: number): Promise<Array<{ when: string }>> =>
     ipcRenderer.invoke('uai:bootHistory', limit),
+
+  aiFeed: {
+    read: (limit?: number): Promise<FeedEntry[]> =>
+      ipcRenderer.invoke('uai:aiFeed:read', limit),
+  },
 
   // ── Transcript ───────────────────────────────────────────────────────
   transcript: {
@@ -668,6 +683,10 @@ const uaiApi = {
   // ── Shell ───────────────────────────────────────────────────────────
   openPath: (filePath: string): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('uai:openPath', filePath),
+  // Open a web URL in a new tab of the topmost non-incognito Chrome window
+  // (launches Chrome / falls back to the OS default opener as needed).
+  openUrl: (url: string): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('uai:openUrl', url),
 
   // ── Prompt Areas ────────────────────────────────────────────────────
   prompts: {

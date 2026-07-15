@@ -21,8 +21,8 @@ roles:
     description: Interactive session with PianoMan via Claude CLI (Claude Code) / UnifiedCLI
     primary_platform: claude_cli
     note: |
-      Hybrid role — interactive like Desktop, but with CLI capabilities (1M context,
-      real bash, native tools). Tiered load_sequence like Desktop role.
+      Interactive role with full CLI capabilities (1M context, real bash, native
+      tools) and a tiered load_sequence.
       Created 2026-03-17 during platform migration evaluation.
 
   librarian:

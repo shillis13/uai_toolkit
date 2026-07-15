@@ -51,10 +51,10 @@ term_name:
 |--------|-------------|----------|
 | architecture | System design patterns, structural concepts | federated memory, drain-and-fill |
 | protocol | Communication patterns, coordination rules | task coordination, pulse system |
-| tool | MCP servers, utilities, integrations | Desktop Commander, mem0 |
+| tool | MCP servers, utilities, integrations | comms MCP, knowledge MCP |
 | concept | Mental models, principles, named patterns | context conservation, bootstrap problem |
 | workflow | Multi-step procedures, operational sequences | overnight automation, peer review |
-| entity | Named systems, agents, platforms | Chatty, librarian, Claude Desktop |
+| entity | Named systems, agents, platforms | librarian, Claude Code, Codex CLI |
 
 ## Extraction Rules
 

@@ -87,6 +87,6 @@ Example failure: Asked to find a JSONL session file. Broad keyword grep found 64
 For searching the condensed conversation archive (not JSONL), use:
 - `knowledge_search` — semantic search over chunked/condensed histories
 - `knowledge_grep_search` — regex search over full content
-- For complex research: use the `research_orchestration` skill (dispatch Gemini shards)
+- For complex research: use the `research_orchestration` skill
 
 See: `knowledge_how_to('research_orchestration')` for the full multi-shard workflow.

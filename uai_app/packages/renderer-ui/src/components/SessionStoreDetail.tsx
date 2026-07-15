@@ -8,6 +8,7 @@
 
 import { useState, useCallback, useEffect, useRef } from 'react';
 import type { SessionStoreRecord } from './session-store-types';
+import type { Session } from '@uai/shared/types';
 import SessionStoreStateVars, { type StateVarsHandle } from './SessionStoreStateVars';
 import SessionStoreHistory from './SessionStoreHistory';
 import { SessionStartsValue } from './SessionStarts';
@@ -163,9 +164,33 @@ export default function SessionStoreDetail({ session, initialSubTab, onUpdated, 
   const [newTag, setNewTag] = useState('');
   const [addingTag, setAddingTag] = useState(false);
 
-  // Update tags when session changes
-  if (session.tags && JSON.stringify(session.tags) !== JSON.stringify(tags) && !addingTag) {
-    setTags(session.tags);
+  // The Session Store shows a session's FULL state, not just the DB record. The
+  // record from session_store.py omits the metrics/activity/briefs (and returns
+  // tags unpopulated), so we pull the app's merged Session model — which unions
+  // the DB record + the hook state file ({tid}_state.json) + the tag store — and
+  // drive the read-only state display from it. (Data lives outside the app; we
+  // only read it — Data Ownership Boundary, DESIGN.md #6.)
+  const [full, setFull] = useState<Session | null>(null);
+  const [queued, setQueued] = useState(0);
+  const [inbox, setInbox] = useState<{ total: number; unread: number }>({ total: 0, unread: 0 });
+  useEffect(() => {
+    let alive = true;
+    const tid = session.tracking_id;
+    window.uai.sessions.get(tid).then(s => {
+      if (!alive) return;
+      setFull(s);
+      if (s?.tags && !addingTag) setTags(s.tags);
+    }).catch(() => {});
+    window.uai.comms.queueCount(tid).then(n => { if (alive) setQueued(n); }).catch(() => {});
+    window.uai.comms.inboxCount(tid).then(v => { if (alive) setInbox(v); }).catch(() => {});
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session.tracking_id]);
+
+  // Update tags when the record OR the merged model changes.
+  const srcTags = (full?.tags && full.tags.length) ? full.tags : session.tags;
+  if (srcTags && JSON.stringify(srcTags) !== JSON.stringify(tags) && !addingTag) {
+    setTags(srcTags);
   }
 
   const handleFieldSave = useCallback(async (key: string, value: string) => {
@@ -282,8 +307,42 @@ export default function SessionStoreDetail({ session, initialSubTab, onUpdated, 
             <CopyableField label="Parent" value={session.parent_tracking_id} />
           </DetailSection>
 
+          <DetailSection title="Activity & Metrics">
+            <div className="sess-store-field-row">
+              <span className="sess-store-field-label">Activity State</span>
+              <span className="sess-store-field-value">{full?.activity_state ?? '--'}</span>
+            </div>
+            <div className="sess-store-field-row">
+              <span className="sess-store-field-label">Turns</span>
+              <span className="sess-store-field-value">{full?.exchange_count != null ? String(full.exchange_count) : '--'}</span>
+            </div>
+            <div className="sess-store-field-row">
+              <span className="sess-store-field-label">Messages</span>
+              <span className="sess-store-field-value">{full?.message_count != null ? String(full.message_count) : '--'}</span>
+            </div>
+            <div className="sess-store-field-row">
+              <span className="sess-store-field-label">Context Used</span>
+              <span className="sess-store-field-value">{full?.context_percent != null ? `${full.context_percent}%` : '--'}</span>
+            </div>
+            <div className="sess-store-field-row">
+              <span className="sess-store-field-label">Prompts (queued)</span>
+              <span className="sess-store-field-value">{String(queued)}</span>
+            </div>
+            <div className="sess-store-field-row">
+              <span className="sess-store-field-label">Comms</span>
+              <span className="sess-store-field-value">{inbox.total > 0 ? `${inbox.total}${inbox.unread > 0 ? ` (${inbox.unread} unread)` : ''}` : '0'}</span>
+            </div>
+            <div className="sess-store-field-row">
+              <span className="sess-store-field-label">Brief(s)</span>
+              <span className="sess-store-field-value">{full?.loaded_briefs?.length ? full.loaded_briefs.join(', ') : '--'}</span>
+            </div>
+          </DetailSection>
+
           <DetailSection title="Paths">
+            <CopyableField label="URI" value={`uai://session/${session.tracking_id}`} />
+            <CopyableField label="Terminal" value={full?.terminal_session ?? session.terminal_session} />
             <CopyableField label="Project Dir" value={session.project_dir} />
+            <CopyableField label="Working Dir" value={full?.project_dir ?? session.project_dir} />
             <CopyableField label="Session Dir" value={session.session_dir} />
             <CopyableField label="History File" value={session.history_file} />
           </DetailSection>
@@ -320,11 +379,11 @@ export default function SessionStoreDetail({ session, initialSubTab, onUpdated, 
             </div>
             <div className="sess-store-field-row">
               <span className="sess-store-field-label">Last Activity</span>
-              <span className="sess-store-field-value">{formatDate(session.last_activity)}</span>
+              <span className="sess-store-field-value">{formatDate(full?.last_activity ?? session.last_activity)}</span>
             </div>
             <div className="sess-store-field-row">
               <span className="sess-store-field-label">Session Starts</span>
-              <SessionStartsValue starts={session.start_history} />
+              <SessionStartsValue starts={(full?.start_history ?? session.start_history)} />
             </div>
           </DetailSection>
         </div>

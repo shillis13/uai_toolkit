@@ -107,15 +107,15 @@ Source of truth: `ai_memories/80_working_memory/manifest.yml` (v3.0.0)
 
 Slots 13-27 reserved for expansion.
 
-### Cross-Platform Write Paths
+### Write and Read Paths
 
-- **CLI / Desktop:** Direct file write to slot YAML files.
-- **Web / iOS:** Emit structured `<<<INSERT type=memory_v1.1>>>` blocks inline. Desktop/CLI harvests these via cron pipeline and commits to slot files.
-- **Read path:** CLI/Desktop read slots directly. Web/iOS read from a snapshot uploaded to Project Files.
+- **Write:** Sessions append observations via the knowledge MCP memory tools (`knowledge_memory_append` targeting a slot number), which write timestamped entries to the slot YAML files. Appends are immediate and additive — never overwrite another session's observations.
+- **Read:** Sessions read slots via `knowledge_memory_read` / `knowledge_memory_search`, or read the slot YAML directly with bash file I/O.
+- **Structure:** Slot allocation and load triggers live in the manifest and change only there (see permission inversion above).
 
 ### Reflection Journal (Slot 12)
 
-A specialized slot for Claude CLI instances only. Contains distilled entries from `ai_memories/90_inner/meridian/reflection.md` with feeling-annotations preserved. Designed for continuity priming — helps successor sessions maintain emotional/relational texture. Not loaded by Codex or Gemini.
+A specialized slot for Claude CLI instances only. Contains distilled entries from `ai_memories/90_inner/meridian/reflection.md` with feeling-annotations preserved. Designed for continuity priming — helps successor sessions maintain emotional/relational texture. Not loaded by Codex (nor by Gemini, which was retired 2026-07-12).
 
 ---
 
@@ -160,7 +160,7 @@ ai_memories/
 ├─ 20_preprocessed/      Normalized stage (currently shelved — minimal content)
 ├─ 30_converted/         Converted stage (currently shelved — legacy content, ~34 files)
 ├─ 40_histories/         Processed/chunked histories (ACTIVE: ~24K YAML files, ~300MB)
-│  ├─ claude/            Claude Desktop/Web histories (by year/month/day)
+│  ├─ claude/            Claude chat histories (by year/month/day)
 │  ├─ chatgpt/           ChatGPT histories
 │  ├─ indexes/           Topic/chat/condensed indexes (CSV)
 │  ├─ _validation/       Checksum/attestation files
@@ -189,7 +189,7 @@ Stages 20 (preprocessed) and 30 (converted) are currently shelved — the pipeli
 
 ### Shard Architecture
 
-The design target is ~800K tokens per shard, staying within Gemini's 1M context safety margin. However, the current manifest includes shards up to ~1.05M estimated tokens (shards 19, 20, 22, 24, 25 exceed 1M). Shard sizing needs revalidation. Current state: manifest lists 26 shards covering January 2025 through March 2026 (physical directory has 27 files due to a duplicate shard-19). One shard (shard-02) has status `create_failed`.
+The design target was ~800K tokens per shard, staying within Gemini's 1M context safety margin (the Gemini-backed shard query subsystem was retired 2026-07-12 when Gemini CLI was discontinued). However, the current manifest includes shards up to ~1.05M estimated tokens (shards 19, 20, 22, 24, 25 exceed 1M). Shard sizing needs revalidation. Current state: manifest lists 26 shards covering January 2025 through March 2026 (physical directory has 27 files due to a duplicate shard-19). One shard (shard-02) has status `create_failed`.
 
 **Shard manifest:** `ai_memories/librarian/shard_manifest.yml` (v1.0.0) documents all shards with date ranges, token counts, and status.
 
@@ -199,15 +199,15 @@ The design target is ~800K tokens per shard, staying within Gemini's 1M context 
 
 **Direct search:** Topic and chat index lookups via CSV indexes at `40_histories/indexes/` (all_topics, all_topics_by_topic, chat_index, condensed_index). Sub-second latency. The originally designed `librarian/topic_index/` path has been superseded by these indexes.
 
-**Researcher query:** Load relevant shard(s) into a Gemini session, pose the query, retrieve structured results. 60-180 second latency. Results include `match_id` traceability for evidence grounding.
+**Researcher query (retired 2026-07-12):** Loaded relevant shard(s) into a Gemini session, posed the query, retrieved structured results. 60-180 second latency. Results included `match_id` traceability for evidence grounding. This flow was retired with Gemini CLI.
 
-**Validator pattern:** Adversarial verification for synthesized results — each model used where its weakness causes least damage (Gemini=corpus holder, Claude=orchestration, ChatGPT=reduction). Bounce-back protocol: max 3 rounds; agreement = all claims grounded or retracted; deadlock → structured disagreement record.
+**Validator pattern:** Adversarial verification for synthesized results — each model was used where its weakness causes least damage (Gemini=corpus holder — retired 2026-07-12, Claude=orchestration, ChatGPT=reduction). Bounce-back protocol: max 3 rounds; agreement = all claims grounded or retracted; deadlock → structured disagreement record.
 
 **Evidence contract:** Every claim must trace to a specific source via `match_id`. Counting discipline: exact counts, no "several" or "many." Temporal gap detection prevents fabrication of events in uncovered periods.
 
 ### LITM Research Basis
 
-The shard architecture relies on validated Long-Input Transformer research:
+The shard architecture relied on validated Long-Input Transformer research (the Gemini-backed shard query subsystem was retired 2026-07-12):
 - Claude 4 Sonnet: <5% degradation across 200K tokens
 - Gemini 2.5 Flash: "substantially mitigated" within 1M context
 - These findings informed the 800K/shard safety margin. Revalidation recommended as models evolve.

@@ -103,10 +103,20 @@ export default function SessionContextMenu({
     close();
   };
 
-  // Gather condenser sessions — active sessions tagged 'condenser' by default
+  // Host-picker data (todo_0506): all running sessions are candidate hosts;
+  // the "condenser" filter marks those tagged 'condenser' OR sitting in a folder
+  // whose name contains "condenser" (case-insensitive).
   const { sessions: allSessions } = useSessionStore();
-  const condenserSessions = allSessions.filter(s =>
-    s.process_status === 'running' && s.tags.includes('condenser')
+  const runningSessions = allSessions.filter(s => s.process_status === 'running');
+  const condenserHostIds = new Set(
+    runningSessions
+      .filter(s => {
+        if (s.tags.includes('condenser')) return true;
+        const folderId = folderStore.cardLocation(`session:${s.tracking_id}`);
+        const folderName = folderId ? folderStore.getFolder(folderId)?.name : undefined;
+        return !!folderName && /condenser/i.test(folderName);
+      })
+      .map(s => s.tracking_id)
   );
 
   // Gather existing brief names for conflict detection
@@ -115,7 +125,10 @@ export default function SessionContextMenu({
 
   const handleCreateBrief = async (opts: CreateBriefOpts) => {
     setBriefDialogOpen(false);
-    showToast('Creating brief...', 'info');
+    const hostName = opts.hostSession
+      ? (allSessions.find(s => s.tracking_id === opts.hostSession)?.display_name || opts.hostSession)
+      : null;
+    showToast(hostName ? `Dispatching brief to ${hostName}…` : 'Creating brief…', 'info');
     try {
       const result = await executeCommand('brief.create', {
         sessionIds: [session.tracking_id],
@@ -126,11 +139,18 @@ export default function SessionContextMenu({
           launch: opts.launch,
           launchName: opts.launchName,
           launchPlatform: opts.launchPlatform,
-          condenserSession: opts.condenserSession,
+          hostSession: opts.hostSession,
+          targetName: displayName,
         },
       });
       if (result.ok) {
-        showToast(`Brief "${opts.name}" created`, 'info');
+        const dispatched = (result.data as { dispatched?: boolean } | undefined)?.dispatched;
+        showToast(
+          dispatched
+            ? `Brief dispatched to ${hostName} — it'll write & register the brief.`
+            : `Brief "${opts.name}" created`,
+          'info',
+        );
       } else {
         showToast(`Brief creation failed: ${result.error?.message || 'unknown error'}`, 'error');
       }
@@ -267,7 +287,28 @@ export default function SessionContextMenu({
       <SubMenu label="Briefings">
         <button className="context-menu-item" onClick={() => { setBriefPreCheckLaunch(false); setBriefDialogOpen(true); }}>Create Brief...</button>
         <button className="context-menu-item" onClick={() => { setBriefPreCheckLaunch(true); setBriefDialogOpen(true); }}>Create Brief and Launch</button>
-        {isRunning && <button className="context-menu-item" onClick={() => { showToast('Load Brief — coming soon', 'info'); close(); }}>Load Brief...</button>}
+        {isRunning && (
+          <SubMenu label="Load Brief...">
+            {briefCards.length === 0
+              ? <div className="context-menu-item" style={{ opacity: 0.6, cursor: 'default' }}>No briefs</div>
+              : (
+                <div style={{ maxHeight: 320, overflowY: 'auto' }}>
+                  {briefCards.map((bc) => (
+                    <button key={bc.entity_id} className="context-menu-item" title={bc.description || bc.name}
+                      onClick={async () => {
+                        try {
+                          const res = await window.uai.traits.load(session.tracking_id, [{ type: 'briefs', name: bc.name }]);
+                          const r0 = res?.results?.[0];
+                          if (res?.success && (!r0 || r0.success)) showToast(`Loaded brief "${bc.display_name}" into ${displayName} (delivers on next prompt)`, 'info');
+                          else showToast(r0?.error || 'Load failed', 'error');
+                        } catch (e: any) { showToast(e?.message || 'Load failed', 'error'); }
+                        close();
+                      }}>{bc.display_name}</button>
+                  ))}
+                </div>
+              )}
+          </SubMenu>
+        )}
       </SubMenu>
 
       <div className="context-menu-separator" />
@@ -372,8 +413,8 @@ export default function SessionContextMenu({
         existingNames={existingBriefNames}
         folders={['/']}
         preCheckLaunch={briefPreCheckLaunch}
-        condenserSessions={condenserSessions}
-        allSessions={allSessions}
+        hostCandidates={runningSessions}
+        condenserHostIds={condenserHostIds}
       />
 
       {/* ResumeCustomDialog — parameterized resume/fork */}

@@ -262,7 +262,8 @@ let unsubStoreChanged: (() => void) | null = null;
 function startListening(): void {
   if (unsubStoreChanged) return;
   unsubStoreChanged = window.uai.onStoreChanged((event: StoreChangedEvent) => {
-    if (event.changed.includes('sessions') || event.changed.includes('folders')) {
+    if (event.changed.includes('sessions') || event.changed.includes('folders')
+      || event.changed.includes('projects') || event.changed.includes('teams')) {
       refresh();
     }
   });

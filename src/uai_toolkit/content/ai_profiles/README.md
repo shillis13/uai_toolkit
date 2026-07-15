@@ -7,7 +7,7 @@ Named assemblies of traits at different granularities. Every item carries its ow
 | Directory | What it contains |
 |-----------|-----------------|
 | `globals/` | Universal trait bundles included for every agent (by launcher convention) |
-| `platforms/` | Platform-specific trait bundles (claude_code, gemini, codex, etc.) |
+| `platforms/` | Platform-specific trait bundles (claude_code, codex, etc.) |
 | `roles/` | Atomic identity fragments — duties, ownership, role-specific trait references |
 | `skills/` | Executable compositions with trigger conditions and flow logic |
 | Top-level `*.yml` | Pre-composed profiles — named sets of roles representing full agent identities |

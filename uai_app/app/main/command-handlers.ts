@@ -14,7 +14,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { CommandBus } from './command-bus';
-import type { Command, CommandResult, Session, FolderStoreData, Tag, EntityRelationship, RelationType, EntityType, Tab, TabType } from '@uai/shared/types';
+import type { Command, CommandResult, Session, FolderStoreData, Tag, EntityRelationship, RelationType, EntityType, Tab, TabType, SavedPrompt } from '@uai/shared/types';
 import { listSessions, getSession, updateSession, createDraftSession, launchSession, callStore as callSessionStore } from './session-store';
 import { closeStandaloneTerminal } from './terminal';
 import { getAppStatePath } from './app-state-path';
@@ -30,15 +30,15 @@ import {
   reorderContainerCards, getContainerSnapshot,
 } from './container-manager';
 import { loadTeamDefinition } from './team-indexer';
+import { setEntityHidden } from './project-indexer';
 import { createBrief } from './brief-ops';
 import { runSessionTraits } from './session-traits';
 import { runTodoMgr, resolveTodoDir } from './todo-ops';
 import { runTeamsMgr } from './teams-ops';
 import { sendMessage } from './comms-reader';
+import { callAiEngine } from './assigned-tasks';
+import { aiRootMain as getAiRootMain, shellPath } from './paths';
 
-function getAiRootMain(): string {
-  return process.env.AI_ROOT_MAIN || require('node:path').join(require('node:os').homedir(), 'AI/ai_root');
-}
 
 /**
  * Deliver prompt text to a session's CLI via the substrate's TYPED path
@@ -63,7 +63,7 @@ async function deliverPromptTyped(sessionId: string, text: string, submit: boole
   const execFileAsync = promisify(ef);
   const aiRoot = getAiRootMain();
   const sessionOpsPy = path.join(aiRoot, 'ai_general/scripts/session_mgmt/session_ops.py');
-  const envPath = [process.env.PATH || '', '/opt/homebrew/bin', '/usr/local/bin', `${os.homedir()}/.local/bin`].join(':');
+  const envPath = shellPath();
   const env = { ...process.env, AI_ROOT: aiRoot, PATH: envPath } as Record<string, string>;
 
   const tmpFile = path.join(os.tmpdir(), `uai_prompt_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.txt`);
@@ -108,6 +108,7 @@ const VALID_TAB_TYPES = new Set<TabType>([
   'team',
   'webai',
   'app',
+  'markdown',
 ]);
 
 type PersistedTab = Partial<Tab> & {
@@ -321,7 +322,7 @@ export function registerCommandHandlers(bus: CommandBus, emit: EmitFn): void {
         env: {
           ...process.env,
           AI_ROOT: rootMain,
-          PATH: [process.env.PATH || '', '/opt/homebrew/bin', '/usr/local/bin'].join(':'),
+          PATH: shellPath(),
         },
       });
 
@@ -357,7 +358,7 @@ export function registerCommandHandlers(bus: CommandBus, emit: EmitFn): void {
       env: {
         ...process.env,
         AI_ROOT: rootMain,
-        PATH: [process.env.PATH || '', '/opt/homebrew/bin', '/usr/local/bin'].join(':'),
+        PATH: shellPath(),
       },
     });
     return JSON.parse(stdout);
@@ -677,7 +678,7 @@ export function registerCommandHandlers(bus: CommandBus, emit: EmitFn): void {
         env: {
           ...process.env,
           AI_ROOT: rootMain,
-          PATH: [process.env.PATH || '', '/opt/homebrew/bin', '/usr/local/bin'].join(':'),
+          PATH: shellPath(),
         },
       });
 
@@ -714,7 +715,7 @@ export function registerCommandHandlers(bus: CommandBus, emit: EmitFn): void {
       env: {
         ...process.env,
         AI_ROOT: rootMain,
-        PATH: [process.env.PATH || '', '/opt/homebrew/bin', '/usr/local/bin'].join(':'),
+        PATH: shellPath(),
       },
     });
   };
@@ -778,6 +779,8 @@ export function registerCommandHandlers(bus: CommandBus, emit: EmitFn): void {
         claude_cli: 'claudeCli',
         codex_cli: 'codexCli',
         gemini_cli: 'geminiCli',
+        grok_cli: 'grokCli',
+        antigravity_cli: 'antigravityCli',
       };
       const platform = session.platform || 'claude_cli';
       const launcherName = launcherNames[platform] || 'claudeCli';
@@ -791,7 +794,7 @@ export function registerCommandHandlers(bus: CommandBus, emit: EmitFn): void {
       if (roles && roles.length > 0) args.push('-A', roles.join(','));
       if (prePrompt) args.push('--pre-prompt', prePrompt);
 
-      const pythonPath = [process.env.PATH || '', '/opt/homebrew/bin', '/usr/local/bin'].join(':');
+      const pythonPath = shellPath();
 
       return new Promise((resolve) => {
         let stderrChunks: string[] = [];
@@ -1881,7 +1884,7 @@ export function registerCommandHandlers(bus: CommandBus, emit: EmitFn): void {
       const execFileAsync = promisify(ef);
       const aiRoot = getAiRootMain();
       const messagingPy = path.join(aiRoot, 'ai_general/scripts/messages/messaging.py');
-      const envPath = [process.env.PATH || '', '/opt/homebrew/bin', '/usr/local/bin', `${os.homedir()}/.local/bin`].join(':');
+      const envPath = shellPath();
       const env = { ...process.env, AI_ROOT: aiRoot, PATH: envPath } as Record<string, string>;
       // queue-prompt writes the entry directly (takes --source, no session-sender
       // requirement). Attribute to the user so prompt-blocks — which always allow the
@@ -1908,6 +1911,90 @@ export function registerCommandHandlers(bus: CommandBus, emit: EmitFn): void {
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       return { ok: false, command_id: command.id, error: { code: 'PROMPT_QUEUE_FAILED', message } };
+    }
+  });
+
+  // ── prompt.library.* — the saved-prompts repository (thin wrapper) ───────
+  // Logic + storage live in scripts/prompts/prompt_library.py (YAML store is the
+  // single source of truth). The app NEVER keeps its own copy; every call shells
+  // the script and returns the full current list so the renderer refreshes in one
+  // round-trip. Same store an MCP tool / CLI session uses — no divergent state.
+  const runPromptLibrary = async (args: string[]): Promise<{ ok?: boolean; prompts?: SavedPrompt[]; error?: string }> => {
+    const os = require('node:os');
+    const { execFile: ef } = require('node:child_process');
+    const { promisify } = require('node:util');
+    const execFileAsync = promisify(ef);
+    const aiRoot = getAiRootMain();
+    const script = path.join(aiRoot, 'ai_general/scripts/prompts/prompt_library.py');
+    const envPath = shellPath();
+    const env = { ...process.env, AI_ROOT: aiRoot, PATH: envPath } as Record<string, string>;
+    try {
+      const { stdout } = await execFileAsync('python3', [script, ...args, '--json'],
+        { timeout: 30_000, env, maxBuffer: 8 * 1024 * 1024 });
+      return JSON.parse(String(stdout || '').trim() || '{}');
+    } catch (err: unknown) {
+      // The script exits nonzero on logical failure but still prints its JSON to
+      // stdout — recover it so the renderer sees a real error, not a spawn crash.
+      const e = err as { stdout?: string; message?: string };
+      if (e.stdout) { try { return JSON.parse(String(e.stdout).trim()); } catch { /* fall through */ } }
+      return { ok: false, error: e.message || 'prompt_library failed' };
+    }
+  };
+  const plResult = (command: Command, r: { ok?: boolean; prompts?: SavedPrompt[]; error?: string }): CommandResult<{ prompts: SavedPrompt[] }> =>
+    (r.ok === false
+      ? { ok: false, command_id: command.id, error: { code: 'PROMPT_LIBRARY_FAILED', message: r.error || 'prompt_library failed' } }
+      : { ok: true, command_id: command.id, data: { prompts: r.prompts || [] } });
+
+  bus.register('prompt.library.list', async (command: Command): Promise<CommandResult<{ prompts: SavedPrompt[] }>> => {
+    const { search, tag } = (command.payload || {}) as { search?: string; tag?: string };
+    const args = ['--mode', 'list'];
+    if (tag) args.push('--tag', tag);
+    if (search) args.push('--search', search);
+    return plResult(command, await runPromptLibrary(args));
+  });
+  bus.register('prompt.library.save', async (command: Command): Promise<CommandResult<{ prompts: SavedPrompt[] }>> => {
+    const { title, body, tag } = command.payload as { title: string; body: string; tag?: string };
+    const args = ['--mode', 'save', '--title', title, '--body', body];
+    if (tag) args.push('--tag', tag);
+    return plResult(command, await runPromptLibrary(args));
+  });
+  bus.register('prompt.library.update', async (command: Command): Promise<CommandResult<{ prompts: SavedPrompt[] }>> => {
+    const { id, title, body, tag, clearTag } = command.payload as { id: string; title?: string; body?: string; tag?: string; clearTag?: boolean };
+    const args = ['--mode', 'update', id];
+    if (title !== undefined) args.push('--title', title);
+    if (body !== undefined) args.push('--body', body);
+    if (clearTag) args.push('--clear-tag'); else if (tag !== undefined) args.push('--tag', tag);
+    return plResult(command, await runPromptLibrary(args));
+  });
+  bus.register('prompt.library.delete', async (command: Command): Promise<CommandResult<{ prompts: SavedPrompt[] }>> => {
+    const { id } = command.payload as { id: string };
+    return plResult(command, await runPromptLibrary(['--mode', 'delete', id]));
+  });
+
+  // ── ai.rewrite — improve the Prompt Box text with an AI (thin wrapper) ───
+  // Reuses callAiEngine (lllm_prompt.py / claude -p). The user's improvement
+  // instruction becomes the system prompt; the prompt text is the input to rewrite.
+  bus.register('ai.rewrite', async (command: Command): Promise<CommandResult<{ text: string }>> => {
+    const { instruction, text, engine } = command.payload as { instruction?: string; text: string; engine?: 'lllm' | 'claude' };
+    try {
+      if (!text || !text.trim()) {
+        return { ok: false, command_id: command.id, error: { code: 'AI_REWRITE_EMPTY_INPUT', message: 'Nothing to rewrite.' } };
+      }
+      const aiRoot = getAiRootMain();
+      const eng = engine === 'claude' ? 'claude' : 'lllm';
+      const system =
+        'You are an expert prompt editor. Rewrite the prompt below so it is clearer, more specific, '
+        + 'and more effective, while preserving its original intent. Output ONLY the rewritten prompt — '
+        + 'no preamble, no explanation, no surrounding code fences.\n\nImprovement instructions: '
+        + (instruction && instruction.trim() ? instruction.trim() : 'Improve clarity, specificity, and structure.');
+      const out = await callAiEngine(eng, system, text, aiRoot);
+      if (!out || !out.trim()) {
+        return { ok: false, command_id: command.id, error: { code: 'AI_REWRITE_EMPTY', message: `The ${eng} engine returned nothing — is the local LLM running? Try the Claude engine.` } };
+      }
+      return { ok: true, command_id: command.id, data: { text: out.trim() } };
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { ok: false, command_id: command.id, error: { code: 'AI_REWRITE_FAILED', message } };
     }
   });
 
@@ -2076,7 +2163,7 @@ export function registerCommandHandlers(bus: CommandBus, emit: EmitFn): void {
   // BRIEF COMMANDS
   // ═══════════════════════════════════════════════════════════════════════
 
-  bus.register('brief.create', async (command: Command): Promise<CommandResult<{ briefPath: string; briefName: string }>> => {
+  bus.register('brief.create', async (command: Command): Promise<CommandResult<{ briefPath: string; briefName: string; dispatched?: boolean; host?: string }>> => {
     const { sessionIds, opts } = command.payload as {
       sessionIds: string | string[];
       opts: {
@@ -2087,9 +2174,40 @@ export function registerCommandHandlers(bus: CommandBus, emit: EmitFn): void {
         launchName?: string;
         launchPlatform?: string;
         condenserSession?: string;
+        hostSession?: string;
+        targetName?: string;
       };
     };
     try {
+      // NEW model (todo_0506): when a host session is chosen, the app authors NO
+      // briefing logic — it delivers a short prompt to the host, which runs
+      // Tideline's `auto_brief.py emit-subagent-task` helper and spawns a Task
+      // subagent to prepare, author, write + register the brief (fire-and-forget).
+      // The registration branch (host==target → register_self_brief; host!=target →
+      // register_brief) lives entirely in the helper's emitted recipe.
+      if (opts.hostSession) {
+        const target = Array.isArray(sessionIds) ? sessionIds[0] : sessionIds;
+        const host = opts.hostSession;
+        const targetLabel = opts.targetName || target;
+        const prompt = [
+          `Please create a session brief for **${targetLabel}** (target \`${target}\`), requested from the UAI "Create Brief" dialog.`,
+          '',
+          '1. Run this to get the exact subagent instructions (recipe lives in Python — do not hand-author it):',
+          `   python3 ~/AI/ai_root/ai_general/scripts/jsonl/auto_brief.py emit-subagent-task --target ${target} --condenser ${host}`,
+          '2. Spawn a Task subagent whose prompt is that command\'s stdout, verbatim.',
+          '',
+          'The subagent prepares the source transcript, authors a fresh-snapshot brief, writes + registers it under auto_briefs/, and posts a feed line when done. Fire-and-forget — you do not need to report back here.',
+        ].join('\n');
+        await deliverPromptTyped(host, prompt, true);
+        return {
+          ok: true,
+          command_id: command.id,
+          data: { briefPath: '', briefName: opts.name, dispatched: true, host },
+        };
+      }
+
+      // Legacy path (no host chosen): local condense.py flow. Kept alive until the
+      // full cutover sweep (Tideline's todo_0507).
       const result = await createBrief(sessionIds, opts);
       if (!result.ok) {
         return {
@@ -2181,6 +2299,12 @@ export function registerCommandHandlers(bus: CommandBus, emit: EmitFn): void {
   todoCmd('create', (p) => runTodoMgr('create', [String(p.name), ...((p.extra as string[]) || [])]));
   // Routes through todo_mgr set-notes (the data authority) — never writes notes.md directly.
   todoCmd('writeNotes', (p) => runTodoMgr('set-notes', [String(p.id), '--content', String(p.content)]));
+  // Append a comment to a todo's history.log (status 'comment'; never changes real status).
+  // Optional replyTo nests it under an existing comment (threaded comments).
+  todoCmd('comment', (p) => runTodoMgr('comment', [
+    String(p.id), '--text', String(p.text), '--session', String(p.author || 'PianoMan'),
+    ...(p.replyTo ? ['--reply-to', String(p.replyTo)] : []),
+  ]));
 
   // ── team.* — bridge the Team Editor to teams_mgr (the team data authority). todo_0423-0426.
   const teamCmd = (
@@ -2204,6 +2328,46 @@ export function registerCommandHandlers(bus: CommandBus, emit: EmitFn): void {
   teamCmd('removeRole', (p) => runTeamsMgr('remove-role', [String(p.team), String(p.role)]));
   teamCmd('assign', (p) => runTeamsMgr('assign', [String(p.team), String(p.role), String(p.trackingId)]));
   teamCmd('unassign', (p) => runTeamsMgr('unassign', [String(p.team), String(p.role), String(p.trackingId)]));
+
+  // ── project.setHidden / team.setHidden — "Delete" == HIDE (todo_0532).
+  // A pure visibility flag: flips `ui_hidden` in the entity's own source yml. It
+  // NEVER moves, renames, or deletes any directory (esp. a project's working_dir)
+  // — fully reversible by setting hidden:false. The renderer passes the card's
+  // `sourcePath` (the exact yml it was read from); we fall back to resolving by id
+  // in the registry / teams dir if omitted.
+  const resolveEntityYml = (id: string, prefer: 'project' | 'team'): string | null => {
+    const root = getAiRootMain();
+    const regDir = path.join(root, 'ai_general', 'data', 'projects');
+    const teamsDir = path.join(root, 'ai_general', 'data', 'teams');
+    const candidates = prefer === 'team'
+      ? [path.join(regDir, `${id}.team.yml`), path.join(teamsDir, `${id}.yml`), path.join(regDir, `${id}.proj.yml`)]
+      : [path.join(regDir, `${id}.proj.yml`), path.join(regDir, `${id}.team.yml`), path.join(teamsDir, `${id}.yml`)];
+    return candidates.find(c => fs.existsSync(c)) || null;
+  };
+  const setHidden = (
+    cmdName: string,
+    prefer: 'project' | 'team',
+    storeKey: string,
+  ) => bus.register(cmdName, async (command: Command): Promise<CommandResult<{ hidden: boolean; sourcePath: string }>> => {
+    const p = command.payload as { id?: string; hidden?: boolean; sourcePath?: string };
+    const hidden = p.hidden !== false; // default to hiding
+    try {
+      const id = String(p.id ?? '').replace(/^(project|team):/, '');
+      let src = p.sourcePath && fs.existsSync(p.sourcePath) ? p.sourcePath : null;
+      if (!src) src = resolveEntityYml(id, prefer);
+      if (!src) {
+        return { ok: false, command_id: command.id, error: { code: `${storeKey.toUpperCase()}_SET_HIDDEN_FAILED`, message: `No source file for id "${id}"` } };
+      }
+      setEntityHidden(src, hidden);
+      emit('command', [storeKey]);
+      return { ok: true, command_id: command.id, data: { hidden, sourcePath: src }, changed: { [storeKey]: true } as Record<string, boolean> };
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { ok: false, command_id: command.id, error: { code: `${storeKey.toUpperCase()}_SET_HIDDEN_FAILED`, message } };
+    }
+  });
+  setHidden('project.setHidden', 'project', 'projects');
+  setHidden('team.setHidden', 'team', 'teams');
 
   // ═══════════════════════════════════════════════════════════════════════
   // COMMS COMMANDS

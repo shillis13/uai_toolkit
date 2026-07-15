@@ -12,7 +12,6 @@ responsibilities:
   - Supervising other agents (lead_cli domain)
 context_files:
   processes:
-  - ai_context_files/instructions/how_tos/instr_agent_operations
   - ai_context_files/instructions/how_tos/instr_federated_memory
 _registry:
   id: team_member

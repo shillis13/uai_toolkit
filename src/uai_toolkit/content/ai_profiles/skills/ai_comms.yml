@@ -19,13 +19,12 @@ trigger:
   - delegate to {platform}
   - check on {session}
   - launch a {role} to {task}
-  - ask {gemini/codex/claude} to {task}
+  - ask {codex/claude} to {task}
   - multi-agent coordination
   - cross-platform work dispatch
 context_files:
   processes:
   - ai_context_files/instructions/how_tos/instr_session_messaging
-  - ai_context_files/instructions/how_tos/instr_agent_operations
   - ai_context_files/instructions/how_tos/instr_federated_memory
   procedures:
   - ai_context_files/instructions/how_tos/instr_activity_logging
@@ -99,7 +98,7 @@ workflow:
   - question: Do you need to coordinate with an ALREADY RUNNING session?
     true: Use prompting:send_prompt or prompting:send_to_session
     false: Launch a new session with cli-agent:launch_agent
-  - question: Does the target need to be a specific platform (Gemini, Codex)?
+  - question: Does the target need to be a specific platform (Codex)?
     true: Use cli-agent:launch_agent with platform parameter
     false: Default to Claude CLI for most tasks
   inner_comms:
@@ -123,8 +122,8 @@ workflow:
     - Subagents cannot use MCP tools (depending on agent type)
   inter_comms:
     name: Cross-Session Communication (Inter)
-    description: 'Launch or communicate with independent CLI sessions (Claude, Codex,
-      Gemini). These are full sessions with their own context, tools, and persistence.
+    description: 'Launch or communicate with independent CLI sessions (Claude, Codex).
+      These are full sessions with their own context, tools, and persistence.
       This is orchestration — you are coordinating peers, not spawning helpers.
 
       '
@@ -173,7 +172,7 @@ workflow:
   - 'AI-to-AI responses MUST use send_prompt — the responder sends results back to the requester''s session via prompting:send_prompt. Never rely on observe_session or read_session for collecting results. Those are for progress monitoring only.'
   - Always include your session name in task prompts so the responder knows where to send results
   - When orchestrating, you are responsible for the quality of delegated work — verify results
-  - 'Cross-platform dispatch: use Gemini for search/research, Codex for code review, Claude for complex reasoning'
+  - 'Cross-platform dispatch: use Codex for code review, Claude for complex reasoning'
   - Never assume a launched agent completed successfully — always check status or read output
   - Working memory updates from other sessions may need manual federation — check memory slots
   anti_patterns:

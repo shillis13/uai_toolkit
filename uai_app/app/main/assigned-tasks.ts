@@ -19,6 +19,7 @@ import * as path from 'node:path';
 import * as readline from 'node:readline';
 import { createReadStream } from 'node:fs';
 import * as os from 'node:os';
+import { shellPath as getPythonPath } from './paths';
 
 const execFileAsync = promisify(execFile);
 
@@ -115,12 +116,6 @@ export async function saveStore(aiRoot: string, store: AssignedTaskStore): Promi
   await writeFile(p, JSON.stringify(store, null, 2), 'utf-8');
 }
 
-// ── Helpers ────────────────────────────────────────────────────────────
-
-function getPythonPath(): string {
-  const extra = ['/opt/homebrew/bin', '/opt/homebrew/sbin', '/usr/local/bin', `${os.homedir()}/.local/bin`];
-  return [process.env.PATH || '', ...extra].join(':');
-}
 
 /**
  * Extract JSON from an AI response that may contain markdown fences or preamble.

@@ -165,7 +165,7 @@ const TerminalSelectionOverlay = ({
       const url = getUrlAtPosition(pos);
       if (url) {
         e.preventDefault();
-        window.open(url, '_blank');
+        window.uai.openUrl(url);
         return;
       }
     }

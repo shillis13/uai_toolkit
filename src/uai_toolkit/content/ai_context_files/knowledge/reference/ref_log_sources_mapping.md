@@ -7,37 +7,29 @@ purpose: Identify what information is available from which log source
 
 # Log Source Locations
 
-## 1. Claude Desktop App Logs
-**Location:** `~/Library/Logs/Claude/`
-
-| File | Content | Useful For |
-|------|---------|------------|
-| `main.log` | App-level events: startup, shutdown, extension loading, update downloads, permission checks | App lifecycle, NOT chat switches |
-| `mcp.log` | **GOLD** - Every MCP tool call with full JSON (tool name, arguments, results) | File reads, tool usage, timestamps |
-| `mcp-server-{name}.log` | Per-server debug output | Debugging specific MCP servers |
-| `claude.ai-web.log` | Web-related logs | Unknown |
-| `unknown-window.log` | Unknown | Unknown |
-
-### mcp.log Format
-```
-2025-12-16T16:06:55.750Z [info] [Desktop Commander] Message from client: {"method":"tools/call","params":{"name":"read_file","arguments":{"path":"/path/to/file"}},"jsonrpc":"2.0","id":13}
-```
-**Key signals:**
-- `name":"read_file"` + `"path":"/..."` → File read event
-- `name":"list_directory"` → Directory listing
-- `name":"start_search"` → Search initiated
-- Timestamps in ISO format
-
-## 2. Claude CLI Logs  
+## 1. CLI Session Transcripts & Logs
 **Location:** `~/.claude/`
 
 | File/Dir | Content | Useful For |
 |----------|---------|------------|
-| `debug/{sessionId}.txt` | Full session transcripts - DEBUG output, tool calls, everything | CLI session history |
-| `history.jsonl` | User prompts only (JSONL format) | What user asked |
-| `daemon.log` | Pulse/orchestration system heartbeats | Daemon health |
+| `projects/<project>/<sessionId>.jsonl` | **GOLD** — full session transcript: every user prompt, assistant turn, and native/MCP tool call with arguments and results | Tool usage, file reads, timestamps, sequencing |
+| `debug/{sessionId}.txt` | DEBUG output, tool calls, everything for a session | CLI session history |
+| `history.jsonl` | User prompts only (JSONL format) | What the user asked |
+| `daemon.log` | Pulse/orchestration heartbeats | Daemon health |
 | `logs/claude_*.log` | Command execution logs | CLI command output |
 | `logs/orchestrator_pulse.log` | Orchestrator activity | Orchestration events |
+| `file-history/` | Native snapshots of files the CLI edited | Reconstructing file changes |
+
+### JSONL transcript format
+Each line is a JSON object. Tool calls appear as `tool_use` blocks and results as `tool_result` blocks:
+```
+{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read","input":{"file_path":"/path/to/file"}}]}}
+```
+**Key signals:**
+- `"name":"Read"` + `"file_path":"/..."` → file read event
+- `"name":"Grep"` / `"name":"Glob"` → search initiated
+- `mcp__<server>__<tool>` names → MCP tool calls (comms / knowledge / sessions / workflow / chat)
+- Timestamps in ISO format on each entry
 
 ### CLI debug file format
 ```
@@ -45,36 +37,19 @@ purpose: Identify what information is available from which log source
 [DEBUG] Loaded 0 unique skills...
 ```
 
-## 3. App Data (NOT logs, but queryable)
-**Location:** `~/Library/Application Support/Claude/`
-
-| Path | Content | Useful For |
-|------|---------|------------|
-| `Local Storage/leveldb/` | Chat fragments, UI state, session markers | Active chat detection |
-| `Session Storage/` | Session namespaces, chat UUIDs | Chat IDs |
-| `config.json` | App config | - |
-| `claude_desktop_config.json` | MCP server config | - |
-
-### LevelDB data extraction
-```bash
-strings "Session Storage/000003.log" | grep -E '[0-9a-f]{8}-[0-9a-f]{4}'
-```
-Shows chat UUIDs.
-
 ---
 
 # What We Can Detect From Each Source
 
 | Signal | Source | Detection Method |
 |--------|--------|------------------|
-| File read (Desktop) | mcp.log | Parse JSON, look for `read_file` tool calls |
-| Directory listing | mcp.log | Parse JSON, look for `list_directory` tool calls |
-| Any tool call | mcp.log | Parse JSON, extract tool name + args |
-| App start | main.log | Grep for startup patterns |
-| MCP server connect | main.log | Grep for extension loading |
-| CLI session start | ~/.claude/debug/ | New file created |
-| CLI tool calls | ~/.claude/debug/*.txt | Parse DEBUG lines |
-| Chat UUID | Session Storage | strings + grep |
+| File read | `*.jsonl` transcript | Parse JSON, look for `Read` tool_use blocks |
+| Search (Grep/Glob) | `*.jsonl` transcript | Parse JSON, look for `Grep`/`Glob` tool_use |
+| MCP tool call | `*.jsonl` transcript | Parse JSON, extract `mcp__*` tool name + args |
+| Any tool call | `*.jsonl` transcript | Parse JSON, extract tool name + args |
+| User prompt | `history.jsonl` | One entry per prompt |
+| CLI session start | `~/.claude/debug/` | New file created |
+| File edit | `file-history/` | Snapshot written |
 
 ---
 
@@ -82,41 +57,36 @@ Shows chat UUIDs.
 
 | Signal | Why |
 |--------|-----|
-| Chat switch (URL change) | Not logged in main.log or mcp.log |
-| My response content | Not in any log |
-| Footer presence | Not in any log |
-| Context compaction | Unknown if logged anywhere |
-| Chat broken | No clear signal |
+| My response reasoning | Thinking blocks may be omitted from transcript |
+| Footer presence | Not separately logged |
+| Context compaction | Not clearly signaled in logs |
+| Session broken/wedged | No clear signal |
 
 ---
 
 # Recommended Monitor Strategy
 
-## Primary Source: mcp.log
-- Every file I read goes here
-- Every tool I call goes here
-- Timestamps for sequencing
+## Primary Source: JSONL session transcript
+- Every prompt, tool call, and result is recorded
+- ISO timestamps for sequencing
 - JSON format = easy to parse
 
-## Secondary Source: Session Storage (LevelDB)
-- Chat UUIDs for tracking which chat
-- Modification times on LDB files as activity indicator
+## Secondary Source: `~/.claude/debug/*.txt`
+- DEBUG-level detail and session lifecycle
+- New file = new session started
 
-## Tertiary: main.log
-- App lifecycle only
-- Not useful for per-chat monitoring
+## Tertiary: `logs/*.log`
+- Command execution and orchestration activity
 
 ---
 
 # Parser Design Implications
 
-The parser should focus on **mcp.log** as primary input:
+The parser should focus on the **JSONL session transcript** as primary input:
 
-1. Tail mcp.log for new entries
+1. Tail the active `*.jsonl` for new lines
 2. Parse JSON from each line
 3. Extract: timestamp, tool_name, arguments, result status
 4. Emit structured events
 
-For chat detection, we may need to:
-- Watch Session Storage LDB files for modification
-- Or accept that we can't reliably detect "new chat" and instead just watch for "system_status.yml read" as the positive signal
+For session detection, watch `~/.claude/debug/` and `~/.claude/projects/` for new files.

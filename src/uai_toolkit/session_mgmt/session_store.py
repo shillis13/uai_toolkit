@@ -89,12 +89,14 @@ PLATFORM_CODES = {
     "claude_cli": "cla",
     "codex_cli": "cod",
     "gemini_cli": "gem",
+    "antigravity_cli": "agy",
+    "grok_cli": "grk",
 }
 
 CODE_PLATFORMS = {v: k for k, v in PLATFORM_CODES.items()}
 
 NEW_TRACKING_RE = re.compile(
-    r"^(?P<date>\d{8})_(?P<time>\d{6})_(?P<uuid8>[0-9a-f]{8})_(?P<code>cla|cod|gem)$"
+    r"^(?P<date>\d{8})_(?P<time>\d{6})_(?P<uuid8>[0-9a-f]{8})_(?P<code>cla|cod|gem|agy|grk)$"
 )
 
 

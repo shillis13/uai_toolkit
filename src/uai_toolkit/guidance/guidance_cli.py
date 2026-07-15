@@ -34,7 +34,7 @@ sys.path.insert(0, str(AI_SCRIPTS))
 
 from uai_toolkit.guidance import guidance_lib  # noqa: E402
 
-SESSION_TRAITS = AI_ROOT / "ai_general" / "scripts" / "session_mgmt" / "session_traits.py"
+SESSION_CONTEXT_REGISTRY = AI_ROOT / "ai_general" / "scripts" / "session_mgmt" / "session_context_registry.py"
 BRIEFS_DIR = AI_ROOT / "ai_general" / "data" / "session_briefs"
 
 # --- Color support ---
@@ -63,25 +63,25 @@ def _active_tracking_id():
 
 def _track_session_adopt(name):
     tracking_id = _active_tracking_id()
-    if not tracking_id or not SESSION_TRAITS.exists():
+    if not tracking_id or not SESSION_CONTEXT_REGISTRY.exists():
         return
     subprocess.run(
-        [sys.executable, str(SESSION_TRAITS), "--session", tracking_id, "--json", "adopt", name],
+        [sys.executable, str(SESSION_CONTEXT_REGISTRY), "--session", tracking_id, "--json", "adopt", name],
         capture_output=True, text=True, timeout=15,
     )
 
 
 def _track_session_load(item_type, name):
     tracking_id = _active_tracking_id()
-    if not tracking_id or not SESSION_TRAITS.exists():
+    if not tracking_id or not SESSION_CONTEXT_REGISTRY.exists():
         return
     subprocess.run(
-        [sys.executable, str(SESSION_TRAITS), "--session", tracking_id, "--json", "load", item_type, name],
+        [sys.executable, str(SESSION_CONTEXT_REGISTRY), "--session", tracking_id, "--json", "load", item_type, name],
         capture_output=True, text=True, timeout=15,
     )
     # Clear from pending_context_load — content has been delivered via MCP
     subprocess.run(
-        [sys.executable, str(SESSION_TRAITS), "--session", tracking_id, "--json", "unpend", item_type, name],
+        [sys.executable, str(SESSION_CONTEXT_REGISTRY), "--session", tracking_id, "--json", "unpend", item_type, name],
         capture_output=True, text=True, timeout=10,
     )
 

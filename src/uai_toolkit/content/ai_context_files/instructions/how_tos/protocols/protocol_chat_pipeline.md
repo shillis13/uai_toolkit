@@ -26,9 +26,9 @@ Convert raw chat exports to normalized, chunked format for search/analysis/conte
 
 ## Pipeline Stages
 
-### Stage 0: Export (Manual)
-- **ChatGPT:** Settings → Data controls → Export (single JSON all chats)
-- **Claude:** claude-exporter tool or manual (individual JSON per chat)
+### Stage 0: Export
+- **CLI sessions (current):** session transcript JSONL, one per conversation, copied from the session data directory
+- **Legacy bulk archives:** historical single-JSON exports already captured under `10_exported/{platform}/` (chatgpt/, claude/)
 - **Output:** `10_exported/{platform}/`
 
 ### Stage 1: Split

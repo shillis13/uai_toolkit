@@ -18,6 +18,7 @@ import React, { useState, useCallback } from 'react';
 import { useFolderStore } from '../../stores/folder-store';
 import { useCardStore } from '../../stores/card-store';
 import type { Folder } from '@uai/shared/types';
+import { folderAccent } from './folderAccent';
 
 // ─── Props ───────────────────────────────────────────────────────────────
 
@@ -67,6 +68,7 @@ function FolderNode({
   const hasChildren = folder.subfolders.length > 0;
   const cardIds = getDescendantCards(folderId);
   const counts = getEntityCounts(cardIds);
+  const fc = folderAccent(folder);
 
   const handleClick = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -88,7 +90,7 @@ function FolderNode({
     <div className="folder-tree-node">
       <div
         className={`folder-tree-row ${isSelected ? 'folder-tree-row--selected' : ''}`}
-        style={{ paddingLeft: `${depth * 16 + 8}px` }}
+        style={{ paddingLeft: `${depth * 16 + 8}px`, ['--fc' as string]: fc } as React.CSSProperties}
         onClick={handleClick}
         onContextMenu={handleContextMenu}
         data-folder-id={folderId}
@@ -101,9 +103,12 @@ function FolderNode({
           {hasChildren ? (isCollapsed ? '\u25B6' : '\u25BC') : ''}
         </span>
 
-        {/* Folder icon */}
+        {/* Folder icon \u2014 a custom icon shows as-is; the default folder glyph is a
+            saturated color swatch so every row carries its accent. */}
         <span className="folder-tree-icon">
-          {folder.icon || (isCollapsed ? '\uD83D\uDCC1' : '\uD83D\uDCC2')}
+          {folder.icon
+            ? folder.icon
+            : <span className="folder-tree-swatch" aria-hidden="true" />}
         </span>
 
         {/* Folder name */}

@@ -27,11 +27,9 @@ Claude | Proj:AI-Root | Chat:Session-Title | 2026-04-15 14:30:00 | Msg:5 | Usage
 
 ## 3. File Reference Formatting
 
-When referencing files the user may open, edit, or review, use platform-appropriate paths:
+When referencing files the user may open, edit, or review, use raw absolute paths:
 
-- **Desktop App:** `[filename](file:///absolute/path/filename)` — clickable link
-- **CLI Terminal:** `/absolute/path/filename:line` — cmd-clickable in most terminals
-- **Web UI:** `/absolute/path/filename` — copy-pasteable
+- `/absolute/path/filename:line` — cmd-clickable in most terminals
 
 When NOT needed: AI-to-AI coordination paths, inline code discussion, files already visible in tool output.
 

@@ -83,6 +83,7 @@ export default function HistoryPanel({ cliSessionId, onDismiss, onAction }: Hist
   const [actionMenuOpen, setActionMenuOpen] = useState(false);
   const [actionMenuIdx, setActionMenuIdx] = useState(0);
   const [collapsedDays, setCollapsedDays] = useState<Set<string>>(new Set());
+  const [query, setQuery] = useState('');
   const listRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
 
@@ -194,29 +195,52 @@ export default function HistoryPanel({ cliSessionId, onDismiss, onAction }: Hist
     </div>
   );
 
+  const q = query.trim().toLowerCase();
+  const matchCount = q ? entries.filter((e) => e.content.toLowerCase().includes(q)).length : entries.length;
   return (
     <div className="tv-history-panel" ref={panelRef} tabIndex={0} onKeyDown={handleKeyDown}>
       <div className="tv-history-panel-header">
         <span className="tv-history-panel-title">Prompt History</span>
         <span className="tv-history-panel-status">
-          {entries.length} prompts
+          {q ? `${matchCount} / ${entries.length}` : `${entries.length} prompts`}
         </span>
         <span className="tv-history-panel-hint">{'\u2191\u2193'} navigate {'\u00b7'} Space expand {'\u00b7'} Enter select {'\u00b7'} Esc dismiss</span>
         <button className="tv-history-panel-dismiss" onClick={onDismiss}>{'\u00d7'}</button>
       </div>
+      <input
+        className="tv-history-search"
+        value={query}
+        placeholder="Search prompts\u2026"
+        onChange={(e) => { setQuery(e.target.value); setSelectedIdx(-1); }}
+        onKeyDown={(e) => {
+          // Keep typing (incl. arrows) in the field; Esc clears the query, then dismisses.
+          e.stopPropagation();
+          if (e.key === 'Escape') { e.preventDefault(); e.nativeEvent.stopImmediatePropagation(); if (query) setQuery(''); else onDismiss(); }
+        }}
+      />
       <div className="tv-history-panel-list" ref={listRef}>
         {(() => {
           const elements: JSX.Element[] = [];
           let lastDateKey = '';
 
+          // Filter to entries matching the search; keep original indices for selection/actions.
+          const visible: number[] = [];
           for (let i = 0; i < entries.length; i++) {
+            if (q && !entries[i].content.toLowerCase().includes(q)) continue;
+            visible.push(i);
+          }
+          if (q && visible.length === 0) {
+            return [<div key="no-match" className="tv-history-empty">No prompts match &ldquo;{query}&rdquo;.</div>];
+          }
+
+          for (const i of visible) {
             const entry = entries[i];
             const dateKey = formatDateKey(entry.timestamp);
             const isDayCollapsed = collapsedDays.has(dateKey);
 
             // Day separator when date changes
             if (dateKey !== lastDateKey) {
-              const dayEntryCount = entries.filter(e => formatDateKey(e.timestamp) === dateKey).length;
+              const dayEntryCount = visible.filter((vi) => formatDateKey(entries[vi].timestamp) === dateKey).length;
               elements.push(
                 <div
                   key={`day-${dateKey}`}
@@ -275,7 +299,7 @@ export default function HistoryPanel({ cliSessionId, onDismiss, onAction }: Hist
             {ACTION_ITEMS.map((item, ai) => (
               <div
                 key={item.id}
-                className={`tv-history-action-item${ai === actionMenuIdx ? ' selected' : ''}`}
+                className={`tv-history-action-item ${item.id}${ai === actionMenuIdx ? ' selected' : ''}`}
                 onClick={(e) => { e.stopPropagation(); executeAction(item.id); }}
                 onMouseEnter={() => setActionMenuIdx(ai)}
               >

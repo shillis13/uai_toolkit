@@ -1055,3 +1055,22 @@ tools:
         description: If true (DEFAULT), print the plan and do NOT schedule or exit. Set false to actually schedule the bounce.
     required:
     - session
+- name: declare_stop
+  description: 'Declare WHY you are ending your turn, before you stop. Select one or more reason ids from the taxonomy (Stop/declare_stop.config.yml), plus optional per-reason params and a free-text note. Structured replacement for the heuristic stop-checkers: records your intent to session state for the Stop gate, the Live Board, and downstream effects. For a reason not in the taxonomy, pass no reasons and use note. Common ids: awaiting_user (default), more_work, finished_todo, need_decision, context_pressure, waiting_on, blocked, no_more_work, wake_me, break, switch_work, discuss_soonest.'
+  handler: declare_stop
+  module: declare_stop
+  inputSchema:
+    type: object
+    properties:
+      reasons:
+        type: array
+        items:
+          type: string
+        description: Taxonomy reason ids that apply. May be empty for a note-only custom stop.
+      params:
+        type: object
+        description: Per-reason parameters, e.g. todo_id, after_min, pct, source.
+      note:
+        type: string
+        description: Free-text note. Always allowed; REQUIRED if reasons is empty (a fully custom reason).
+    required: []

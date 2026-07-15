@@ -38,6 +38,70 @@ function safeMarkdown(md: string): string {
   }
 }
 
+// ── Generic YAML formatter (note_0035) ──────────────────────────────────────
+// A lightweight, dependency-free YAML colorizer for the Content tab (.yml/.yaml
+// context files, which previously showed as flat gray text). Builds plain React
+// elements (no raw HTML) — keys, values (type-classed), list dashes, doc
+// separators, and #comments each get an accent.
+
+/** Class for a scalar value by its apparent YAML type. */
+function yamlValClass(v: string): string {
+  const t = v.trim();
+  if (!t) return 'yml-val';
+  if (/^(true|false|yes|no|on|off|null|~)$/i.test(t)) return 'yml-bool';
+  if (/^-?\d+(\.\d+)?$/.test(t)) return 'yml-num';
+  if (/^["'].*["']$/.test(t)) return 'yml-str';
+  if (/^(uai:\/\/|https?:\/\/|\/|~\/)/.test(t)) return 'yml-str';
+  return 'yml-val';
+}
+
+/** Index of an inline ` #` comment not inside quotes, or -1. */
+function yamlInlineCommentIdx(s: string): number {
+  let q: string | null = null;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (q) { if (ch === q) q = null; continue; }
+    if (ch === '"' || ch === "'") { q = ch; continue; }
+    if (ch === '#' && i > 0 && /\s/.test(s[i - 1])) return i;
+  }
+  return -1;
+}
+
+function YamlLine({ line }: { line: string }): JSX.Element {
+  const trimmed = line.trimStart();
+  const indent = line.slice(0, line.length - trimmed.length);
+  if (trimmed.startsWith('#')) return <div className="yml-line"><span className="yml-comment">{line}</span></div>;
+  if (/^(---|\.\.\.)\s*$/.test(trimmed)) return <div className="yml-line">{indent}<span className="yml-sep">{trimmed}</span></div>;
+
+  const ci = yamlInlineCommentIdx(line);
+  const content = ci >= 0 ? line.slice(0, ci) : line;
+  const comment = ci >= 0 ? line.slice(ci) : '';
+  const commentSpan = comment ? <span className="yml-comment">{comment}</span> : null;
+
+  const kv = content.match(/^(\s*)(- )?([^:]+?):(\s*)(.*)$/);
+  if (kv) {
+    const [, ind, dash, key, sp, val] = kv;
+    return (
+      <div className="yml-line">{ind}
+        {dash ? <span className="yml-dash">{dash}</span> : null}
+        <span className="yml-key">{key}</span><span className="yml-colon">:</span>{sp}
+        {val ? <span className={yamlValClass(val)}>{val}</span> : null}{commentSpan}
+      </div>
+    );
+  }
+  const li = content.match(/^(\s*)(- )(.*)$/);
+  if (li) {
+    const [, ind, dash, val] = li;
+    return <div className="yml-line">{ind}<span className="yml-dash">{dash}</span><span className={yamlValClass(val)}>{val}</span>{commentSpan}</div>;
+  }
+  return <div className="yml-line">{content}{commentSpan}</div>;
+}
+
+function YamlView({ text }: { text: string }): JSX.Element {
+  const lines = (text ?? '').split('\n');
+  return <pre className="context-mgr-yaml">{lines.map((line, i) => <YamlLine key={i} line={line} />)}</pre>;
+}
+
 /** Absolute on-disk path for an AI_ROOT-relative path (for open/copy). */
 function absPathOf(relPath?: string | null): string | null {
   if (!relPath) return null;
@@ -730,6 +794,7 @@ export default function ContextMgrPane({ tabId, deepLinkId }: ContextMgrPaneProp
   const focusVersion = itemVersion(meta);
   const focusPath = meta?.path ?? content?.path ?? null;
   const contentIsMarkdown = (content?.path ?? '').toLowerCase().endsWith('.md');
+  const contentIsYaml = /\.(ya?ml)$/i.test(content?.path ?? '');
 
   // ── Library item actions (Open / Open in Matrix / Load into… / Archive) ────
   const openSelectedFile = useCallback(async () => {
@@ -1157,6 +1222,8 @@ export default function ContextMgrPane({ tabId, deepLinkId }: ContextMgrPaneProp
                               className="context-mgr-md"
                               dangerouslySetInnerHTML={{ __html: safeMarkdown(content?.content ?? '') }}
                             />
+                          ) : contentIsYaml ? (
+                            <YamlView text={content?.content ?? ''} />
                           ) : (
                             <pre className="context-mgr-content-pre">{content?.content ?? '(no content)'}</pre>
                           )}

@@ -133,10 +133,30 @@ export interface PromptBoxConfig {
   /** Whether the 📎 Attach button is shown in the control pane. Optional so older
    *  persisted state still loads; undefined = shown (default true). */
   showAttach?: boolean;
+  /** Whether the 🔖 Library button (saved-prompts repository) is shown in the control
+   *  pane. Optional so older persisted state still loads; undefined = shown (default true). */
+  showLibrary?: boolean;
   /** Default prompt-box height, in lines (the resize floor the box opens at and
    *  collapses to). Optional so older persisted state still loads; undefined =
    *  15 lines. Clamped to a sane range in the UI. */
   defaultHeightLines?: number;
+  /** When a single Send fans out to MULTIPLE recipients, pause this many seconds
+   *  between each delivery (lets each session's terminal settle / avoids hammering).
+   *  Optional; undefined or 0 = no pause (send back-to-back). Clamped in the UI. */
+  multiSendDelaySec?: number;
+}
+
+/** A reusable prompt from the prompt library (repository). The store + CRUD live in
+ *  scripts/prompts/prompt_library.py (YAML, single source of truth); the app reaches
+ *  it through the prompt.library.* bus commands. Content only — no timing/delivery. */
+export interface SavedPrompt {
+  id: string;
+  title: string;
+  body: string;
+  /** Optional single free-text tag for grouping/filtering (flat, no folders in v1). */
+  tag?: string;
+  /** ISO-8601 creation timestamp (UTC), for stable ordering. */
+  created?: string;
 }
 
 export interface AppState {
@@ -169,7 +189,7 @@ export interface AppState {
   promptBoxConfig?: PromptBoxConfig;
 }
 
-export type TabType = 'session' | 'folder' | 'terminal' | 'brief' | 'transcript' | 'search' | 'project' | 'team' | 'webai' | 'app';
+export type TabType = 'session' | 'folder' | 'terminal' | 'brief' | 'transcript' | 'search' | 'project' | 'team' | 'webai' | 'app' | 'markdown';
 export type GridLayout = 'single' | 'vertical_2' | 'horizontal_2' | 'grid_2x2';
 
 export interface Tab {

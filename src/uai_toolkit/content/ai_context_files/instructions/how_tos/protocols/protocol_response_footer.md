@@ -46,7 +46,7 @@ Fires when the user sends a message, before the AI responds.
 
 This makes context data available to the AI at any point during the turn via `sessions_state_get context.used_pct`, enabling context-aware behavior (e.g., deciding to compact).
 
-**Platforms:** Claude Code and Gemini (native hooks). Codex: graceful degradation (context data may be absent).
+**Platforms:** Claude Code (native hooks). Codex: graceful degradation (context data may be absent).
 
 ### Phase 2: get_footer Call (end of response)
 
@@ -164,7 +164,7 @@ The MCP tool resolves tracking_id from the module-level SessionStore instance. T
 ## Dependencies
 
 - `spec_session_state_store` v1.0 — session state reads
-- `read_jsonl.py` — transcript summary. Syntax: `read_jsonl.py summary <uuid> [--platform claude|codex|gemini]`
+- `read_jsonl.py` — transcript summary. Syntax: `read_jsonl.py summary <uuid> [--platform claude|codex]`
 - `lib_session.py` — `find_instance_file()` for discriminated filenames
 - Statusline JSON — context/token data fallback
 - `schema_hook_definition` — UserPromptSubmit hook definition

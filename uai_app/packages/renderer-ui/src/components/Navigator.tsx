@@ -44,6 +44,8 @@ const PLATFORM_LABELS: Record<string, string> = {
   claude_cli: 'Claude',
   codex_cli: 'Codex',
   gemini_cli: 'Gemini',
+  grok_cli: 'Grok',
+  antigravity_cli: 'Antigravity',
 };
 
 const TAB_LABELS: Record<string, string> = { sessions: 'Sessions', projects: 'Projects / Teams', webuis: 'Web UIs', terminals: 'Terminals', apps: 'Games', news: 'News & Reports' };
@@ -369,15 +371,8 @@ function ContextMenu({ x, y, session, onClose, onRename, toastFn, folders }: {
 
 // ─── New Custom Session Dialog ──────────────────────────────────────────
 
-const WEBAI_URLS: Record<string, string> = {
-  webai_grok: 'https://grok.com',
-  webai_perplexity: 'https://perplexity.ai',
-};
-
 const ALL_PLATFORM_LABELS: Record<string, string> = {
   ...PLATFORM_LABELS,
-  webai_grok: 'Grok',
-  webai_perplexity: 'Perplexity',
   local_llm: 'Local LLM',
 };
 
@@ -401,6 +396,8 @@ function NewCustomSessionDialog({ x, y, onClose, toastFn, aiRoot }: {
   const [pos, setPos] = useState({ x, y });
   const dragRef = useRef<{ startX: number; startY: number; origX: number; origY: number } | null>(null);
 
+  // No webai_* option is selectable anymore (Web AI removed from the +New list),
+  // so this is always false — the fields render and the button reads "Create".
   const isWebAi = platform.startsWith('webai_');
 
   useEffect(() => {
@@ -433,20 +430,6 @@ function NewCustomSessionDialog({ x, y, onClose, toastFn, aiRoot }: {
 
   const handleSubmit = async () => {
     const label = displayName.trim() || `New ${ALL_PLATFORM_LABELS[platform] || 'AI'} Session`;
-
-    // WebAI platforms open a webai tab instead of creating a session
-    if (isWebAi) {
-      const url = WEBAI_URLS[platform];
-      if (url) {
-        executeCommand('workspace.tabs.open', {
-          type: 'webai',
-          targetId: url,
-          label,
-        });
-      }
-      onClose();
-      return;
-    }
 
     // CLI / Local LLM session creation
     const result = await executeCommand('session.create', {
@@ -511,9 +494,8 @@ function NewCustomSessionDialog({ x, y, onClose, toastFn, aiRoot }: {
             <option value="claude_cli">Claude</option>
             <option value="codex_cli">Codex</option>
             <option value="gemini_cli">Gemini</option>
-            <option disabled>{'\u2500\u2500 Web AI \u2500\u2500'}</option>
-            <option value="webai_grok">Grok</option>
-            <option value="webai_perplexity">Perplexity</option>
+            <option value="grok_cli">Grok</option>
+            <option value="antigravity_cli">Antigravity</option>
             <option disabled>{'\u2500\u2500 Local LLM \u2500\u2500'}</option>
             <option value="local_llm">Local LLM</option>
           </select>
@@ -735,10 +717,6 @@ function FilterToolbar({ filter, onFilterChange, sortField, sortDirection, onSor
           className={`filter-pill platform-codex${filter.platform.has('codex_cli') ? ' active' : ''}`}
           onClick={() => toggleFilter('platform', 'codex_cli')}
         >Codex</button>
-        <button
-          className={`filter-pill platform-gemini${filter.platform.has('gemini_cli') ? ' active' : ''}`}
-          onClick={() => toggleFilter('platform', 'gemini_cli')}
-        >Gemini</button>
       </div>
 
       {/* Date range + Unaffiliated row */}
@@ -1155,7 +1133,7 @@ export default function Navigator({ onSelectSession, activeSessionId }: Navigato
               <div className="nav-tools-group-label">Comms</div>
               <div className="nav-tools-grid">
                 <button className="nav-tool-btn" onClick={() => executeCommand('workspace.tabs.open', { type: 'app', targetId: 'user-messages', label: 'Messages' })}>Messages<MessagesNavBadge /></button>
-                <button className="nav-tool-btn" onClick={() => executeCommand('workspace.tabs.open', { type: 'app', targetId: 'tab-manager', label: 'Tab Manager' })}>Tab Mgr</button>
+                <button className="nav-tool-btn" onClick={() => executeCommand('workspace.tabs.open', { type: 'app', targetId: 'ai-feed', label: 'AI Feed' })}>AI Feed</button>
               </div>
             </div>
             <div className="nav-tools-group nav-tools-group-session">
@@ -1164,6 +1142,7 @@ export default function Navigator({ onSelectSession, activeSessionId }: Navigato
                 <button className="nav-tool-btn" onClick={() => executeCommand('workspace.tabs.open', { type: 'app', targetId: 'context-manager', label: 'Context Manager' })}>Context Mgr</button>
                 <button className="nav-tool-btn" onClick={() => executeCommand('workspace.tabs.open', { type: 'app', targetId: 'session-store-manager', label: 'Session Store' })}>Session Store</button>
                 <button className="nav-tool-btn" onClick={() => executeCommand('workspace.tabs.open', { type: 'app', targetId: 'mcp-manager', label: 'MCP Manager' })}>MCP Mgr</button>
+                <button className="nav-tool-btn" onClick={() => executeCommand('workspace.tabs.open', { type: 'app', targetId: 'tab-manager', label: 'Tab Manager' })}>Tab Mgr</button>
               </div>
             </div>
           </div>
@@ -1186,7 +1165,8 @@ export default function Navigator({ onSelectSession, activeSessionId }: Navigato
               <div className="context-menu-header" style={{ padding: '4px 10px', fontSize: '10px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Sessions</div>
               <button className="context-menu-item" style={{ borderLeft: '3px solid var(--accent-orange)' }} onClick={() => { createSession('claude_cli'); setShowNewMenu(false); }}><span style={{ marginRight: '6px', color: 'var(--accent-orange)' }}>{'\u2731'}</span>Claude CLI</button>
               <button className="context-menu-item" style={{ borderLeft: '3px solid var(--accent-purple)' }} onClick={() => { createSession('codex_cli'); setShowNewMenu(false); }}><span style={{ marginRight: '6px', color: 'var(--accent-purple)' }}>{'\u25CE'}</span>Codex CLI</button>
-              <button className="context-menu-item" style={{ borderLeft: '3px solid var(--accent-cyan)' }} onClick={() => { createSession('gemini_cli'); setShowNewMenu(false); }}><span style={{ marginRight: '6px', color: 'var(--accent-cyan)' }}>{'\u2726'}</span>Gemini CLI</button>
+              <button className="context-menu-item" style={{ borderLeft: '3px solid #d0d0d0' }} onClick={() => { createSession('grok_cli'); setShowNewMenu(false); }}><span style={{ marginRight: '6px', color: '#fff', fontWeight: 700 }}>X</span>Grok CLI</button>
+              <button className="context-menu-item" style={{ borderLeft: '3px solid #4285f4' }} onClick={() => { createSession('antigravity_cli'); setShowNewMenu(false); }}><span style={{ marginRight: '6px', color: '#4285f4' }}>{'\u25C8'}</span>Antigravity CLI</button>
               <div className="context-menu-separator" />
               {/* Section 2: Resume / Fork, Briefs, Custom */}
               <div className="context-menu-item submenu-trigger">
@@ -1228,19 +1208,6 @@ export default function Navigator({ onSelectSession, activeSessionId }: Navigato
                 executeCommand('workspace.tabs.open', { type: 'terminal', targetId: `terminal_${Date.now()}`, label: 'Terminal' });
                 setShowNewMenu(false);
               }}><span style={{ marginRight: '6px', fontFamily: 'monospace' }}>{'>_'}</span>Terminal</button>
-              <div className="context-menu-separator" />
-              {/* Section 4: Web AI */}
-              <div className="context-menu-header" style={{ padding: '4px 10px', fontSize: '10px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Web AI</div>
-              <button className="context-menu-item" onClick={() => { executeCommand('workspace.tabs.open', { type: 'webai', targetId: 'https://grok.com', label: 'Grok' }); setShowNewMenu(false); }}><span style={{ marginRight: '6px', color: '#fff', fontWeight: 700 }}>X</span>Grok</button>
-              <button className="context-menu-item" onClick={() => { executeCommand('workspace.tabs.open', { type: 'webai', targetId: 'https://chatgpt.com', label: 'ChatGPT' }); setShowNewMenu(false); }}><span style={{ marginRight: '6px', color: '#74aa9c', fontWeight: 700 }}>G</span>ChatGPT</button>
-              <button className="context-menu-item" onClick={() => { executeCommand('workspace.tabs.open', { type: 'webai', targetId: 'https://gemini.google.com', label: 'Gemini Web' }); setShowNewMenu(false); }}><span style={{ marginRight: '6px', color: '#4285f4', fontWeight: 700 }}>G</span>Gemini Web</button>
-              <button className="context-menu-item" onClick={() => { executeCommand('workspace.tabs.open', { type: 'webai', targetId: 'https://claude.ai', label: 'Claude Web' }); setShowNewMenu(false); }}><span style={{ marginRight: '6px', color: '#e07a4a', fontWeight: 700 }}>C</span>Claude Web</button>
-              <button className="context-menu-item" onClick={() => { executeCommand('workspace.tabs.open', { type: 'webai', targetId: 'https://perplexity.ai', label: 'Perplexity' }); setShowNewMenu(false); }}><span style={{ marginRight: '6px', color: '#bb9af7', fontWeight: 700 }}>P</span>Perplexity</button>
-              <button className="context-menu-item" onClick={() => {
-                const url = prompt('URL:');
-                if (url?.trim()) { executeCommand('workspace.tabs.open', { type: 'webai', targetId: url.trim(), label: new URL(url.trim()).hostname }); }
-                setShowNewMenu(false);
-              }}>Custom URL...</button>
               <div className="context-menu-separator" />
               {/* Section 5: Organize */}
               <div className="context-menu-header" style={{ padding: '4px 10px', fontSize: '10px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Organize</div>

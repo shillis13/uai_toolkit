@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
 """Unified AI CLI launcher entrypoint.
 
-Canonical public entrypoint for launching Claude and Codex CLI sessions.
+Canonical public entrypoint for launching Claude, Codex, Antigravity, and Grok
+CLI sessions.
 Busybox symlinks:
-  claudeCli -> ai_launch.py
-  codexCli  -> ai_launch.py
-(gemini_cli retired 2026-07-12 — discontinued upstream, no longer launchable.)
+  claudeCli      -> ai_launch.py
+  codexCli       -> ai_launch.py
+  antigravityCli -> ai_launch.py   (Antigravity CLI `agy`)
+  grokCli        -> ai_launch.py   (Grok Build `grok`)
+(gemini_cli retired 2026-07-12 — discontinued upstream; Antigravity CLI is its
+successor.)
 """
 from __future__ import annotations
 
@@ -25,18 +29,25 @@ from uai_toolkit.common_utils.lib_logging import configure_logging
 from uai_toolkit.cli.lib_orchestrator import main as orchestrator_main
 
 
+_PLATFORMS = {'claude_cli', 'codex_cli', 'antigravity_cli', 'grok_cli'}
+
+
 def detect_platform(argv0: str, argv: list[str]) -> tuple[str, list[str]]:
     name = Path(argv0).stem.lower()
     if 'claude' in name:
         return 'claude_cli', argv
     if 'codex' in name:
         return 'codex_cli', argv
+    if 'antigravity' in name or name == 'agy':
+        return 'antigravity_cli', argv
+    if 'grok' in name:
+        return 'grok_cli', argv
 
     env_platform = os.environ.get('AI_LAUNCH_PLATFORM')
-    if env_platform in {'claude_cli', 'codex_cli'}:
+    if env_platform in _PLATFORMS:
         return env_platform, argv
 
-    if len(argv) >= 2 and argv[0] == '--platform' and argv[1] in {'claude_cli', 'codex_cli'}:
+    if len(argv) >= 2 and argv[0] == '--platform' and argv[1] in _PLATFORMS:
         return argv[1], argv[2:]
 
     return 'claude_cli', argv

@@ -223,13 +223,12 @@ def cmd_state_persist(args):
 
 def cmd_state_load(args):
     # type: (argparse.Namespace) -> None
+    # State is auto-loaded from state.{uuid8}.json on store init; "load" here means
+    # "read back the full persisted state". (Was: store.load() — a method that never
+    # existed on store.py's SessionStore, so this subcommand crashed with AttributeError.)
     data_dir = _resolve_data_dir(args.tracking_id, args.data_dir)
     store = _get_store(args.tracking_id, data_dir)
-    sid = getattr(args, 'session_id', None) or args.tracking_id
-    result = store.load(sid)
-    if "error" in result:
-        print("Error: {}".format(result["error"]), file=sys.stderr)
-        sys.exit(1)
+    result = store.list_all()
     _json_out(result)
 
 
@@ -334,7 +333,7 @@ def build_parser():
     p.set_defaults(func=cmd_state_persist)
 
     # state_load
-    p = subparsers.add_parser("state_load", help="Load previously persisted session state")
+    p = subparsers.add_parser("state_load", help="Show all persisted session state (key-values)")
     add_common_args(p)
     p.add_argument("--session-id", default=None, help="Session ID to load (defaults to tracking_id)")
     p.set_defaults(func=cmd_state_load)

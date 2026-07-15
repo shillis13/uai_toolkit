@@ -36,7 +36,7 @@ last_reconciled_against:
 
 ## 1. One-Screen Mental Model
 
-The AI CLI stack turns terminal agents — Claude CLI, Codex CLI, Gemini CLI — into a persistent, inspectable, orchestratable worker ecosystem. The core principle: **terminal CLIs stay real terminal sessions; everything around them becomes structured data and durable control surfaces.**
+The AI CLI stack turns terminal agents — Claude CLI and Codex CLI (and formerly Gemini CLI, retired 2026-07-12) — into a persistent, inspectable, orchestratable worker ecosystem. The core principle: **terminal CLIs stay real terminal sessions; everything around them becomes structured data and durable control surfaces.**
 
 ```
                                 AI CLI ECOSYSTEM
@@ -46,7 +46,7 @@ The AI CLI stack turns terminal agents — Claude CLI, Codex CLI, Gemini CLI —
 │   ├─ launches/resumes ─▶ ai_launch.py ─▶ terminal substrate ─▶ live CLI       │
 │   │                    [identity+bootstrap]  [tmux/zellij/PTY]  [Claude/etc.]   │
 │   │                                                                             │
-│   ├─ controls ────────▶ session_ops.py / send_prompt.sh / hooks                 │
+│   ├─ controls ────────▶ session_ops.py / send_prompt.py / hooks                 │
 │   │                    [write/read/status] [prompt queues] [event handlers]     │
 │   │                                                                             │
 │   ├─ coordinates ─────▶ TODO tracker ─▶ Task-Coordination ─▶ callbacks/messages │
@@ -76,7 +76,7 @@ The system extends the five canonical LLM agent components — Perception, Reaso
 
 ## 2. Launch, Identity, and Session Stores
 
-`ai_launch.py` is the only supported entry point for launching AI CLI sessions. The symlinks `claudeCli`, `codexCli`, and `geminiCli` point to it; `argv[0]` selects platform behavior.
+`ai_launch.py` is the only supported entry point for launching AI CLI sessions. The symlinks `claudeCli` and `codexCli` point to it (a `geminiCli` symlink also existed, but Gemini CLI was retired 2026-07-12); `argv[0]` selects platform behavior.
 
 ```
 User / UCI / MCP
@@ -92,7 +92,7 @@ User / UCI / MCP
 │  └─ prebuilt command handed to lib_session_substrate.py            │
 └───────────────────────────┬────────────────────────────────────────┘
                             ▼
-             tmux/zellij/node-pty session running Claude/Codex/Gemini
+             tmux/zellij/node-pty session running Claude/Codex (Gemini retired 2026-07-12)
 ```
 
 ### Session Identity Layers
@@ -131,7 +131,7 @@ The per-session KV store supports reserved namespaces validated by `schema_sessi
 
 The system deliberately separates **intent/backlog** from **executable assignment**.
 
-**TODO tracker** (`ai_general/work/todos/`, `todo_mgr`) is for backlog and project memory. TODOs are directory-shaped records with `notes.md`, status files, flags, tags, and optional children.
+**TODO tracker** (`ai_general/work/todos/`, `todos-mgr`) is for backlog and project memory. TODOs are directory-shaped records with `notes.md`, status files, flags, tags, and optional children.
 
 **Task-Coordination** (`task_coord_cli.py`, `task_coord_lib.py`, workflow MCP) is for worker execution. The v9.0 protocol uses zero-byte flag files for state transitions. Atomic directory moves prevent claim races. `.response.md` carries intermediate updates; `.completion.md` is the final deliverable.
 
@@ -184,11 +184,11 @@ The key integration between hooks and comms: **queued prompts are delivered auto
 1. A message/orchestrator queues a prompt: YAML entry in `ai_comms/prompts_inbox/{session}/`
 2. On next user prompt (`UserPromptSubmit`), handler loads the queue, composes entries (urgency-sorted, max 10 entries / 8000 chars), and outputs them as `additionalContext`
 3. Claude sees the queued content as part of the user's turn — no manual paste needed
-4. Post-response prompts (`postResponse` delivery) are delivered by the `Stop` handler via `send_prompt.sh --force`
+4. Post-response prompts (`postResponse` delivery) are delivered by the `Stop` handler via `send_prompt.py --force`
 
 ### Hook Installation
 
-**Current (as-built):** Claude Code hooks are configured directly in `~/.claude/settings.json`, each pointing to `dispatch.py` with the hook type as argument. Gemini currently has only an `AfterTool` audit hook (`hook_audit_tools.py`), not the full dispatcher architecture. Codex hooks are configured via `AGENTS.md` managed blocks.
+**Current (as-built):** Claude Code hooks are configured directly in `~/.claude/settings.json`, each pointing to `dispatch.py` with the hook type as argument. Gemini CLI (retired 2026-07-12) had only an `AfterTool` audit hook (`hook_audit_tools.py`), never the full dispatcher architecture. Codex hooks are configured via `AGENTS.md` managed blocks.
 
 **Planned:** A platform-agnostic YAML source (`hooks.yml`) and installer (`install_hooks.py`) are designed in `schema_hook_definition.latest.yml` but not yet implemented. When built, this would enable managing all platform hook configurations from one YAML file with sidecar manifests for idempotent updates.
 
@@ -235,13 +235,13 @@ Prompt queue entries are YAML files in `ai_comms/prompts_inbox/{session}/` — d
 - **Delivery modes:** `pre-prompt` (injected on next user turn), `post-prompt` (same), `postResponse` (injected after AI responds via Stop hook)
 - **Fields:** `to`, `content`, `urgency`, `delivery`, `ready_for_delivery`, `queued_at`, `source`, `callback_endpoint`
 
-The `UserPromptSubmit` hook delivers `pre-prompt` and `post-prompt` entries as `additionalContext`. The `Stop` hook delivers `postResponse` entries via `send_prompt.sh --force`.
+The `UserPromptSubmit` hook delivers `pre-prompt` and `post-prompt` entries as `additionalContext`. The `Stop` hook delivers `postResponse` entries via `send_prompt.py --force`.
 
 ### Callback Endpoints
 
 The callback system decouples responders from response channels:
 
-- **`prompt://target/session`** — Send via `send_prompt.sh` (supports template, submit, force flags)
+- **`prompt://target/session`** — Send via `send_prompt.py` (supports template, submit, force flags)
 - **`file://path`** — Write to regular file
 - **`fifo://path`** — Write to named FIFO
 - **`none://`** — No-op (fire-and-forget)
@@ -265,7 +265,7 @@ Persistent messages that apply to scopes: `global`, `platform`, `team`, `project
 ### MCP Comms Server
 
 The comms MCP server (`ai_general/apps/mcps/comms/`) aggregates three tool modules:
-- **`comms_prompting`** — send_prompt, observe_session, wait_response, schedule, rename, condense, read_history (wraps `send_prompt.sh`, `session_ops.py`, `condense.py`)
+- **`comms_prompting`** — send_prompt, observe_session, wait_response, schedule, rename, condense, read_history (wraps `send_prompt.py`, `session_ops.py`, `condense.py`)
 - **`comms_messages`** — send, broadcast, list, acknowledge, queue-prompt, standing messages, sweep (wraps `messaging.py`; underlying CLI supports more operations than MCP exposes)
 - **`comms_callbacks`** — make_endpoint, deliver, parse_endpoint (wraps `callback_lib.py`)
 
@@ -301,7 +301,7 @@ Shared slots under AI control (`ai_memories/80_working_memory/`), defined by `ma
 - **TOPIC-load:** 08=learnings, 09=cross-AI notes
 - **DEMAND-load:** 10=project history, 11=novel phrasing
 
-CLI/Desktop agents write directly. Web/iOS environments emit `<<<INSERT type=memory_v1.1>>>` blocks for later harvest.
+Agents read and write slots through the knowledge MCP memory tools (`knowledge_memory_append` / `_read` / `_search`), never by hand-editing the slot files.
 
 ### Session Briefs and Condensation
 
@@ -344,7 +344,7 @@ ai_general/ai_context_files/           authored knowledge/instructions
 
 ai_general/ai_profiles/               composition layer
   ├─ globals/                          universal bundles
-  ├─ platforms/                        Claude/Codex/Gemini platform traits
+  ├─ platforms/                        Claude/Codex platform traits (Gemini retired 2026-07-12)
   ├─ roles/                            assistant, worker, dev, reviewer, ...
   └─ profiles/                         composed identities
 
@@ -408,7 +408,7 @@ UAI is the planned successor to UCI — a full application rewrite with componen
 ┌────────────────────────────────┬────────────────────────────────────────────────────────────────────────┬
 │ **Capability**                 │ **Primary files/tools**                                                │
 ├────────────────────────────────┼────────────────────────────────────────────────────────────────────────┼
-│ Launch Claude/Codex/Gemini     │ `ai_launch.py` , `claudeCli` , `codexCli` , `geminiCli`              │
+│ Launch Claude/Codex            │ `ai_launch.py` , `claudeCli` , `codexCli` (`geminiCli` retired 2026-07-12) │
 ├────────────────────────────────┼────────────────────────────────────────────────────────────────────────┼
 │ Terminal                       │ `session_ops.py` , `lib_session_substrate.py`                          │
 │ attach/read/write/status       │                                                                        │
@@ -417,12 +417,12 @@ UAI is the planned successor to UCI — a full application rewrite with componen
 ├────────────────────────────────┼────────────────────────────────────────────────────────────────────────┼
 │ Per-session KV state           │ `store.py` , `session_mgr.py` , `schema_session_state_keys.latest.yml` │  
 ├────────────────────────────────┼────────────────────────────────────────────────────────────────────────┼
-│ TODO backlog                   │ `ai_general/work/todos/` , `todo_mgr` , workflow todo MCP                   │
+│ TODO backlog                   │ `ai_general/work/todos/` , `todos-mgr` , workflow todo MCP                   │
 ├────────────────────────────────┼────────────────────────────────────────────────────────────────────────┼
 │ Executable Tasks               │ `task_coord_cli.py` , `task_coord_lib.py` ,                            │
 │                                │ `ai_comms/{platform}/tasks/`                                           │
 ├────────────────────────────────┼────────────────────────────────────────────────────────────────────────┼
-│ Messages / prompt queues       │ `messaging.py` , `send_prompt.sh` , `ai_comms/messages/` ,             │
+│ Messages / prompt queues       │ `messaging.py` , `send_prompt.py` , `ai_comms/messages/` ,             │
 │                                │ `prompts_inbox/`                                                       │
 ├────────────────────────────────┼────────────────────────────────────────────────────────────────────────┼
 │ Hooks / prompt augmentation    │ `dispatch.py` , `{HookType}/NN_handler_{sync\async}.py`                │

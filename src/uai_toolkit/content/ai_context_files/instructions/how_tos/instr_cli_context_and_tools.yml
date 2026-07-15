@@ -19,7 +19,7 @@ rules:
       knowledge: history/archive search, memory, context library
       sessions: session lifecycle, reasoning, scheduled tasks
       workflow: todos, tasks, playbooks, devtrees
-      chat: web/desktop chat browser automation
+      chat: web chat browser automation via CDP
       note: 'These MCP servers ARE available in Claude Code interactive sessions.
 
         Native tools (Read/Edit/Bash) are generally preferred for file ops,

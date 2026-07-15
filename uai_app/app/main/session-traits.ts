@@ -4,10 +4,8 @@
  */
 
 import * as path from 'node:path';
+import { aiRootMain as getAiRootMain, shellPath } from './paths';
 
-function getAiRootMain(): string {
-  return process.env.AI_ROOT_MAIN || process.env.AI_ROOT || path.join(require('node:os').homedir(), 'AI/ai_root');
-}
 
 const SESSION_TRAITS_SCRIPT = path.join(
   getAiRootMain(),
@@ -16,7 +14,7 @@ const SESSION_TRAITS_SCRIPT = path.join(
 
 export function runSessionTraits(args: string[]): Promise<unknown> {
   const { execFile } = require('node:child_process') as typeof import('node:child_process');
-  const searchPath = [process.env.PATH || '', '/opt/homebrew/bin', '/usr/local/bin'].join(':');
+  const searchPath = shellPath();
   return new Promise((resolve, reject) => {
     execFile('python3', [SESSION_TRAITS_SCRIPT, ...args, '--json'], {
       maxBuffer: 2 * 1024 * 1024,

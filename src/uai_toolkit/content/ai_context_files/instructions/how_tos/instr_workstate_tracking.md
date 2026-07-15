@@ -103,7 +103,7 @@ Now `tasks_search` returns tasks from both your file and theirs.
 
 | System | Scope |
 |--------|-------|
-| todo_mgr | Project-level work tracking (lifecycle, tags, hierarchy) |
+| todos-mgr | Project-level work tracking (lifecycle, tags, hierarchy) |
 | CLI Coordination v4 | Delegation lifecycle (assigned → executing → done) |
 | workstate (this) | Agent-level step tracking (what step am I on) |
 | memory slots | Learnings and observations |

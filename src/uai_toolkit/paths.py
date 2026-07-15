@@ -68,6 +68,11 @@ def _v(name: str, default: Path) -> Path:
     return Path(v).expanduser() if v else default
 
 
+# The canonical MAIN root: equals AI_ROOT on a normal install, but stays the
+# production main when AI_ROOT is a devTree. Default = AI_ROOT (portable — no
+# hardcode); the devTree tooling sets $AI_ROOT_MAIN when the two must differ.
+AI_ROOT_MAIN = _v("AI_ROOT_MAIN", AI_ROOT)
+
 # Derived (default under AI_ROOT, independently overridable):
 AI_DATA          = _v("AI_DATA",          AI_ROOT / "ai_general" / "data")
 AI_SCRIPTS       = _v("AI_SCRIPTS",       AI_ROOT / "ai_general" / "scripts")

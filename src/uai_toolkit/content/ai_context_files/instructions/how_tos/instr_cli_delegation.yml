@@ -2,7 +2,7 @@ principle: 'CLI interactive sessions balance direct execution with delegation.
 
   Do work directly when you can. Delegate for parallelism, async, or isolation.
 
-  Unlike Desktop (which must delegate most execution), CLI has full execution capability.
+  CLI has full execution capability — bash filesystem access plus native tools.
 
   '
 tools:
@@ -45,16 +45,15 @@ tools:
     - Any work that benefits from an independent perspective
     use_liberally: true
     note: Available in Claude Code interactive sessions via MCP
-  desktop_commander:
+  document_reading:
     type: synchronous, immediate
     capabilities:
-    - Filesystem and process management
-    - Excel (.xlsx), DOCX, PDF reading with structured output
-    - Process supervision and REPL interaction
+    - PDF reading via the native Read tool (page ranges)
+    - Excel (.xlsx) / DOCX reading via bash + Python libraries (openpyxl, python-docx)
     use_for:
-    - Excel/DOCX/PDF file reading (capabilities native tools lack)
-    - Process management when bash is insufficient
-    note: Available in Claude Code interactive sessions via MCP
+    - PDF file reading (native Read tool)
+    - Excel/DOCX extraction (bash-invoked Python scripts)
+    note: Handled with native tools + bash; no separate MCP required
   agent_subagents:
     type: synchronous or background, parallel
     capabilities:
@@ -76,24 +75,19 @@ tools:
     type: async, file-based
     base_path: ~/.claude/coordination/ (→ ai_comms/claude_cli/)
     capabilities:
-    - Delegate to other AI agents (Claude CLI, Gemini CLI, and Codex CLI)
+    - Delegate to other AI agents (Claude CLI and Codex CLI)
     - Parallel execution across multiple CLI instances
     - Persistent task state across sessions
     use_for:
     - Delegating to OTHER AI agents (not self)
     - Long-running work that outlives this session
-    - Work requiring a different AI's capabilities (e.g., Gemini for large context)
+    - Work requiring a different AI's capabilities
     - Complex multi-step orchestration across agents
     patterns:
-      1: Create task spec via task-coord:gen_task (with callback)
+      1: Create task spec via workflow_gen_task (with callback)
       2: Agent claims, executes, writes response
       3: Callback fires on completion → notification
       4: Read results, discuss with user
-  gemini_cli:
-    mcp_control:
-      flag: --allowed-mcp-server-names
-      purpose: Whitelist MCP servers at launch (blocks all others)
-      note: Passed through gemini_cli.py as passthrough arg
 delegate_when:
 - 2+ independent tasks (→ parallel Agent subagents)
 - Work for a different AI agent (→ CLI Coordination)
@@ -109,7 +103,8 @@ decision_tree:
   focused_task_for_codex_model: Codex MCP (synchronous, single-task)
   parallel_independent_tasks: Multiple Agent subagents (concurrent)
   deep_codebase_exploration: Agent subagent (Explore type)
-  excel_docx_pdf_reading: Desktop Commander MCP
+  pdf_reading: native Read tool (page ranges)
+  excel_docx_reading: bash + Python libraries (openpyxl, python-docx)
   delegate_to_other_AI: CLI Coordination
   risky_experimental: Agent subagent with worktree isolation
   long_running_outlives_session: CLI Coordination

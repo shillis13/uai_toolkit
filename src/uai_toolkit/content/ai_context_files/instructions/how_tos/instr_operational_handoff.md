@@ -11,7 +11,7 @@ updated: '2026-04-15'
 
 **Version:** 2.1
 **Created:** 2026-04-12
-**Location:** ai_general/ai_traits/procedures/operational_handoff.md
+**Location:** ai_general/ai_context_files/instructions/how_tos/instr_operational_handoff.md
 **Purpose:** Instructions for condensing AI-human work sessions into successor-ready handoff documents.
 **Canonical:** This file is the single source. Scripts and skills reference this path.
 
@@ -218,7 +218,7 @@ summary:
 participants:
   - id: <human/AI/session/tool name>
     role: <director|orchestrator|worker|reviewer|tool|other>
-    via: <direct|mcp|task-coord|prompting|unknown>
+    via: <direct|mcp|comms|unknown>
     status: <verified|inferred|unknown>
     notes: <why this participant matters>
 

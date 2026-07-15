@@ -52,13 +52,13 @@ Reference Pointers enable:
 ### PATH
 - **Purpose:** Direct file reference
 - **Format:** `TYPE:relative/path/to/file.yml`
-- **Resolution:** Read file via Desktop Commander
+- **Resolution:** Read file via bash file I/O (the Read tool)
 - **Example:** `STARTER:ai_memories/60_knowledge/about_user/identity.yml`
 
 ### QUERY
 - **Purpose:** Dynamic search against long-term memory
 - **Format:** `QUERY:<search terms> [| modifiers]`
-- **Resolution:** Search ai_memories/ using memory_search tool
+- **Resolution:** Search ai_memories/ using `knowledge_memory_search`
 - **Example:** `QUERY:CLI coordination issues | SINCE:14d | LIMIT:5`
 
 ### RECENT
@@ -116,15 +116,15 @@ Reference Pointers enable:
 
 ## Integration Points
 
-### memory_user_edits_tool
-- **Purpose:** CRUD for native memory slots
+### knowledge MCP memory tools
+- **Purpose:** CRUD for working-memory slots (`knowledge_memory_append` / `_update` / `_delete` on a slot number)
 - **Pattern:** Use to add/remove/update pointers
 
-### desktop_commander
+### bash file I/O (Read tool)
 - **Purpose:** Read destination files
-- **Pattern:** view or read_file for PATH pointers
+- **Pattern:** Read for PATH pointers
 
-### memory_search (todo_0039)
+### knowledge_memory_search
 - **Purpose:** Execute QUERY pointers
 - **Pattern:** Search ai_memories/ for relevant chunks
 

@@ -24,7 +24,6 @@ import { onActivityChange } from '../stores/session-activity';
 interface LandTodo {
   id?: string;
   status?: string;
-  project?: string | null;
   title?: string;
   updated?: string;
   created?: string;
@@ -38,6 +37,7 @@ interface LandAssessment {
 }
 
 interface LandRow {
+  kind: 'session' | 'team' | 'project' | 'unassigned';
   name: string;
   tracking_id?: string;
   platform: string;
@@ -45,6 +45,7 @@ interface LandRow {
   activity_state: string;
   state_display: string;
   ago: string;
+  last_activity?: string | null;   // raw ISO — default sort key
   roles: string[];
   todos: LandTodo[];
   assessment?: LandAssessment | null;
@@ -53,7 +54,6 @@ interface LandRow {
 interface LandTotals {
   todos: number;
   todos_no_assignee: number;
-  todos_no_project: number;
   active_sessions: number;
   active_no_todo: number;
 }
@@ -78,6 +78,15 @@ function backendProcess(status: string | undefined): string {
   if (status === 'exited') return 'exited';
   return 'stopped';
 }
+
+// Worker-kind badge — sessions are the default (no badge); teams/projects/the
+// unassigned bucket get a small colored tag so the unified list reads clearly.
+const KIND_BADGE: Record<string, { label: string; color: string } | null> = {
+  session: null,
+  team: { label: 'TEAM', color: 'var(--accent-purple)' },
+  project: { label: 'PROJECT', color: 'var(--accent-cyan)' },
+  unassigned: { label: 'BACKLOG', color: 'var(--text-muted)' },
+};
 
 const STATUS_CODE: Record<string, string> = {
   Triaging: 'TR', Needs_Research: 'NR', Needs_Derivation: 'ND', Ready: 'RD',
@@ -166,7 +175,11 @@ export default function LiveBoardPane() {
     load();
   }, [load]);
 
-  const rows = model?.rows || [];
+  // Default sort: most-recent activity first (raw last_activity ISO desc; rows
+  // without a timestamp sink to the bottom).
+  const rows = [...(model?.rows || [])].sort(
+    (a, b) => (b.last_activity || '').localeCompare(a.last_activity || ''),
+  );
   const totals = model?.totals;
   const needs = rows.filter(needsPianoman);
 
@@ -187,7 +200,6 @@ export default function LiveBoardPane() {
       activeNoTodo: totals?.active_no_todo ?? null,
       todos: totals?.todos ?? null,
       todosNoAssignee: totals?.todos_no_assignee ?? null,
-      todosNoProject: totals?.todos_no_project ?? null,
     },
     actions: [
       { id: 'refresh', command: 'work.landscape', payload: {}, label: 'Refresh landscape' },
@@ -257,7 +269,7 @@ export default function LiveBoardPane() {
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
         <thead>
           <tr style={{ color: 'var(--text-muted)', textAlign: 'left' }}>
-            <th style={{ padding: '7px 16px', fontWeight: 600 }}>Session</th>
+            <th style={{ padding: '7px 16px', fontWeight: 600 }}>Worker</th>
             <th style={{ padding: '7px 8px', fontWeight: 600 }}>State</th>
             <th style={{ padding: '7px 8px', fontWeight: 600 }}>Activity</th>
             <th style={{ padding: '7px 8px', fontWeight: 600 }}>Recent Work</th>
@@ -265,23 +277,44 @@ export default function LiveBoardPane() {
         </thead>
         <tbody>
           {rows.map((r) => {
-            const visual = resolveVisual(r);
+            const isSession = r.kind === 'session';
+            // Sessions: canonical live visual. Team/Project/Backlog: derived —
+            // green when actively working (a todo In_Progress), muted otherwise.
+            const visual = isSession
+              ? resolveVisual(r)
+              : { color: r.status === 'active' ? 'var(--accent-green)' : 'var(--text-muted)', label: r.state_display, breathing: false };
             const stateColor = visual.color;
             const stateLabel = visual.label;
             const assessState = r.assessment?.state;
+            const badge = KIND_BADGE[r.kind];
+            // Open the right tab per worker kind (unassigned/backlog isn't openable).
+            const openTab = () => {
+              if (isSession && r.tracking_id) executeCommand('workspace.tabs.open', { type: 'session', targetId: r.tracking_id, label: r.name }, { onFailure: 'log' });
+              else if (r.kind === 'team' || r.kind === 'project') executeCommand('workspace.tabs.open', { type: r.kind, targetId: r.name, label: r.name }, { onFailure: 'log' });
+            };
+            const linkable = (isSession && r.tracking_id) || r.kind === 'team' || r.kind === 'project';
             return (
-              <tr key={r.name} style={{ borderTop: '1px solid var(--border)' }}>
+              <tr key={`${r.kind}:${r.name}`} style={{ borderTop: '1px solid var(--border)' }}>
                 <td style={{ padding: '7px 16px', fontWeight: 600 }}>
-                  {r.tracking_id ? (
-                    <span
-                      role="link"
-                      title={`Open ${r.name}'s session tab`}
-                      onClick={() => executeCommand('workspace.tabs.open', { type: 'session', targetId: r.tracking_id, label: r.name }, { onFailure: 'log' })}
-                      style={{ color: 'var(--accent-blue)', cursor: 'pointer', textDecoration: 'underline', textDecorationColor: 'color-mix(in srgb, var(--accent-blue) 45%, transparent)' }}
-                    >{r.name}</span>
-                  ) : (
-                    <span style={{ color: 'var(--text)' }}>{r.name}</span>
-                  )}
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
+                    {badge && (
+                      <span style={{
+                        fontSize: 8.5, fontWeight: 800, letterSpacing: '.05em', color: badge.color,
+                        border: `1px solid color-mix(in srgb, ${badge.color} 45%, transparent)`,
+                        borderRadius: 3, padding: '0 4px', lineHeight: '13px',
+                      }}>{badge.label}</span>
+                    )}
+                    {linkable ? (
+                      <span
+                        role="link"
+                        title={`Open ${r.name}`}
+                        onClick={openTab}
+                        style={{ color: 'var(--accent-blue)', cursor: 'pointer', textDecoration: 'underline', textDecorationColor: 'color-mix(in srgb, var(--accent-blue) 45%, transparent)' }}
+                      >{r.name}</span>
+                    ) : (
+                      <span style={{ color: 'var(--text)' }}>{r.name}</span>
+                    )}
+                  </span>
                 </td>
                 <td style={{ padding: '7px 8px' }}>
                   <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>

@@ -211,6 +211,9 @@ def _cmd_backfill(argv):
 
 
 def main(argv):
+    if argv and argv[0] in ("-h", "--help", "help"):
+        print(__doc__)
+        return 0
     if not argv:
         print(__doc__)
         return 2

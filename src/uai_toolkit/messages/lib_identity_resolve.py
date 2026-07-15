@@ -265,6 +265,12 @@ def _resolve_session(query: str) -> Dict:
     matches = _active_matches(query)
     if not matches:
         raise RecipientNotFound(query)
+    # An EXACT tracking-id must short-circuit to exactly that session, even when the
+    # query also fuzzy-matches sibling sessions by name/group (todo_0530). A tracking
+    # id is unique + authoritative; it must never collide into RecipientAmbiguous.
+    exact = [m for m in matches if m.get("tracking_id") == query]
+    if len(exact) == 1:
+        return {"kind": "session", "tracking_id": exact[0]["tracking_id"]}
     if len(matches) > 1:
         raise RecipientAmbiguous(matches)
     return {"kind": "session", "tracking_id": matches[0]["tracking_id"]}

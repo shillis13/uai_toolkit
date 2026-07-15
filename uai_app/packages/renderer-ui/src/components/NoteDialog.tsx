@@ -143,6 +143,12 @@ export default function NoteDialog({
   // What to create on submit — a note, a todo, or both. Create Note defaults on.
   const [createNote, setCreateNote] = useState(true);
   const [createTodo, setCreateTodo] = useState(false);
+  // Ask-Hamilton compose (todo_0539): a general compose-to-session(s) dialog that
+  // merely defaults its addressee to Hamilton. Delivery = message (inbox, async,
+  // reply-expected) or prompt (injected to act now). Addressees multi-select.
+  const [deliveryMode, setDeliveryMode] = useState<'message' | 'prompt'>('message');
+  const [addressees, setAddressees] = useState<string[]>(['Hamilton']);
+  const [addRecipient, setAddRecipient] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Captured view subtrees, each attached to the note on submit.
@@ -162,8 +168,11 @@ export default function NoteDialog({
   const { sessions } = useSessionStore();
   const bodyRef = useRef<HTMLTextAreaElement>(null);
   const mentionTargets = useMemo(
+    // Only ACTIVE (running) sessions — the list was full of stale sessions that
+    // read "active" long after going quiet (note_0035). process_status is the
+    // honest live signal.
     () => sessions
-      .filter((s) => !s.archived && s.display_name)
+      .filter((s) => !s.archived && s.display_name && s.process_status === 'running')
       .map((s) => {
         const name = s.display_name || s.tracking_id;
         return { token: mentionToken(name), label: name, kind: 'session' as const, count: 1, memberIds: [s.tracking_id] };
@@ -179,6 +188,10 @@ export default function NoteDialog({
     requestAnimationFrame(() => { const ta = bodyRef.current; ta?.focus(); ta?.setSelectionRange(caret, caret); });
   }, [mode]);
   const mention = useMention({ textareaRef: bodyRef, sources: mentionSources, onApply: commitBodyMention });
+  // Track popover open-state in a ref so the dialog's ESC listener can defer to
+  // it (first ESC closes the popover, a second ESC closes the dialog).
+  const mentionOpenRef = useRef(false);
+  mentionOpenRef.current = mention.open;
 
   // Reset fields whenever the dialog (re)opens, applying the mode defaults.
   const [prevOpen, setPrevOpen] = useState(false);
@@ -190,6 +203,9 @@ export default function NoteDialog({
     setTitle(editNote ? editNote.title : '');
     setForPM(!askHamilton);
     setForHamilton(askHamilton);
+    setDeliveryMode('message');
+    setAddressees(['Hamilton']);
+    setAddRecipient('');
     setSubmitting(false);
     setError(null);
     setCaptures([]);
@@ -242,31 +258,45 @@ export default function NoteDialog({
     setCaptures((prev) => prev.filter((_, i) => i !== captureIdx));
   };
 
-  // ESC closes.
+  // ESC closes — but if the @-mention popover is open, the FIRST ESC closes the
+  // popover instead (a subsequent ESC then closes the dialog). Uses capture so
+  // it can swallow that first ESC before the textarea's own handler.
   useEffect(() => {
     if (!isOpen) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key !== 'Escape') return;
+      if (mentionOpenRef.current) {
+        e.preventDefault();
+        e.stopPropagation();
+        mention.close();
+        return;
+      }
+      onClose();
     };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [isOpen, onClose]);
+    document.addEventListener('keydown', onKey, true);
+    return () => document.removeEventListener('keydown', onKey, true);
+  }, [isOpen, onClose, mention]);
 
   if (!isOpen) return null;
 
-  const recipients: string[] = [];
-  if (forPM) recipients.push('PM');
-  if (forHamilton) recipients.push('Hamilton');
+  // Ask-Hamilton composes to its addressee list; note mode keeps the PM/Hamilton toggles.
+  const recipients: string[] = askHamilton
+    ? addressees
+    : [...(forPM ? ['PM'] : []), ...(forHamilton ? ['Hamilton'] : [])];
 
   // A note needs a body + a recipient; a todo needs a body OR a title. Submit is
   // enabled when at least one of Create Note / Create todo is checked AND each
   // checked target is valid. A DRAFT save is note-only and lenient (title or body).
   const noteOk = text.trim().length > 0 && recipients.length > 0;
   const todoOk = text.trim().length > 0 || title.trim().length > 0;
+  // Ask Hamilton is an ACTIVE ask (todo_0533): the ask itself always sends, so
+  // submit is valid on body text alone — even if no note/todo is filed.
+  const askOk = askHamilton && text.trim().length > 0 && addressees.length > 0;
   const canSubmit = !submitting
-    && (createNote || createTodo)
-    && (!createNote || noteOk)
-    && (!createTodo || todoOk);
+    && (askOk || (
+      (createNote || createTodo)
+      && (!createNote || noteOk)
+      && (!createTodo || todoOk)));
   const canDraft = createNote && (text.trim().length > 0 || title.trim().length > 0) && !submitting;
 
   const handleSubmit = () => finalize(false);
@@ -325,11 +355,15 @@ export default function NoteDialog({
       }
 
       // Notify @-mentioned sessions — a FINISHED note only (a draft shouldn't nudge).
-      if (!asDraft) {
+      // In ask/compose mode delivery is the dedicated compose block below, so skip
+      // this passive note-nudge entirely (todo_0539).
+      if (!asDraft && !askHamilton) {
         const bare = (text.match(/@([A-Za-z0-9_-]{2,})/g) || []).map((s) => s.slice(1));
         const quoted = (text.match(/@"([^"]+)"/g) || []).map((s) => s.slice(2, -1));
         const targets = Array.from(new Set([
-          ...bare, ...quoted, ...(forHamilton ? ['Hamilton'] : []),
+          // In ASK mode Hamilton gets a dedicated active ask below (not this
+          // passive "you've been named in a note" nudge), so exclude it here.
+          ...bare, ...quoted, ...(forHamilton && !askHamilton ? ['Hamilton'] : []),
         ].map((t) => t.trim()).filter(Boolean)));
         for (const name of targets) {
           const content =
@@ -340,6 +374,26 @@ export default function NoteDialog({
           await executeCommand('comms.send',
             { from: 'piano_man', to: name, content, urgency: 'prompt', subject: `Note ${noteId}` }, { onFailure: 'log' });
         }
+      }
+    }
+
+    // ── Compose-to-session(s) ── (todo_0539) Ask-Hamilton is now a general
+    // compose dialog defaulting to Hamilton. Deliver to EACH addressee as a
+    // MESSAGE (inbox, async, reply-expected) or a PROMPT (injected to act now).
+    // A durable note (when created) is the tracked record; this is the delivery.
+    if (askHamilton && !asDraft) {
+      const askBody =
+        `PianoMan is asking you:\n\n${text.trim().slice(0, 1200)}\n\n` +
+        (noteId
+          ? `Tracked as note ${noteId} — reply here (threads back to PM) or in the note.`
+          : `Reply here — your response threads back to PM.`);
+      for (const to of addressees) {
+        await executeCommand('comms.send', {
+          from: 'piano_man', to, content: askBody,
+          urgency: deliveryMode === 'prompt' ? 'prompt' : 'async',
+          responseType: 'reply',
+          subject: noteId ? `Compose — note ${noteId}` : 'Message from PianoMan',
+        }, { onFailure: 'log' });
       }
     }
 
@@ -562,7 +616,10 @@ export default function NoteDialog({
             placeholder={askHamilton ? 'What do you want to ask Hamilton?  (@ to mention)' : 'Note body…  (@ to mention)'}
             rows={6}
             style={{
+              // Grow to fill the dialog's vertical space instead of leaving dead
+              // space below (note_0035). minHeight keeps a sensible floor.
               width: '100%', boxSizing: 'border-box', resize: 'vertical',
+              flex: '1 1 auto', minHeight: 140,
               background: T.panel, color: T.text,
               border: `1px solid ${T.border}`, borderRadius: 6,
               padding: '9px 11px', fontSize: 13, fontFamily: 'inherit', lineHeight: 1.5,
@@ -638,12 +695,44 @@ export default function NoteDialog({
             )}
           </div>
 
-          <div style={{ display: 'flex', gap: 18 }}>
-            {checkboxRow('For PM', forPM, setForPM)}
-            {checkboxRow('For Hamilton', forHamilton, setForHamilton)}
-            {checkboxRow('Create Note', createNote, setCreateNote)}
-            {checkboxRow('Create todo', createTodo, setCreateTodo)}
-          </div>
+          {askHamilton ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {/* Deliver as: Message (inbox, async, reply-expected) | Prompt (act now) */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ fontSize: 11, color: T.textDim, textTransform: 'uppercase', letterSpacing: '.05em', fontWeight: 700 }}>Deliver as</span>
+                <div style={{ display: 'inline-flex', borderRadius: 999, overflow: 'hidden', border: `1px solid ${T.border}` }}>
+                  {(['message', 'prompt'] as const).map((m) => (
+                    <button key={m} type="button" onClick={() => setDeliveryMode(m)}
+                      title={m === 'message' ? 'Lands in the inbox — async, reply-expected' : 'Injected into their prompt box to act now'}
+                      style={{ background: deliveryMode === m ? T.accentBg : 'transparent', color: deliveryMode === m ? T.accentText : T.textDim, border: 'none', padding: '4px 14px', fontSize: 12, fontWeight: deliveryMode === m ? 600 : 400, cursor: 'pointer', textTransform: 'capitalize' }}>{m}</button>
+                  ))}
+                </div>
+              </div>
+              {/* Addressees — default Hamilton, multi-select, removable */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                <span style={{ fontSize: 11, color: T.textDim, textTransform: 'uppercase', letterSpacing: '.05em', fontWeight: 700 }}>To</span>
+                {addressees.map((a) => (
+                  <span key={a} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, background: T.accentBg, border: `1px solid ${T.accent}`, borderRadius: 999, padding: '2px 9px', fontSize: 12, color: T.accentText }}>
+                    {a}
+                    <button type="button" onClick={() => setAddressees((prev) => prev.filter((x) => x !== a))} title="Remove" style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', fontSize: 13, lineHeight: 1, padding: 0 }}>{'×'}</button>
+                  </span>
+                ))}
+                <input value={addRecipient} onChange={(e) => setAddRecipient(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); const v = addRecipient.trim(); if (v && !addressees.includes(v)) setAddressees((prev) => [...prev, v]); setAddRecipient(''); } }}
+                  placeholder="+ add recipient (name, Enter)…"
+                  style={{ flex: '1 1 140px', minWidth: 120, background: 'var(--bg-deep)', border: `1px solid ${T.border}`, borderRadius: 6, color: 'var(--text)', fontSize: 12, padding: '4px 8px', outline: 'none' }} />
+                {!addressees.includes('PM') && <button type="button" onClick={() => setAddressees((prev) => [...prev, 'PM'])} style={{ background: 'transparent', border: `1px solid ${T.border}`, color: T.textDim, borderRadius: 999, padding: '2px 9px', fontSize: 11, cursor: 'pointer' }}>+ PM</button>}
+              </div>
+              <div style={{ fontSize: 10.5, color: T.textDim }}>@ in the body mentions sessions; a dedicated addressee-@ autocomplete is pending PM's final word (todo_0539).</div>
+            </div>
+          ) : (
+            <div style={{ display: 'flex', gap: 18 }}>
+              {checkboxRow('For PM', forPM, setForPM)}
+              {checkboxRow('For Hamilton', forHamilton, setForHamilton)}
+              {checkboxRow('Create Note', createNote, setCreateNote)}
+              {checkboxRow('Create todo', createTodo, setCreateTodo)}
+            </div>
+          )}
 
           {recipients.length === 0 && (
             <div style={{ color: 'var(--accent-orange)', fontSize: 11 }}>Pick at least one recipient.</div>
@@ -698,8 +787,8 @@ export default function NoteDialog({
               cursor: canSubmit ? 'pointer' : 'default', fontWeight: 600,
             }}
           >
-            {submitting ? 'Saving…'
-              : askHamilton ? 'Send to Hamilton'
+            {submitting ? 'Sending…'
+              : askHamilton ? `Send ${deliveryMode}${addressees.length > 1 ? ` (${addressees.length})` : addressees.length === 1 ? ` to ${addressees[0]}` : ''}`
               : createNote && createTodo ? (editNote ? 'Finalize Note + Todo' : 'Save Note + Todo')
               : createNote ? (editNote ? 'Finalize Note' : 'Save Note')
               : createTodo ? 'Create Todo'

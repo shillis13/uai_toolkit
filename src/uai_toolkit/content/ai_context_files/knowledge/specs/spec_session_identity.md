@@ -3,7 +3,7 @@
 **Status:** Draft / implementation target  
 **Supersedes:** v5.2  
 **Created:** 2026-04-11  
-**Scope:** CLI session identity for Claude CLI, Codex CLI, Gemini CLI, terminal substrates, statusline writers, session registry consumers, and UCI.
+**Scope:** CLI session identity for Claude CLI, Codex CLI, Gemini CLI (retired 2026-07-12; historical `_gem` sessions remain documented), terminal substrates, statusline writers, session registry consumers, and UCI.
 
 ---
 
@@ -66,7 +66,7 @@ Platform codes:
 |---|---|
 | `claude_cli` | `cla` |
 | `codex_cli` | `cod` |
-| `gemini_cli` | `gem` |
+| `gemini_cli` | `gem` (retired 2026-07-12; row kept so historical `_gem` sessions stay documented) |
 
 ### 3.2 Semantics
 
@@ -252,7 +252,7 @@ Purpose:
 - lets statusline scripts find `statusline.jsonl` without querying SQLite
 - lets child tools locate `sessionInfo.json`
 - avoids bootstrap discovery gaps for processes that cannot read wrapper internals
-- provides a stable integration point across Claude, Codex, Gemini, tmux, zellij, direct mode, and UCI
+- provides a stable integration point across Claude, Codex, Gemini (retired 2026-07-12), tmux, zellij, direct mode, and UCI
 
 If `AI_CLI_SESSION_ID` is empty at launch and a UUID is discovered later, registry/sessionInfo are updated. Existing child process environment cannot be changed retroactively; statusline scripts should prefer `sessionInfo.json` for latest UUID if needed.
 

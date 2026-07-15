@@ -1,16 +1,25 @@
 # Research Orchestration Pipeline
 
-**Version:** 2.0.0  
+**Version:** 3.0.0  
 **Type:** Playbook  
 **Created:** 2025-01-17  
 **Author:** Claude + PianoMan  
-**Status:** Active
+**Status:** ACTIVE
+
+> **Retargeted 2026-07-12** — The v2 pipeline dispatched Gemini CLI "shards" as its
+> 1M-context corpus engine; Gemini CLI was discontinued upstream. This version
+> repoints all dispatch onto the current stack: ephemeral **subagents** (the Agent
+> tool) for in-session fan-out, and **`sessions_launch_agent`** (Claude Code / Codex
+> CLI worker sessions) for large-context or long-running work. The
+> decompose → dispatch → collect → synthesize pattern is unchanged.
 
 ---
 
 ## Summary
 
-Single-orchestrator pattern for context-heavy research tasks. One agent spawns lightweight workers for search and extraction, then synthesizes the results. Handles feedback loops internally.
+Single-orchestrator pattern for context-heavy research tasks. One agent decomposes the
+query, dispatches lightweight workers for search and extraction, collects their results,
+then synthesizes the answer. Handles feedback loops internally.
 
 ---
 
@@ -34,18 +43,18 @@ Single-orchestrator pattern for context-heavy research tasks. One agent spawns l
 **Pattern:** Single-orchestrator-multiple-workers
 
 ```
-[Requester] 
+[Requester]
     │
     ▼
-[Orchestrator/Synthesizer]
+[Orchestrator/Synthesizer]  (decompose)
     │
-    ├─► spawn ─► [Search Worker] ─► candidates.yml
-    │                                    │
-    │◄──────────────── await ────────────┘
+    ├─► dispatch ─► [Search Worker] ─► candidates
+    │                                     │
+    │◄──────────────── collect ───────────┘
     │
-    ├─► spawn ─► [Extract Worker] ─► evidence.yml
-    │                                    │
-    │◄──────────────── await ────────────┘
+    ├─► dispatch ─► [Extract Worker] ─► evidence
+    │                                     │
+    │◄──────────────── collect ───────────┘
     │
     ├─► evaluate evidence
     │   └─► if gaps: loop back to search/extract
@@ -54,6 +63,22 @@ Single-orchestrator pattern for context-heavy research tasks. One agent spawns l
     │
     └─► deliver to requester
 ```
+
+### Two Dispatch Modes
+
+Choose per-task; you can mix them:
+
+- **Subagents (default) — the `Agent` tool.** Ephemeral, in-session workers
+  (`subagent_type: general-purpose` or `Explore`). Their final message is returned
+  straight to the orchestrator — no files, no comms round-trip. Fan out several at
+  once by issuing multiple `Agent` calls in a single message. Best for most research:
+  the worker burns its own context on search/read, the orchestrator keeps only the
+  distilled result.
+- **CLI worker sessions — `sessions_launch_agent`.** Persistent Claude Code / Codex
+  CLI sessions with full bash + filesystem. Use when a worker needs a large/1M
+  context window, must run long, or must survive beyond the orchestrator's turn.
+  These write results to the task directory and signal completion over the **comms**
+  MCP; the orchestrator waits with `comms_wait_response` / `comms_check_messages`.
 
 ### Why Single Orchestrator
 
@@ -66,27 +91,39 @@ Single-orchestrator pattern for context-heavy research tasks. One agent spawns l
 ### Worker Design
 
 - Lightweight single-purpose instances
-- Write results to shared task directory
-- Signal completion via messages MCP
-- Self-terminate after phase completes
-- Never hold state - everything goes to files
+- Subagent workers return their result as the final message; session workers write
+  results to the shared task directory
+- Session workers signal completion via the **comms** MCP; subagents complete when the
+  `Agent` call returns
+- Self-terminate after phase completes (subagents end automatically; session workers
+  exit or are reaped with `sessions_kill`)
+- Never hold state across phases — everything goes into the returned result or a file
 
 ---
 
 ## Prerequisites
 
-### MCPs Required
+### Tools Required
 
-- cli-agent (spawn workers)
-- knowledge-search (search the archive)
-- messages (completion signals, final delivery)
-- Desktop Commander or filesystem (read/write task dir)
+- **Agent** tool (ephemeral subagent workers) — always available in-session
+- **sessions** MCP (`sessions_launch_agent`, `sessions_list`, `sessions_read_session`,
+  `sessions_kill`) — for CLI worker sessions when large-context / long-running work is needed
+- **knowledge** MCP (`knowledge_search`, `knowledge_get_context`, `knowledge_how_to`,
+  `knowledge_condense_history`) — search and retrieve from the archive
+- **comms** MCP (`comms_send_prompt`, `comms_wait_response`, `comms_check_messages`,
+  `comms_message`) — dispatch/collect for session workers, and final delivery
+- Filesystem access — plain Read/Write/bash (Claude Code / Codex CLI have full
+  filesystem), or the **filesystem** MCP
 
 ### Directory Structure
 
-**Task directory:** `/ai_comms/research_tasks/{task_id}/`
+Subagent workers need no task directory — their result comes back as the `Agent`
+return value. Use a task directory only when dispatching **session** workers that must
+write results to disk.
 
-**Files:**
+**Task directory:** `$AI_SESSION_DIR/research_tasks/{task_id}/` (or any scratch path)
+
+**Files (session-worker mode):**
 - `query.yml` - Original request
 - `candidates.yml` - Search worker output
 - `evidence.yml` - Extract worker output
@@ -97,113 +134,148 @@ Single-orchestrator pattern for context-heavy research tasks. One agent spawns l
 
 ## Steps
 
-### 1. Submit Task
+The orchestrator is the session running this playbook — it runs these steps directly
+in its own context. There is no separate "submit" step; you *are* the orchestrator.
 
-**Action:** Generate task from template  
-**Tool:** `task-coord:gen_task`
+### 1. Decompose
 
-```yaml
-params:
-  platform: gemini_cli
-  template: research_orchestrator
-  params:
-    query: "The research question"
-    requester: "desktop_claude"
-  execute: true
+Parse the query into search and extraction sub-tasks. Decide dispatch mode: default to
+**subagents**; escalate to **session workers** if a sub-task needs a large context
+window or must outlive this turn. If using session workers, pick a `task_id` and create
+the task directory.
+
+### 2. Dispatch Search
+
+Fan out one or more search workers to find candidate sources across the archive.
+
+**Subagent mode:**
 ```
-
-**Result:** Orchestrator instance launched
-
-### 2. Orchestrator Runs (Automatic)
-
-Orchestrator handles internally:
-1. Parse query, create task directory
-2. Spawn search worker, await candidates.yml
-3. Spawn extract worker, await evidence.yml
-4. Evaluate evidence, loop if gaps
-5. Synthesize answer
-6. Deliver via messages MCP
-
-### 3. Receive Results
-
-**Action:** Check for completion  
-**Tool:** `messages:list_direct`
-
-```yaml
-params:
-  recipient: desktop_claude
+Agent
+  subagent_type: Explore          # or general-purpose
+  description: "Find candidate sources"
+  prompt: |
+    Search the knowledge archive (knowledge_search / knowledge_grep_search) and the
+    filesystem for material relevant to: "<sub-query>". Return the top 15-20 candidates
+    as a YAML list of {path, why_relevant, snippet}. Do not synthesize.
 ```
+Issue multiple `Agent` calls in one message to run searches concurrently.
 
-**Result:** synthesis.yml path in message
+**Session-worker mode:**
+```
+sessions_launch_agent
+  platform: claude_cli            # or codex_cli
+  prompt: |
+    Search for candidates on "<sub-query>". Write results to
+    {task_dir}/candidates.yml, then comms_message the orchestrator (<tracking_id>)
+    with the file path.
+```
+Then wait: `comms_wait_response` (or poll `comms_check_messages`).
+
+### 3. Dispatch Extract
+
+For the winning candidates, dispatch extract workers to pull evidence (quotes, dates,
+facts). Same two modes as step 2 — subagents return an `evidence` YAML block directly;
+session workers write `evidence.yml` and signal over comms. Cap candidates at the top
+15-20 to protect worker context.
+
+### 4. Evaluate & Loop
+
+Assess coverage. If gaps remain, loop back to step 2 or 3 with a narrowed sub-query.
+**Hard limit: 3 iterations** — stop and synthesize with what you have.
+
+### 5. Synthesize
+
+In the orchestrator's own context, read the collected evidence and write the answer to
+`{task_dir}/synthesis.yml` (or return it inline for a fully-subagent run). Use
+`knowledge_condense_history` if the evidence set is too large to hold at once.
+
+### 6. Deliver
+
+If a remote requester asked for this, deliver over comms:
+`comms_message` (or `comms_send_prompt`) to the requester's tracking ID with the answer
+or the `synthesis.yml` path. If you launched this yourself, the synthesis *is* your
+result — no delivery step needed.
 
 ---
 
-## Integration with task-coord
+## Integration with workflow
 
-### Current State
+### Two Ways to Run
 
-task-coord MCP has templates and can launch agents. Research orchestration should be a first-class playbook.
+1. **In-session (default).** The session that wants the research *is* the orchestrator
+   and runs the Steps above directly, fanning out subagents via the `Agent` tool. No
+   playbook launch, no separate instance — this is the common case.
 
-### Required Changes
+2. **Launched orchestrator.** When the research should run in a dedicated session (e.g.
+   to keep the requester's context clean, or for a long-running job), launch one with
+   `sessions_launch_agent` (`platform: claude_cli` or `codex_cli`) whose prompt is
+   "run the research_orchestration playbook for query `<X>`, deliver to `<tracking_id>`."
+   That launched session then runs the Steps and delivers over comms.
 
-**Playbook definition:**
+### Optional workflow-MCP registration
+
+If registering as a first-class playbook via the **workflow** MCP
+(`workflow_start_playbook`), the start action launches a single orchestrator session:
+
 ```yaml
 name: research_orchestration
-description: "Multi-stage research with single orchestrator"
+description: "Multi-stage research with a single self-contained orchestrator"
 start_action:
-  tool: cli-agent:launch_librarian
+  tool: sessions_launch_agent
   params:
-    platform: gemini_cli
-    prompt: "{{template:research_orchestrator}}"
+    platform: claude_cli          # or codex_cli
+    prompt: "Run the research_orchestration playbook. query={{query}}, requester={{requester}}"
 params:
   - name: query
     required: true
     description: "The research question"
   - name: requester
-    default: desktop_claude
-    description: "Who receives results"
+    description: "Tracking ID to deliver results to (omit for in-session use)"
 ```
 
-**Template location:** `ai_comms/staged/orchestration/template_research_orchestrator.v2.yml`
-
-**start_playbook behavior:**
-1. Generate unique task_id
-2. Create task directory
-3. Render template with params
-4. Launch single orchestrator instance
-5. Return task_id for tracking
-
-**No external monitoring:** Unlike traditional multi-stage playbooks, task-coord does NOT monitor intermediate states, manage transitions, or handle feedback loops. The orchestrator owns all of that internally. task-coord just launches and awaits final message.
+**No external monitoring:** the workflow MCP does NOT track intermediate states, manage
+transitions, or drive feedback loops. The orchestrator owns all of that internally.
+The launcher just starts the orchestrator and awaits its final comms message.
 
 ---
 
 ## Examples
 
-### Basic Research
+### Basic Research (in-session, subagents)
 
 **Request:** Analyze how the CLI coordination system has evolved from v1 through v4.
 
-```
-task-coord:start_playbook
-  name: research_orchestration
-  params:
-    query: "Evolution of CLI coordination system v1 through v4"
-    requester: desktop_claude
-```
-
-**Result:** Orchestrator spawns, searches for coordination docs, extracts relevant history, synthesizes timeline, delivers summary to desktop_claude.
-
-### Relationship Analysis
-
-**Request:** Compare relationship dynamics between user and Claude versus user and ChatGPT over time.
+The orchestrator fans out `Agent` search workers over the archive, then extract
+workers on the top candidates, synthesizes a timeline in its own context, and returns
+it inline:
 
 ```
-task-coord:start_playbook
+Agent (Explore) → "find coordination-system docs v1..v4, return candidate list"
+Agent (Explore) → "find migration/changelog notes on coordination, return candidates"
+   ↓ collect
+Agent (general-purpose) → "extract dated milestones from these paths, return evidence"
+   ↓ synthesize in orchestrator context → timeline
+```
+
+### Relationship Analysis (launched orchestrator + session workers)
+
+**Request:** Compare relationship dynamics between user and Claude versus user and
+ChatGPT over time — a large archive spanning many chat histories.
+
+Because the corpus is large, launch a dedicated orchestrator and let it use session
+workers for the heavy history scans:
+
+```
+workflow_start_playbook            # or sessions_launch_agent directly
   name: research_orchestration
   params:
     query: "Compare relationship dynamics: user-Claude vs user-ChatGPT, evolution over time"
-    requester: desktop_claude
+    requester: <your tracking_id>
 ```
+
+The orchestrator dispatches `sessions_launch_agent` workers that scan the chat archive,
+write `evidence.yml`, and signal over comms; the orchestrator collects, synthesizes,
+and delivers to your tracking ID with `comms_message`.
 
 ---
 
@@ -233,5 +305,6 @@ task-coord:start_playbook
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 3.0.0 | 2026-07-12 | Retargeted onto the current stack after Gemini CLI retirement. Dispatch now uses `Agent`-tool subagents (default) and `sessions_launch_agent` CLI worker sessions; collect/deliver via the comms MCP; search via the knowledge MCP. Removed Desktop/Web-UI framing and dead-MCP tool names. Reactivated. |
 | 2.0.0 | 2025-01-17 | Redesigned as single-orchestrator pattern. Orchestrator spawns workers internally rather than external multi-stage coordination. |
 | 1.0.0 | 2025-01-17 | Initial three-stage external coordination design (superseded) |

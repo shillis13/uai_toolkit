@@ -146,7 +146,7 @@ session_mgr.py state_seed <tracking_id> --vars AI_TRACKING_ID,... [--data-dir /p
 
 ## Lifecycle
 
-**Launch:** ai_launcher.py creates `SessionStore`, calls `seed_from_env()`, sets display_name, calls `persist()` to create initial file.
+**Launch:** ai_launch.py creates `SessionStore`, calls `seed_from_env()`, sets display_name, calls `persist()` to create initial file.
 
 **During session:** MCP tools and hooks read/write via `SessionStore`. Disk is truth. No stale in-memory state.
 

@@ -5,22 +5,21 @@ metadata:
   title: Working Memory Protocol
   version: 3.0.0
   created: 2026-03-16
-  authors: [PianoMan, Claude Desktop]
-  supersedes: instr_memory_slot_protocol_v2.0.yml (claude-specific)
+  authors: [PianoMan]
+  supersedes: instr_memory_slot_protocol_v2.0.yml
   status: active
-  location: ai_general/docs/70_instructions/versions/instr_working_memory_protocol_v3.0.md
 ```
 
 ## Overview
 
 The working memory system provides persistent, shared memory for all AI participants
-in ai_root. Memory survives across sessions and is accessible to all AIs with
-filesystem access.
+in ai_root. Memory survives across sessions and is accessible to every AI through the
+**knowledge MCP memory tools** (`knowledge_memory_*`).
 
 **One source of truth:** `ai_memories/80_working_memory/`
 
-All AIs read the manifest to understand slot purposes. All AIs write to slot files
-as insights occur. No AI writes to another AI's dedicated slot without coordination.
+All AIs read the manifest to understand slot purposes. All AIs append entries as
+insights occur. No AI writes to another AI's dedicated slot without coordination.
 
 ---
 
@@ -34,9 +33,10 @@ ai_memories/80_working_memory/
 ├── 04.yml                # Communication patterns
 ├── 05.yml                # Tool/pattern discoveries
 ├── 06.yml                # Current context notes
-├── 07.yml                # Cross-AI notes
+├── 07.yml                # Limitations & workarounds
 ├── 08.yml                # Learnings worth preserving
-├── 09.yml                # Project history
+├── 09.yml                # Cross-AI notes
+├── 10.yml                # Project history
 ├── 11.yml                # Novel phrasing / originality evidence
 └── _archive_20251213/    # Historical entries
 ```
@@ -49,37 +49,35 @@ Slots 12–27 are reserved for expansion. Any AI may claim one — declare it in
 
 ## Reading Memory
 
-All AIs with filesystem access read slot files directly via Desktop Commander:
+Read slots through the **knowledge MCP** — do not open the `.yml` files by hand:
 
 ```
-AI_ROOT/ai_memories/80_working_memory/manifest.yml
-AI_ROOT/ai_memories/80_working_memory/{NN}.yml
+knowledge_memory_read(slot=NN, since=…, limit=…)   # one slot, optionally filtered
+knowledge_memory_search(query=…, slots=[…])         # search across slots
+knowledge_memory_stats()                            # counts + sizes per slot
+knowledge_get_manifest()                            # slot purposes + load tiers
 ```
 
 **At session start:**
-1. Read `manifest.yml` — understand what each slot is for
+1. `knowledge_get_manifest()` — understand what each slot is for
 2. Load AUTO-tier slots (03, 04, 05, 06 minimum)
 3. Load TOPIC slots as conversation triggers arise
 4. Load DEMAND slots only when explicitly needed
-
-**Web/iOS Claude** cannot read files directly. A snapshot of the working memory
-directory is uploaded to Project Files and maintained by Desktop/CLI Claude.
-Web/iOS reads the snapshot at session start.
 
 ---
 
 ## Writing Memory
 
-### Desktop / CLI Claude (filesystem access)
+Write observations **immediately as insights occur** — never batch or checkpoint —
+using `knowledge_memory_append`:
 
-Write observations **immediately as insights occur** — never batch or checkpoint:
-
-```yaml
-# Append to the appropriate slot file
-- {ts: 2026-03-16T14:30:00Z, content: "observation text"}
+```
+knowledge_memory_append(slot=NN, content="observation text")
 ```
 
-Full entry format (all fields):
+The tool stamps the entry and preserves append-only order. The stored shape (which
+the tool produces — you never write it by hand) is:
+
 ```yaml
 - ts: 2026-03-16T14:30:00Z
   type: learning | observation | pattern | shortcut | issue
@@ -88,29 +86,11 @@ Full entry format (all fields):
   reads: 0
 ```
 
-`reads` is optional. Increment when you re-read an entry. High reads = keep.
-Zero reads after time = archive candidate.
+To revise or prune, use `knowledge_memory_update(slot, index, content)` and
+`knowledge_memory_delete(slot, …)`. `reads` marks re-read value: high reads = keep,
+zero reads after time = archive candidate.
 
-
-### Web / iOS Claude (no filesystem access)
-
-Submit memory updates as message inserts. The cron pipeline harvests these and
-Desktop/CLI Claude commits them to slot files.
-
-```
-<<<INSERT type=memory_v1.1 v=1>>>
-{
-  "type": "MEMORY",
-  "slot_hint": 8,
-  "topic": "brief topic label",
-  "content": "the observation or insight",
-  "importance": "high | medium | low"
-}
-<<<END INSERT>>>
-```
-
-`slot_hint` is a suggestion, not a binding assignment. Desktop Claude may place
-the entry in a different slot based on content.
+Only fall back to editing a slot file directly if the knowledge MCP is unavailable.
 
 ---
 
@@ -160,9 +140,9 @@ the entry in a different slot based on content.
 All AIs may read all slots. No AI writes to a slot declared as owned by another
 AI without coordination.
 
-To understand another AI's recent context: read their relevant slots directly.
-To pass information to another AI: use the task coordination system or
-messaging protocol — don't write into their slots unilaterally.
+To understand another AI's recent context: `knowledge_memory_read` their relevant
+slots (pass the target `--ai`). To pass information to another AI: use the comms
+MCP — don't write into their slots unilaterally.
 
 ---
 
@@ -182,18 +162,14 @@ When a slot file grows large (~50KB) or contains many stale entries:
 The `manifest.yml` is the authoritative registry. If you evolve a slot's purpose,
 update its declaration in the manifest and add a note explaining the change.
 
-Slot files are append-only by default. Rewriting is permitted for curation
-(removing truly obsolete entries) but should be infrequent.
-
-The Project Files snapshot (for Web/iOS read access) should be re-uploaded by
-Desktop/CLI Claude whenever significant new entries have been added — roughly
-weekly or after major sessions.
+Slot files are append-only by default (`knowledge_memory_append`). Curation
+(`knowledge_memory_update` / `knowledge_memory_delete` for truly obsolete entries)
+is permitted but should be infrequent.
 
 ---
 
 ## Related Documents
 
 - `manifest.yml` — slot registry with load tiers and tags
-- `spec_message_insert` — full insert block specification
-- `instr_working_memory` — condensed operational quick-reference
+- `instr_federated_memory` — condensed operational quick-reference (write/read via the memory tools)
 - `protocol_federated_memory` → retired; superseded by this document

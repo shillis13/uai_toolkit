@@ -54,7 +54,8 @@ setGitFileViewScope({
   dir?,     // repo root or any dir under it (recursive)
   since?,   // 'YYYY-MM-DD' lower bound
   until?,   // 'YYYY-MM-DD' upper bound; '' = latest
-  filter?,  // { kind: 'author'|'ai'|'todo', value } to filter; null to clear;
+  filter?,  // { kind:'author'|'ai'|'todo', value } | { kind:'todos', values:[...] }
+            // (todos = the UNION of a set — worker scope); null clears;
             // OMIT the key to leave unchanged
 });
 ```
@@ -67,14 +68,23 @@ host uses to drive an embedded, scope-locked view.
 default `!embedded`); `filter` (controlled delta filter `{kind,value}` | `null`,
 host-driven); `onOpenCommit(hash, dir)`. Fixed embed = `showScopeBar={false}
 allowScopeChange={false}` + drive scope/filter via the `filter` prop or
-`setGitFileViewScope`. **Reference embed:** Work Mgr → todo → **Files** tab pins
-`filter={{kind:'todo', value: todoId}}` + `dir="ai_general"` + `since=todo.created`,
-so the tab shows the files changed by that todo's commits.
+`setGitFileViewScope`. **Reference embeds:** (1) Work Mgr → todo → **Files** tab pins
+`filter={{kind:'todo', value: todoId}}` + `dir="ai_general"` + `since=todo.created`.
+(2) `WorkerFilesView` (Session Work page + Project/Team Files aspect) pins
+`filter={{kind:'todos', values: leafTodoIds}}` — the union of a worker's todos.
 
 ### Backend CLI (for non-UI callers)
 `python3 ai_general/scripts/utils/git_file_view.py --dir D [--since S --until U]
-[--file F --from H1 --to H2 | --commit H | --file F --show REF | --repos] [--json]`.
-Nonzero exit on failure. IPC mirrors: `window.uai.gitFileView.{read,diff,commit,content,repos}`.
+[--file F --from H1 --to H2 | --commit H | --file F --show REF | --repos |
+--grep PATTERN [--to REF]] [--json]`. `--grep` returns repo-relative paths whose
+CONTENT at `--to` (or HEAD) matches — backs the File-list **contents** search.
+Nonzero exit on failure. IPC mirrors: `window.uai.gitFileView.{read,diff,commit,content,repos,grep}`.
+
+### File-list search
+The file list has a search bar with three modes: **Filename** (path substring),
+**Metadata** (author / AI-session / todo / net-status of the files' commits,
+client-side), **Contents** (backend `--grep` at the To commit, debounced,
+intersected with the changed set).
 
 ## API — get state data
 Query the live viewport tree (`window.uai.viewport.describeViewport()` / the

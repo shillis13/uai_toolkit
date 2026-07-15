@@ -265,7 +265,6 @@ export default function BottomPanel({ activeSessionId }: BottomPanelProps): JSX.
   // Status bar — always visible at bottom, same position open or closed
   const statusBar = (
     <div className="bottom-panel-drawer-bar" onClick={toggleOpen}>
-      <span className="bottom-panel-drawer-expand">{isOpen ? '\u25BC' : '\u25B2'}</span>
       <span className="bottom-panel-drawer-summary">
         {metrics.sysStatus && (
           <>
@@ -305,6 +304,11 @@ export default function BottomPanel({ activeSessionId }: BottomPanelProps): JSX.
   // closed, so users know there's content without opening it blindly.
   const tabStrip = (
     <div className="bottom-panel-tab-strip">
+      <span
+        className="bottom-panel-handle-chevron"
+        onClick={(e) => { e.stopPropagation(); toggleOpen(); }}
+        title={isOpen ? 'Collapse panel' : 'Expand panel'}
+      >{isOpen ? '▼' : '▲'}</span>
       {tabs.map(tab => (
         <button
           key={tab.id}
@@ -696,6 +700,14 @@ function fmtTok(n?: number | null): string {
   if (n >= 1e3) return `${(n / 1e3).toFixed(0)}k`;
   return `${Math.round(n)}`;
 }
+/** Compact USD: $1.2k / $340 / $4.50 / <$0.01. */
+function fmtUsd(n?: number | null): string {
+  if (n == null || isNaN(n)) return '—';
+  if (n >= 1000) return `$${(n / 1000).toFixed(1)}k`;
+  if (n >= 100) return `$${n.toFixed(0)}`;
+  if (n > 0 && n < 0.01) return '<$0.01';
+  return `$${n.toFixed(2)}`;
+}
 
 /** Countdown to a reset time as days/hours/mins, matching the statusline format
  *  (2d5h12m / 5h12m / 12m). */
@@ -790,6 +802,27 @@ type SysVolume = Awaited<ReturnType<typeof window.uai.diskVolumes>>[number];
 const TOP_N = 3;
 
 type TopProc = NonNullable<SysMetrics['top_cpu_processes']>[number];
+
+/** Tiny inline time-series graph (last 1h) for a gauge's details. Normalizes the
+ *  series to its own min/max and stretches to the panel width. Falls back to a
+ *  "collecting" note until there are ≥2 samples. */
+function Sparkline({ points, accent = 'blue', label }: { points?: number[]; accent?: MAccent; label?: string }): JSX.Element {
+  const pts = (points ?? []).filter(n => typeof n === 'number' && isFinite(n));
+  if (pts.length < 2) return <div className="monitor-spark-label">Collecting history…</div>;
+  const W = 100, H = 30;
+  const min = Math.min(...pts), max = Math.max(...pts), range = (max - min) || 1;
+  const step = W / (pts.length - 1);
+  const d = pts.map((v, i) => `${i === 0 ? 'M' : 'L'}${(i * step).toFixed(1)},${(H - ((v - min) / range) * H).toFixed(1)}`).join(' ');
+  const stroke = `var(--accent-${accent === 'muted' ? 'blue' : accent})`;
+  return (
+    <div className="monitor-spark">
+      <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true">
+        <path d={d} fill="none" stroke={stroke} strokeWidth={1.5} vectorEffect="non-scaling-stroke" strokeLinejoin="round" />
+      </svg>
+      {label && <div className="monitor-spark-label">{label}</div>}
+    </div>
+  );
+}
 type TokBucket = NonNullable<NonNullable<SysMetrics['claude_tokens']>['dtd']>;
 
 /** Detail rows for the top-N users of a resource (skips sysmon's "(other)"
@@ -869,6 +902,7 @@ function SystemMonitorTab({ onOpenTab }: { onOpenTab?: (tabId: string) => void }
           }</b></div>
           <div><span>Load avg (1m / 5m / 15m)</span><b>{load ? load.map(n => n.toFixed(2)).join('  ') : '—'}</b></div>
           {topProcRows(mem.top_cpu_processes, 'cpu')}
+          <Sparkline points={mem.sparks?.cpu} accent="blue" label="CPU %, last 1h" />
         </div>
       ),
     },
@@ -885,6 +919,7 @@ function SystemMonitorTab({ onOpenTab }: { onOpenTab?: (tabId: string) => void }
           <div><span>memorystatus level</span><b>{mem.mem_level ?? '—'}</b></div>
           <div><span>Swap</span><b>{gb(mem.swap_gb)}</b></div>
           {topProcRows(mem.top_mem_processes, 'mem')}
+          <Sparkline points={mem.sparks?.mem} accent="blue" label="Committed GB, last 1h" />
         </div>
       ),
     },
@@ -898,6 +933,7 @@ function SystemMonitorTab({ onOpenTab }: { onOpenTab?: (tabId: string) => void }
           <div><span>Swap used</span><b>{gb(mem.swap_gb)}</b></div>
           <div><span>Memory pressure</span><b>{mem.mem_pressure ?? '—'}</b></div>
           <div className="monitor-detail-note">Swap &gt; 2 GB with rising memory is what tips sysmon to [WARN].</div>
+          <Sparkline points={mem.sparks?.swap} accent="yellow" label="Swap GB, last 1h" />
         </div>
       ),
     },
@@ -926,6 +962,7 @@ function SystemMonitorTab({ onOpenTab }: { onOpenTab?: (tabId: string) => void }
                 </b>
               </div>
             ))}
+          <Sparkline points={mem.sparks?.disk} accent={diskUsed != null && diskUsed >= 90 ? 'red' : 'green'} label="Built-in used %, last 1h" />
         </div>
       ),
     },
@@ -955,6 +992,7 @@ function SystemMonitorTab({ onOpenTab }: { onOpenTab?: (tabId: string) => void }
               {r7 != null && <div><span>7d projected to run out</span><b className="monitor-accent-red">{fmtRunout(r7)}</b></div>}
             </>;
           })()}
+          <Sparkline points={mem.sparks?.claude_7d} accent={pace7d} label="7d usage %, last 1h" />
           <div className="monitor-detail-note">Color reflects pace: green if your remaining budget outlasts the window, red if you're on track to exhaust it early. A projected run-out shows only when the current burn rate would hit 100% before the reset.</div>
           {mem.claude_5h_pct == null && <div className="monitor-detail-note">No data yet — updates once a Claude session renders its statusline.</div>}
         </div>
@@ -965,20 +1003,25 @@ function SystemMonitorTab({ onOpenTab }: { onOpenTab?: (tabId: string) => void }
       // Headline = today's (dtd) total; details break out all four windows.
       value: fmtTok(mem.claude_tokens?.dtd?.total),
       accent: 'cyan',
-      sub: <span className="monitor-sub">itd {fmtTok(mem.claude_tokens?.itd?.total)}</span>,
+      sub: <span className="monitor-sub">itd {fmtTok(mem.claude_tokens?.itd?.total)}{mem.claude_tokens?.itd?.cost != null ? ` · ${fmtUsd(mem.claude_tokens.itd.cost)}` : ''}</span>,
       details: (() => {
         const t = mem.claude_tokens;
         if (!t || (!t.dtd && !t.itd)) return <div className="monitor-detail-note">No token data yet — accumulates as sessions run.</div>;
         const row = (label: string, b?: TokBucket) => (
-          <div><span>{label}</span><b>{fmtTok(b?.total)} <span className="monitor-accent-muted">({fmtTok(b?.in)} in / {fmtTok(b?.out)} out)</span></b></div>
+          <div>
+            <span>{label}{b?.since ? <span className="monitor-accent-muted"> · since {fmtReset(b.since)}</span> : ''}</span>
+            <b>{fmtTok(b?.total)} <span className="monitor-accent-muted">({fmtTok(b?.in)} in / {fmtTok(b?.out)} out)</span>{b?.cost != null ? <span className="monitor-accent-green"> · {fmtUsd(b.cost)}</span> : ''}</b>
+          </div>
         );
         return (
           <div className="monitor-detail-rows">
             {row('Today (dtd)', t.dtd)}
+            {row('Week (wtd)', t.wtd)}
             {row('Month (mtd)', t.mtd)}
             {row('Year (ytd)', t.ytd)}
             {row('Inception (itd)', t.itd)}
-            <div className="monitor-detail-note">Overall tokens across all Claude sessions, delta-accumulated. Inception = since the ledger started.</div>
+            <Sparkline points={mem.claude_tokens ? mem.sparks?.tokens : undefined} accent="cyan" label="Cumulative tokens, last 1h" />
+            <div className="monitor-detail-note">Overall tokens across all Claude sessions, delta-accumulated. Each window shows what it's counted since it began (itd = ledger inception). Cost is the API-equivalent, cache-aware figure Claude Code reports (accurate even on a flat-rate plan) — not a token×price estimate.</div>
           </div>
         );
       })(),

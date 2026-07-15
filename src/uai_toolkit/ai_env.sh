@@ -4,6 +4,9 @@
 # values into launchd plists (launchd can't source this). Derive-by-default,
 # override-when-needed: set only AI_ROOT (+ any genuinely-relocated var).
 : "${AI_ROOT:=$HOME/AI/ai_root}"; export AI_ROOT
+# Canonical MAIN root — = $AI_ROOT normally; stays the production main inside a
+# devTree (devTree tooling sets $AI_ROOT_MAIN when they must differ).
+export AI_ROOT_MAIN="${AI_ROOT_MAIN:-$AI_ROOT}"
 # Derived (default $AI_ROOT/…, independently overridable):
 export AI_DATA="${AI_DATA:-$AI_ROOT/ai_general/data}"
 export AI_SCRIPTS="${AI_SCRIPTS:-$AI_ROOT/ai_general/scripts}"

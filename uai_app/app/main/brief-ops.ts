@@ -5,10 +5,8 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { aiRootMain as getAiRootMain, shellPath } from './paths';
 
-function getAiRootMain(): string {
-  return process.env.AI_ROOT_MAIN || process.env.AI_ROOT || path.join(require('node:os').homedir(), 'AI/ai_root');
-}
 
 export interface CreateBriefOpts {
   name: string;
@@ -18,6 +16,12 @@ export interface CreateBriefOpts {
   launchName?: string;
   launchPlatform?: string;
   condenserSession?: string;
+  // NEW model (todo_0506): the session chosen to host the briefing subagent.
+  // The host→subagent dispatch now happens in the `brief.create` command handler
+  // (deliverPromptTyped → auto_brief.py emit-subagent-task); this legacy createBrief
+  // path is only reached when NO host is chosen. If present here (defensive), the
+  // host is recorded as the brief's actor.
+  hostSession?: string;
 }
 
 export interface CreateBriefResult {
@@ -38,10 +42,14 @@ export async function createBrief(
   const condensePy = path.join(aiRoot, 'ai_general/scripts/jsonl/condense.py');
   const sessionOpsPy = path.join(aiRoot, 'ai_general/scripts/session_mgmt/session_ops.py');
   const briefsDir = path.join(aiRoot, 'ai_general/data/session_briefs');
-  const envPath = [process.env.PATH || '', '/opt/homebrew/bin', '/usr/local/bin', `${require('node:os').homedir()}/.local/bin`].join(':');
+  const envPath = shellPath();
   const env = { ...process.env, AI_ROOT: aiRoot, PATH: envPath } as Record<string, string>;
 
   const ids = Array.isArray(sessionIds) ? sessionIds : [sessionIds];
+
+  // Legacy path only (host-dispatch is handled in the command layer). If a host
+  // was somehow passed here, record it as the actor; else the condenser session.
+  const actorSession = opts.hostSession || opts.condenserSession;
 
   // Build output path: briefsDir / folder / name.yml
   const folder = opts.folder || '';
@@ -56,7 +64,7 @@ export async function createBrief(
   for (const id of ids) args.push('--src-uuid', id);
   args.push('--name', opts.name, '--output', outputPath);
   if (opts.description) args.push('--description', opts.description);
-  if (opts.condenserSession) args.push('--condenser', opts.condenserSession);
+  if (actorSession) args.push('--condenser', actorSession);
 
   try {
     await execFileAsync('python3', [condensePy, ...args], {
@@ -84,7 +92,7 @@ export async function createBrief(
       `  description: ${opts.description || ''}`,
       `  folder: ${opts.folder || '/'}`,
       `  created: '${now}'`,
-      `  condenser_session: ${opts.condenserSession || ids[0]}`,
+      `  condenser_session: ${actorSession || ids[0]}`,
       '  status: active',
       '  links:',
       ...ids.map(id => `  - type: brief_of\n    target: ${id}\n    created: '${now}'`),

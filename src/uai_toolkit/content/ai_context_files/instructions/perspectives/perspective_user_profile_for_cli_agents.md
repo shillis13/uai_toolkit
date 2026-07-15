@@ -2,12 +2,11 @@
 
 **Version:** 1.0.0
 **Created:** 2026-03-14
-**Updated By:** Claude Desktop
-**Source:** Desktop App userMemories (synced manually by Desktop Claude)
+**Source:** Consolidated from PianoMan's cross-session user memory
 
 ## Purpose
 
-Contains PianoMan's user profile, preferences, and interaction patterns. Derived from Desktop App's global memories (Anthropic userMemories system). CLI agents should load this during bootstrap to maintain consistent user experience.
+Contains PianoMan's user profile, preferences, and interaction patterns. CLI agents should load this during bootstrap to maintain consistent user experience.
 
 ## Identity
 
@@ -53,12 +52,11 @@ Contains PianoMan's user profile, preferences, and interaction patterns. Derived
 
 ### Prohibitions
 - Never use `mkdir -p` (prefer explicit directory creation)
-- Never use bash_tool (sandbox only, no filesystem access)
 
 ## Infrastructure Context
 
 - **Workspace:** `~/AI/ai_root/`
-- **Structure:** `ai_claude/` (Desktop state), `ai_general/` (shared), `ai_memories/` (processing), `ai_comms/` (coordination)
+- **Structure:** `ai_claude_cli/` (Claude CLI state), `ai_general/` (shared), `ai_memories/` (processing), `ai_comms/` (coordination)
 - **Methodology:** YAML-as-source for token efficiency, Markdown for human consumption
 - **Memory System:** Federated memory slots under `ai_memories/80_working_memory/`
-- **Cross-AI:** Multiple AI partners — Claude, ChatGPT ("Chatty"), Gemini
+- **Cross-AI:** Multiple CLI agents — Claude Code, Codex CLI, Gemini CLI

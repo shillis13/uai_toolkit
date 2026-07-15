@@ -13,9 +13,9 @@ updated: '2026-04-16'
 
 The audit system captures two categories of events and provides a forensics CLI for investigating file history.
 
-**Comms audit** (`audit/comms/`) — every message sent between AI sessions, to Desktop Claude, or to web UI platforms. Captures who sent what, to whom, when, and via which delivery mechanism.
+**Comms audit** (`audit/comms/`) — every message sent between AI CLI sessions (Claude Code, Codex CLI). Captures who sent what, to whom, when, and via which delivery mechanism.
 
-**Tools audit** (`audit/tools/`) — every tool call made by Claude Code, Codex CLI, or Gemini CLI. Captures which tool, what file was targeted, input/result previews, and success status.
+**Tools audit** (`audit/tools/`) — every tool call made by Claude Code or Codex CLI. Captures which tool, what file was targeted, input/result previews, and success status.
 
 **File forensics** (`audit files investigate`) — aggregates evidence from git, tool audit, access logs, filesystem metadata, and Time Machine into a chronological timeline for any file path.
 
@@ -170,7 +170,7 @@ The `_audit_emit` functions are wrapped in try/except pass — they never block 
 ### Tool Capture Flow
 
 ```
-Claude/Codex/Gemini executes any tool
+Claude/Codex executes any tool
   → PostToolUse / AfterTool hook fires
   → hook_audit_tools.py reads stdin JSON
   → Normalizes platform differences
@@ -192,7 +192,6 @@ Claude/Codex/Gemini executes any tool
 |----------|-----------|-------------|---------------|-----------------|
 | Claude Code | PostToolUse | tool_result | All tools | ~/.claude/settings.json |
 | Codex CLI | PostToolUse | tool_response | Bash only | ~/.codex/hooks.json |
-| Gemini CLI | AfterTool | tool_response | All tools | ~/.gemini/settings.json |
 
 The hook script auto-detects the platform from `hook_event_name` and `AUDIT_PLATFORM` env var.
 

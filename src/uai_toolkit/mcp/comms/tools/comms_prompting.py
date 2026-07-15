@@ -639,10 +639,6 @@ Enter is pressed to submit it.
                     "command": {
                         "type": "string",
                         "description": "Slash command to send (e.g. '/compact', '/color cyan', 'compact'). Auto-prefixed with '/' if missing."
-                    },
-                    "authorization_token": {
-                        "type": "string",
-                        "description": "One-time authorization token for guarded commands (e.g. /compact). Provided by the system when authorization is granted. Do not fabricate."
                     }
                 },
                 "required": ["identifier", "command"]
@@ -1118,7 +1114,6 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
     elif name == "comms_send_slash_command":
         identifier = arguments["identifier"]
         command = arguments["command"]
-        auth_token = arguments.get("authorization_token", "")
 
         slash_script = AI_ROOT / "ai_general" / "scripts" / "session_mgmt" / "send_slash_command.py"
         if not slash_script.exists():
@@ -1127,8 +1122,6 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
             try:
                 from uai_toolkit.mcp.shared.subprocess_log import logged_run
                 cmd = [sys.executable, str(slash_script), identifier, command]
-                if auth_token:
-                    cmd.extend(["--token", auth_token])
                 proc = logged_run(
                     "comms", cmd,
                     capture_output=True, text=True, timeout=20,

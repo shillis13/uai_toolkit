@@ -17,6 +17,8 @@ import { useViewport } from '../viewport';
 import HistoryPanel from './HistoryPanel';
 import type { HistoryEntry } from './HistoryPanel';
 import PromptBoxConfigurator from './PromptBoxConfigurator';
+import PromptLibraryPopover from './PromptLibraryPopover';
+import PromptRewriteDialog from './PromptRewriteDialog';
 import RecipientPicker from './RecipientPicker';
 import { parseSessionMentions } from './prompt-mentions';
 import { useMention, MentionPopover, makeRecipientSource, makePathSource } from './mention';
@@ -25,7 +27,7 @@ import { touchSessionActivity } from '../stores/session-activity';
 import { scanSessionPromptArea } from '../stores/prompt-area-state';
 import { onPromptBoxFocusRequest } from '../stores/promptbox-focus';
 import { applyReminder, reminderHasContent } from './prompt-reminder';
-import type { PromptReminder, PromptBoxConfig } from '@uai/shared/types';
+import type { PromptReminder, PromptBoxConfig, SavedPrompt } from '@uai/shared/types';
 
 interface PromptBoxProps {
   sessionId: string;
@@ -38,7 +40,7 @@ const PROMPT_LINE_HEIGHT = 18;   // px per line
 const PROMPT_VPAD = 16;          // textarea vertical padding (8 top + 8 bottom)
 const PROMPT_DEFAULT_LINES = 15;
 const PROMPT_DEFAULT_HEIGHT = PROMPT_DEFAULT_LINES * PROMPT_LINE_HEIGHT + PROMPT_VPAD; // ~286px
-const PROMPT_MAX_HEIGHT = 600;   // absolute cap
+const PROMPT_MAX_HEIGHT = 1400;  // absolute sanity ceiling; the real cap is viewport-relative (computeMaxHeight)
 
 // Per-session draft storage (in-memory for fast tab switching)
 const sessionDrafts = new Map<string, string>();
@@ -83,6 +85,16 @@ function filepathMentions(s: string): string[] | null {
   const lines = s.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
   if (lines.length === 0 || !lines.every((l) => /^@?~?\//.test(l))) return null;
   return lines.map((p) => (p.startsWith('@') ? p : `@${p}`));
+}
+
+/** Collapse single newlines (hard-wrap artifacts) to spaces while KEEPING paragraph
+ *  breaks (blank lines). For the Cmd/Ctrl+Shift+V "paste unwrapped" gesture. */
+function unwrapHardBreaks(s: string): string {
+  return s
+    .replace(/\r\n?/g, '\n')
+    .split(/\n{2,}/)
+    .map((p) => p.replace(/[ \t]*\n[ \t]*/g, ' ').trim())
+    .join('\n\n');
 }
 
 /** Human label for a reminder's cadence, for the active-reminder strip. */
@@ -218,7 +230,8 @@ export default function PromptBox({ sessionId, sessionName, cliSessionId }: Prom
   const mentionTargets = useMemo<MentionTarget[]>(() => {
     const out: MentionTarget[] = [];
     for (const s of sessions) {
-      if (s.archived || !s.display_name) continue;
+      // Active (running) sessions only — no stale ghosts in the @ list (note_0035).
+      if (s.archived || !s.display_name || s.process_status !== 'running') continue;
       out.push({ token: mentionToken(s.display_name), label: s.display_name, kind: 'session', count: 1, memberIds: [s.tracking_id] });
     }
     for (const g of groups) {
@@ -272,6 +285,10 @@ export default function PromptBox({ sessionId, sessionName, cliSessionId }: Prom
   // when off, Send stages the text into the CLI prompt area without submitting.
   const [autoSubmit, setAutoSubmit] = useState(true);
   const [showAttach, setShowAttach] = useState(true);
+  const [showLibrary, setShowLibrary] = useState(true);
+  const [showLibraryPanel, setShowLibraryPanel] = useState(false);
+  const [showRewrite, setShowRewrite] = useState(false);
+  const [savedPrompts, setSavedPrompts] = useState<SavedPrompt[]>([]);
   const [quickNudges, setQuickNudges] = useState<QuickNudge[]>(DEFAULT_NUDGES);
   const [quickNudgeColumns, setQuickNudgeColumns] = useState(1);
   // Quick Actions open as a roomy flyout popover (breaks out of the narrow control
@@ -315,7 +332,7 @@ export default function PromptBox({ sessionId, sessionName, cliSessionId }: Prom
   // it. So keep a ref that's mutated synchronously in call order; every write merges
   // its override into the ref and persists the ref. No stale-closure clobber.
   const configRef = useRef<PromptBoxConfig>({
-    autoSubmit: true, quickNudges: DEFAULT_NUDGES, quickNudgeColumns: 1, showAttach: true,
+    autoSubmit: true, quickNudges: DEFAULT_NUDGES, quickNudgeColumns: 1, showAttach: true, showLibrary: true, multiSendDelaySec: 0,
   });
 
   // Load persisted config once on mount.
@@ -327,6 +344,7 @@ export default function PromptBox({ sessionId, sessionName, cliSessionId }: Prom
       configRef.current = { ...configRef.current, ...c };
       if (typeof c.autoSubmit === 'boolean') setAutoSubmit(c.autoSubmit);
       if (typeof c.showAttach === 'boolean') setShowAttach(c.showAttach);
+      if (typeof c.showLibrary === 'boolean') setShowLibrary(c.showLibrary);
       if (Array.isArray(c.quickNudges) && c.quickNudges.length) setQuickNudges(c.quickNudges);
       if (typeof c.quickNudgeColumns === 'number') setQuickNudgeColumns(Math.max(1, Math.min(4, c.quickNudgeColumns)));
       if (typeof c.defaultHeightLines === 'number') {
@@ -335,6 +353,7 @@ export default function PromptBox({ sessionId, sessionName, cliSessionId }: Prom
         // On mount the user hasn't dragged yet, so adopt the configured floor.
         setMinHeight(v * PROMPT_LINE_HEIGHT + PROMPT_VPAD);
       }
+      if (typeof c.multiSendDelaySec === 'number') setMultiSendDelaySec(Math.max(0, Math.min(30, c.multiSendDelaySec)));
     }).catch(() => { /* fall back to defaults */ });
     return () => { cancelled = true; };
   }, []);
@@ -361,6 +380,14 @@ export default function PromptBox({ sessionId, sessionName, cliSessionId }: Prom
     });
   }, [persistPromptBoxConfig]);
 
+  const toggleShowLibrary = useCallback(() => {
+    setShowLibrary((prev) => {
+      const next = !prev;
+      persistPromptBoxConfig({ showLibrary: next });
+      return next;
+    });
+  }, [persistPromptBoxConfig]);
+
   // Quick-action editors (used by the configurator).
   const updateQuickNudges = useCallback((next: QuickNudge[]) => {
     setQuickNudges(next);
@@ -377,7 +404,14 @@ export default function PromptBox({ sessionId, sessionName, cliSessionId }: Prom
     const lines = Math.max(3, Math.min(32, Math.round(n) || PROMPT_DEFAULT_LINES));
     setDefaultHeightLines(lines);
     setMinHeight(lines * PROMPT_LINE_HEIGHT + PROMPT_VPAD);
+    setManualHeight(null); // adopt the new default — leave any manual drag override
     persistPromptBoxConfig({ defaultHeightLines: lines });
+  }, [persistPromptBoxConfig]);
+
+  const updateMultiSendDelay = useCallback((sec: number) => {
+    const v = Math.max(0, Math.min(30, Number.isFinite(sec) ? sec : 0));
+    setMultiSendDelaySec(v);
+    persistPromptBoxConfig({ multiSendDelaySec: v });
   }, [persistPromptBoxConfig]);
 
   // Dismiss the Quick Actions flyout on outside-click or Escape.
@@ -420,7 +454,16 @@ export default function PromptBox({ sessionId, sessionName, cliSessionId }: Prom
   // double-clicked, which collapses it to max(default, lines needed for content).
   const [defaultHeightLines, setDefaultHeightLines] = useState(PROMPT_DEFAULT_LINES);
   const defaultHeightPx = defaultHeightLines * PROMPT_LINE_HEIGHT + PROMPT_VPAD;
+  // Pause between deliveries when one Send fans out to multiple recipients (0 = none).
+  // Kept in a ref so the send callbacks read the latest value without re-memoizing.
+  const [multiSendDelaySec, setMultiSendDelaySec] = useState(0);
+  const multiSendDelayMsRef = useRef(0);
+  multiSendDelayMsRef.current = Math.max(0, Math.round((multiSendDelaySec || 0) * 1000));
   const [minHeight, setMinHeight] = useState(PROMPT_DEFAULT_HEIGHT);
+  // Explicit height set by dragging the resize bar. When non-null it fixes the
+  // textarea height (content SCROLLS past it), so a drag can shrink the box BELOW
+  // its content — the auto-grow floor (minHeight) can't. null = auto-grow mode.
+  const [manualHeight, setManualHeight] = useState<number | null>(null);
   const draggingRef = useRef(false);
   const boxRef = useRef<HTMLDivElement>(null);
   const { showToast } = useToast();
@@ -513,14 +556,34 @@ export default function PromptBox({ sessionId, sessionName, cliSessionId }: Prom
     }, 1000);
   }, [sessionId, mention]);
 
-  // Auto-grow textarea — between the user floor (minHeight) and the absolute cap
+  // Max prompt-box height: viewport-relative so it can grow well past the old flat
+  // 600px cap on large screens, while always leaving room for the terminal above.
+  const computeMaxHeight = useCallback((): number => {
+    const container = boxRef.current?.closest('.entity-view-content') as HTMLElement | null;
+    const avail = container?.clientHeight ?? window.innerHeight;
+    const box = boxRef.current;
+    const ta = textareaRef.current;
+    const chrome = box && ta ? Math.max(0, box.offsetHeight - ta.offsetHeight) : 90; // toolbar/buttons around the textarea
+    const TERMINAL_MIN = 160; // keep at least this much terminal visible
+    return Math.max(120, Math.min(PROMPT_MAX_HEIGHT, Math.round(avail - TERMINAL_MIN - chrome)));
+  }, []);
+
+  // Size the textarea. In auto mode (manualHeight === null) grow to fit content
+  // between the configured floor and the cap. In manual mode use the dragged
+  // height exactly — content taller than it SCROLLS (overflow-y:auto), so a drag
+  // can shrink the box below its content.
   useEffect(() => {
     const ta = textareaRef.current;
     if (!ta) return;
+    const cap = computeMaxHeight();
+    if (manualHeight != null) {
+      ta.style.height = `${Math.max(40, Math.min(manualHeight, cap))}px`;
+      return;
+    }
     ta.style.height = 'auto';
     const scrollHeight = ta.scrollHeight;
-    ta.style.height = `${Math.max(minHeight, Math.min(scrollHeight, PROMPT_MAX_HEIGHT))}px`;
-  }, [text, minHeight]);
+    ta.style.height = `${Math.max(minHeight, Math.min(scrollHeight, cap))}px`;
+  }, [text, minHeight, manualHeight, computeMaxHeight]);
 
   // Focus the prompt box when switching to / opening a session tab
   useEffect(() => {
@@ -560,6 +623,62 @@ export default function PromptBox({ sessionId, sessionName, cliSessionId }: Prom
     if (disableAfter && reminder) updateReminder({ ...reminder, enabled: false });
     return wrapped;
   }, [sessionId, reminder, updateReminder]);
+
+  // ── Prompt library (saved-prompts repository) ────────────────────────────────
+  // The store + CRUD live in scripts/prompts/prompt_library.py (external ground
+  // truth); the app is a thin wrapper over the prompt.library.* bus commands, which
+  // return the full current list so one round-trip refreshes everything. No copy in
+  // appState. Re-listed on every panel open so hand-edits / other callers show up.
+  const refreshLibrary = useCallback(async () => {
+    const r = await executeCommand<{ prompts: SavedPrompt[] }>('prompt.library.list', {}, { onFailure: 'silent' });
+    if (r.ok && r.data) setSavedPrompts(r.data.prompts);
+  }, []);
+  const saveCurrentPrompt = useCallback(async (title: string, tag?: string) => {
+    if (!text.trim()) return;
+    const r = await executeCommand<{ prompts: SavedPrompt[] }>('prompt.library.save',
+      { title, body: text, ...(tag ? { tag } : {}) }, { onFailure: 'toast', toastFn: showToast });
+    if (r.ok && r.data) { setSavedPrompts(r.data.prompts); showToast(`Saved “${title}” to the prompt library`, 'info'); }
+  }, [text, showToast]);
+  const updateSavedPrompt = useCallback(async (id: string, patch: { title?: string; body?: string; tag?: string; clearTag?: boolean }) => {
+    const r = await executeCommand<{ prompts: SavedPrompt[] }>('prompt.library.update',
+      { id, ...patch }, { onFailure: 'toast', toastFn: showToast });
+    if (r.ok && r.data) setSavedPrompts(r.data.prompts);
+  }, [showToast]);
+  const deleteSavedPrompt = useCallback(async (id: string) => {
+    const r = await executeCommand<{ prompts: SavedPrompt[] }>('prompt.library.delete',
+      { id }, { onFailure: 'toast', toastFn: showToast });
+    if (r.ok && r.data) setSavedPrompts(r.data.prompts);
+  }, [showToast]);
+  // Refresh from the store whenever the library panel opens.
+  useEffect(() => { if (showLibraryPanel) refreshLibrary(); }, [showLibraryPanel, refreshLibrary]);
+
+  // Fire a library prompt as-is to the current target(s). Deliberately does NOT touch
+  // the draft box (unlike handleSend's optimistic clear) — the box keeps whatever the
+  // user was typing. Same fan-out + reminder-wrap rules as a default send.
+  const deliverToTargets = useCallback(async (raw: string) => {
+    const trimmed = raw.trim();
+    if (!trimmed) return;
+    const targets = sendTargets;
+    const isDefault = targets.length === 1 && targets[0] === sessionId;
+    const outgoing = isDefault ? wrapOutgoing(raw) : raw;
+    let anyOk = false;
+    let firstSend = true;
+    for (const target of targets) {
+      // Configurable pause between deliveries on a multi-recipient fan-out (0 = none).
+      if (!firstSend && multiSendDelayMsRef.current > 0) await new Promise((r) => setTimeout(r, multiSendDelayMsRef.current));
+      firstSend = false;
+      const result = await executeCommand('prompt.send', { sessionId: target, text: outgoing, submit: autoSubmit }, {
+        onFailure: 'inline', errorHandler, field: 'prompt', toastFn: showToast,
+      });
+      if (result.ok) { anyOk = true; touchSessionActivity(target); scanSessionPromptArea(target, 700); }
+    }
+    if (anyOk) {
+      const names = targets.map((id) => (id === sessionId ? sessionName : (getSession(id)?.display_name || id)));
+      showToast(`${autoSubmit ? 'Sent' : 'Staged'} to ${names.join(', ')}`, 'info');
+    } else {
+      showToast('Send failed', 'error');
+    }
+  }, [sendTargets, sessionId, wrapOutgoing, autoSubmit, errorHandler, showToast, sessionName, getSession]);
 
   const handleSend = useCallback(async () => {
     const trimmed = text.trim();
@@ -622,7 +741,11 @@ export default function PromptBox({ sessionId, sessionName, cliSessionId }: Prom
     persistDraft(sessionId, '');
 
     let anyOk = false;
+    let firstSend = true;
     for (const target of targets) {
+      // Configurable pause between deliveries on a multi-recipient fan-out (0 = none).
+      if (!firstSend && multiSendDelayMsRef.current > 0) await new Promise((r) => setTimeout(r, multiSendDelayMsRef.current));
+      firstSend = false;
       const result = await executeCommand('prompt.send', { sessionId: target, text: outgoing, submit: autoSubmit }, {
         onFailure: 'inline', errorHandler, field: 'prompt', toastFn: showToast,
       });
@@ -700,7 +823,10 @@ export default function PromptBox({ sessionId, sessionName, cliSessionId }: Prom
     const isDefault = recipients.length === 0;
     const outgoing = isDefault ? wrapOutgoing(nudgeText) : nudgeText;
     let anyOk = false;
+    let firstSend = true;
     for (const target of targets) {
+      if (!firstSend && multiSendDelayMsRef.current > 0) await new Promise((r) => setTimeout(r, multiSendDelayMsRef.current));
+      firstSend = false;
       const result = await executeCommand('prompt.send', { sessionId: target, text: outgoing, submit: true }, {
         onFailure: 'inline', errorHandler, field: 'prompt', toastFn: showToast,
       });
@@ -782,9 +908,67 @@ export default function PromptBox({ sessionId, sessionName, cliSessionId }: Prom
       return;
     }
 
+    // Cmd/Ctrl+Shift+V → paste UNWRAPPED: collapse single newlines (hard-wrap
+    // artifacts) to spaces while KEEPING paragraph breaks. For prose copied from a PDF
+    // or a narrow pane where the line breaks are wrapping, not content. Explicit gesture
+    // (never auto-guessed) so intentional multi-line pastes are untouched.
+    if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'v') {
+      e.preventDefault();
+      try {
+        const raw = await navigator.clipboard.readText();
+        if (raw) insertAtCursor(unwrapHardBreaks(raw));
+      } catch { showToast('Could not read the clipboard', 'error'); }
+      return;
+    }
+
     // @-autocomplete: navigate/select/dismiss while the dropdown is open (before the
     // history arrows so ↑/↓ move through suggestions, not history).
     if (mention.handleKeyDown(e)) return;
+
+    // Tab indents inside the box instead of moving focus out. 4 SPACES, not a literal
+    // \t — the draft is delivered to the CLI via send-keys, and a real tab there can
+    // trigger tab-completion/menus in the target terminal. Shift+Tab outdents. Block-
+    // aware for multi-line selections; falls through to the @-popover's Tab (above).
+    if (e.key === 'Tab') {
+      const ta = textareaRef.current;
+      if (!ta) return;
+      e.preventDefault();
+      const UNIT = '    ';
+      const val = text;
+      const s = ta.selectionStart ?? val.length;
+      const en = ta.selectionEnd ?? val.length;
+      const selHasNL = val.slice(s, en).includes('\n');
+
+      // Simple caret indent (or replace a within-line selection) → reuse insertAtCursor.
+      if (!e.shiftKey && !selHasNL) { insertAtCursor(UNIT); return; }
+
+      // Block indent/outdent: operate on every full line the selection touches.
+      const lineStart = val.lastIndexOf('\n', s - 1) + 1;
+      let lineEnd = val.indexOf('\n', en);
+      if (lineEnd === -1) lineEnd = val.length;
+      const lines = val.slice(lineStart, lineEnd).split('\n');
+      let deltaFirst = 0, deltaTotal = 0;
+      const out = lines.map((ln, i) => {
+        if (e.shiftKey) {
+          const removed = (ln.match(/^ {1,4}/)?.[0].length) ?? 0;
+          if (i === 0) deltaFirst = -removed;
+          deltaTotal -= removed;
+          return ln.slice(removed);
+        }
+        if (i === 0) deltaFirst = UNIT.length;
+        deltaTotal += UNIT.length;
+        return UNIT + ln;
+      });
+      const next = val.slice(0, lineStart) + out.join('\n') + val.slice(lineEnd);
+      setText(next);
+      sessionDrafts.set(sessionId, next);
+      persistDraft(sessionId, next);
+      requestAnimationFrame(() => {
+        ta.focus();
+        ta.setSelectionRange(Math.max(lineStart, s + deltaFirst), en + deltaTotal);
+      });
+      return;
+    }
 
     // Up Arrow — navigate to older history entry (only when cursor is at start)
     if (e.key === 'ArrowUp' && history.length > 0) {
@@ -829,21 +1013,24 @@ export default function PromptBox({ sessionId, sessionName, cliSessionId }: Prom
       }
       return;
     }
-  }, [handleSend, history, historyIndex, text, sessionId, mention]);
+  }, [handleSend, history, historyIndex, text, sessionId, mention, insertAtCursor]);
 
-  // Resize handle drag
+  // Resize handle drag — sets an EXPLICIT manual height (either direction). Start
+  // from the box's current on-screen height so the drag is continuous whether we
+  // were in auto or manual mode.
   const handleResizeMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
     draggingRef.current = true;
     const startY = e.clientY;
-    const startHeight = minHeight;
+    const startHeight = textareaRef.current?.offsetHeight ?? manualHeight ?? minHeight;
+    const cap = computeMaxHeight();
     document.body.style.cursor = 'row-resize';
     document.body.style.userSelect = 'none';
 
     const onMouseMove = (ev: MouseEvent) => {
       if (!draggingRef.current) return;
       const delta = startY - ev.clientY;
-      setMinHeight(Math.max(40, Math.min(startHeight + delta, PROMPT_MAX_HEIGHT)));
+      setManualHeight(Math.max(40, Math.min(startHeight + delta, cap)));
     };
 
     const onMouseUp = () => {
@@ -856,21 +1043,13 @@ export default function PromptBox({ sessionId, sessionName, cliSessionId }: Prom
 
     window.addEventListener('mousemove', onMouseMove);
     window.addEventListener('mouseup', onMouseUp);
-  }, [minHeight]);
+  }, [minHeight, manualHeight, computeMaxHeight]);
 
-  // Double-click the resize bar → collapse to max(default height, lines needed
-  // for current content). Never smaller than the configured default.
+  // Double-click the resize bar → clear the manual height and return to auto-grow
+  // mode (box fits its content between the configured floor and the cap).
   const handleResizeDoubleClick = useCallback(() => {
-    const ta = textareaRef.current;
-    let contentPx = defaultHeightPx;
-    if (ta) {
-      const prev = ta.style.height;
-      ta.style.height = 'auto';
-      contentPx = ta.scrollHeight;
-      ta.style.height = prev;
-    }
-    setMinHeight(Math.max(defaultHeightPx, Math.min(contentPx, PROMPT_MAX_HEIGHT)));
-  }, [defaultHeightPx]);
+    setManualHeight(null);
+  }, []);
 
   // The config popover and quick-actions flyout open UPWARD from the prompt box, but
   // the prompt box's ancestor (.entity-view-content) has overflow:hidden, which was
@@ -898,12 +1077,16 @@ export default function PromptBox({ sessionId, sessionName, cliSessionId }: Prom
           onToggleAutoSubmit={toggleAutoSubmit}
           showAttach={showAttach}
           onToggleShowAttach={toggleShowAttach}
+          showLibrary={showLibrary}
+          onToggleShowLibrary={toggleShowLibrary}
           quickNudges={quickNudges}
           onQuickNudgesChange={updateQuickNudges}
           quickNudgeColumns={quickNudgeColumns}
           onQuickNudgeColumnsChange={updateQuickNudgeColumns}
           defaultHeightLines={defaultHeightLines}
           onDefaultHeightLinesChange={updateDefaultHeightLines}
+          multiSendDelaySec={multiSendDelaySec}
+          onMultiSendDelayChange={updateMultiSendDelay}
           sessionName={sessionName}
           reminder={reminder}
           onReminderChange={updateReminder}
@@ -949,6 +1132,35 @@ export default function PromptBox({ sessionId, sessionName, cliSessionId }: Prom
           onChange={setRecipients}
           onClose={() => setShowRecipientPicker(false)}
           anchorStyle={popoverAnchorStyle()}
+        />
+      )}
+      {showLibraryPanel && (
+        <PromptLibraryPopover
+          prompts={savedPrompts}
+          draft={text}
+          autoSubmit={autoSubmit}
+          onInsert={(body) => insertAtCursor(body)}
+          onSend={(body) => deliverToTargets(body)}
+          onSave={(title, tag) => saveCurrentPrompt(title, tag)}
+          onUpdate={(id, patch) => updateSavedPrompt(id, patch)}
+          onDelete={(id) => deleteSavedPrompt(id)}
+          anchorStyle={popoverAnchorStyle()}
+          onClose={() => setShowLibraryPanel(false)}
+        />
+      )}
+      {showRewrite && (
+        <PromptRewriteDialog
+          initialText={text}
+          prompts={savedPrompts}
+          onRefreshLibrary={refreshLibrary}
+          onApply={(rewritten) => {
+            setText(rewritten);
+            sessionDrafts.set(sessionId, rewritten);
+            persistDraft(sessionId, rewritten);
+            setShowRewrite(false);
+            requestAnimationFrame(() => textareaRef.current?.focus());
+          }}
+          onClose={() => setShowRewrite(false)}
         />
       )}
       <MentionPopover state={mention} />
@@ -1021,24 +1233,44 @@ export default function PromptBox({ sessionId, sessionName, cliSessionId }: Prom
               opens a roomy flyout popover (rendered at the promptbox root, below) so
               the configurable multi-column grid has real space — not cramped in this
               narrow pane. Fully configurable (label/text/order/columns) via Config. */}
-          {quickNudges.length > 0 && (
+          {/* Compact utility buttons pair up 2-per-row instead of stacking. */}
+          <div className="promptbox-controls-grid">
+            {quickNudges.length > 0 && (
+              <button
+                className={`promptbox-nudges-trigger${showQuickActions ? ' is-open' : ''}`}
+                onClick={() => setShowQuickActions((v) => !v)}
+                title="Quick Actions — one-tap canned sends"
+              >
+                {'⚡'} QA
+              </button>
+            )}
+            {showLibrary && (
+              <button
+                className={`promptbox-library${showLibraryPanel ? ' is-open' : ''}`}
+                onClick={() => setShowLibraryPanel((v) => !v)}
+                title="Prompt Library — insert or send a saved prompt, or save the current draft"
+              >
+                {'🔖'} Lib
+              </button>
+            )}
+            {showAttach && (
+              <button
+                className="promptbox-attach"
+                onClick={handleAttach}
+                title="Attach a file or image — inserts an @path the CLI reads (or paste an image)"
+              >
+                {'📎'} Attach
+              </button>
+            )}
             <button
-              className={`promptbox-nudges-trigger${showQuickActions ? ' is-open' : ''}`}
-              onClick={() => setShowQuickActions((v) => !v)}
-              title="Quick Actions — one-tap canned sends"
+              className={`promptbox-rewrite${showRewrite ? ' is-open' : ''}`}
+              onClick={() => setShowRewrite(true)}
+              disabled={!text.trim()}
+              title="AI Re-Write — improve this prompt with an AI, guided by your instructions"
             >
-              {'⚡'} Quick Actions
+              {'✨'} Rewrite
             </button>
-          )}
-          {showAttach && (
-            <button
-              className="promptbox-attach"
-              onClick={handleAttach}
-              title="Attach a file or image — inserts an @path the CLI reads (or paste an image)"
-            >
-              {'📎'} Attach
-            </button>
-          )}
+          </div>
           <button
             className="promptbox-config"
             onClick={() => setShowConfig((v) => !v)}
@@ -1060,7 +1292,7 @@ export default function PromptBox({ sessionId, sessionName, cliSessionId }: Prom
             placeholder="✦ Type your prompt here — Cmd+Enter to send"
             rows={1}
             spellCheck={true}
-            style={{ minHeight: `${minHeight}px` }}
+            style={{ minHeight: '40px' }}
           />
         </div>
       </div>

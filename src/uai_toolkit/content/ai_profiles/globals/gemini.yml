@@ -1,6 +1,7 @@
 name: Gemini CLI
-description: 'Secondary platform. Full filesystem access, MCP servers (whitelisted),
-  system prompt injection via gemini_cli.py wrapper.
+description: 'RETIRED (2026-07-11) — Gemini CLI is no longer a current/launchable
+  platform (discontinued upstream by Google). Kept only as a historical record so
+  past Gemini sessions still resolve; do not compose for new sessions.
 
   '
 platform:
@@ -24,7 +25,9 @@ delivery:
 _registry:
   id: gemini
   name: Gemini
-  status: active
+  status: retired
+  retired: '2026-07-11'
+  retired_reason: Gemini CLI discontinued upstream (Google); no longer a current tool.
   version: 1.0.0
   created: '2026-04-15'
-  updated: '2026-04-15'
+  updated: '2026-07-11'

@@ -70,10 +70,6 @@ try {
 app.commandLine.appendSwitch('remote-debugging-port', process.env.UCI_DEBUG_PORT || process.env.UAI_DEBUG_PORT || '9226');
 app.commandLine.appendSwitch('remote-allow-origins', '*');
 
-/** Canonical main ai_root — for production data (sessions, briefs, scripts) that lives outside devTrees. */
-function getAiRootMain(): string {
-  return process.env.AI_ROOT_MAIN || process.env.AI_ROOT || path.join(require('node:os').homedir(), 'AI/ai_root');
-}
 
 let mainWindow: BrowserWindow | null = null;
 let changeSequence = 0;
@@ -572,6 +568,7 @@ ipcMain.handle(IPC.BRIEF_CREATE, async (_event, sessionIds: string | string[], o
   launchName?: string;
   launchPlatform?: string;
   condenserSession?: string;
+  hostSession?: string;
 }) => {
   const result = await createBrief(sessionIds, opts);
   if (result.ok) {
@@ -784,6 +781,82 @@ ipcMain.handle('uai:openPath', async (_event, filePath: string) => {
   } catch (e) {
     return { ok: false, error: (e as Error).message };
   }
+});
+
+// ─── URL opening: force web links into the frontmost NON-incognito Chrome ────
+// Electron's default handler for window.open / target=_blank spawns a native
+// child BrowserWindow — which reads as a stray "UAI" browser window. We deny
+// that everywhere (setWindowOpenHandler below) and route http/https URLs into
+// Chrome instead: a new tab of the topmost *normal* (non-incognito) window, or a
+// new window if none exists / Chrome isn't running. Non-web schemes and any
+// failure fall back to the OS default opener so the click never dead-ends.
+const CHROME_OPEN_SCRIPT = `on run argv
+  set theURL to item 1 of argv
+  tell application "Google Chrome"
+    activate
+    if (count of windows) = 0 then
+      make new window
+      set URL of active tab of front window to theURL
+      return
+    end if
+    set targetWin to missing value
+    repeat with w in windows
+      try
+        if mode of w is "normal" then
+          set targetWin to w
+          exit repeat
+        end if
+      end try
+    end repeat
+    if targetWin is missing value then
+      make new window
+      set URL of active tab of front window to theURL
+    else
+      tell targetWin to make new tab with properties {URL:theURL}
+      set index of targetWin to 1
+    end if
+  end tell
+end run`;
+
+function openUrlInChrome(rawUrl: string): void {
+  const url = String(rawUrl || '').trim();
+  if (!url) return;
+  let scheme = '';
+  try { scheme = new URL(url).protocol; } catch { scheme = ''; }
+  // Only web URLs go to Chrome; mailto:/file:/etc. use the OS default handler.
+  if (scheme !== 'http:' && scheme !== 'https:') {
+    shell.openExternal(url).catch(() => { /* nothing more we can do */ });
+    return;
+  }
+  if (process.platform !== 'darwin') {
+    shell.openExternal(url).catch(() => {});
+    return;
+  }
+  const { execFile } = require('node:child_process');
+  execFile('osascript', ['-e', CHROME_OPEN_SCRIPT, url], { timeout: 8000 }, (err: Error | null) => {
+    // Chrome missing, quit mid-script, or automation denied → default browser.
+    if (err) shell.openExternal(url).catch(() => {});
+  });
+}
+
+ipcMain.handle('uai:openUrl', async (_event, url: string) => {
+  try {
+    openUrlInChrome(url);
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
+  }
+});
+
+// Deny every renderer/webview attempt to spawn a native child window and route
+// web URLs to Chrome. One registration covers the main window AND every
+// <webview> pane (each gets its own webContents via this event).
+app.on('web-contents-created', (_e, contents) => {
+  contents.setWindowOpenHandler(({ url }) => {
+    if (url && /^https?:\/\//i.test(url)) openUrlInChrome(url);
+    else if (url && url !== 'about:blank') shell.openExternal(url).catch(() => {});
+    return { action: 'deny' };
+  });
 });
 
 // ─── IPC: Comms — Prompt Queue + Inbox (2L) ─────────────────────────────
@@ -1097,14 +1170,36 @@ ipcMain.handle('uai:bootHistory', async (_event, limit = 10) => {
   }
 });
 
+// ─── IPC: AI awareness feed (ai_comms/feed/activity.jsonl) ───────────────
+// Append-only JSONL of cross-session activity. Returns the most-recent `limit`
+// entries, newest first, for the AI Feed pane.
+ipcMain.handle('uai:aiFeed:read', async (_event, limit = 300) => {
+  try {
+    const p = path.join(getAiRootMain(), 'ai_comms', 'feed', 'activity.jsonl');
+    const raw = fs.readFileSync(p, 'utf8');
+    const lines = raw.split('\n').filter(l => l.trim());
+    const entries: Array<Record<string, unknown>> = [];
+    // Parse from the tail so a huge feed stays cheap.
+    for (let i = lines.length - 1; i >= 0 && entries.length < limit; i--) {
+      try { entries.push(JSON.parse(lines[i])); } catch { /* skip malformed */ }
+    }
+    return entries;  // newest first
+  } catch {
+    return [];
+  }
+});
+
 // ─── IPC: Trait Manager (trait_mgr.py) ──────────────────────────────────
 
 ipcMain.handle('uai:traitMgr:run', async (_event, command: string, args: string[]) => {
-  const traitMgrPath = path.join(getAiRootMain(), 'ai_general/scripts/traits/trait_mgr.py');
+  // NOTE (todo_0319): "traitMgr"/trait_mgr is old terminology (traits → context files);
+  // quickfixed the path here (scripts/traits/ was the deleted old dir). A full rename to
+  // ctx-files-mgr / context_mgr is a follow-up.
+  const traitMgrPath = path.join(getAiRootMain(), 'ai_general/scripts/context_files/trait_mgr.py');
   const { execFile } = require('node:child_process');
   const { promisify } = require('node:util');
   const execFileAsync = promisify(execFile);
-  const envPath = [process.env.PATH || '', '/opt/homebrew/bin', '/usr/local/bin'].join(':');
+  const envPath = shellPath();
   try {
     const { stdout, stderr } = await execFileAsync('python3', [traitMgrPath, '--json', command, ...args], {
       timeout: 30000,
@@ -1149,7 +1244,7 @@ ipcMain.handle('uai:context:run', async (_event, verb: string, args?: string[]) 
   const { execFile } = require('node:child_process');
   const { promisify } = require('node:util');
   const execFileAsync = promisify(execFile);
-  const envPath = [process.env.PATH || '', '/opt/homebrew/bin', '/usr/local/bin'].join(':');
+  const envPath = shellPath();
   try {
     // NOTE: --json is a per-subcommand flag in context_mgr.py, so it must come
     // AFTER the verb (e.g. `list --json`), not before it. Placing it first makes
@@ -1181,7 +1276,7 @@ ipcMain.handle('uai:gitFileView:read', async (_event, dir: string, since?: strin
   const { execFile } = require('node:child_process');
   const { promisify } = require('node:util');
   const execFileAsync = promisify(execFile);
-  const envPath = [process.env.PATH || '', '/opt/homebrew/bin', '/usr/local/bin'].join(':');
+  const envPath = shellPath();
   const argv = [scriptPath, '--dir', dir, '--since', (typeof since === 'string' && since) ? since : '30 days ago'];
   if (typeof until === 'string' && until.trim()) argv.push('--until', until);
   try {
@@ -1205,7 +1300,7 @@ ipcMain.handle('uai:gitFileView:commit', async (_event, dir: string, commitHash:
   const { execFile } = require('node:child_process');
   const { promisify } = require('node:util');
   const execFileAsync = promisify(execFile);
-  const envPath = [process.env.PATH || '', '/opt/homebrew/bin', '/usr/local/bin'].join(':');
+  const envPath = shellPath();
   try {
     const { stdout } = await execFileAsync('python3', [scriptPath, '--dir', dir, '--commit', commitHash], {
       timeout: 30000, maxBuffer: 64 * 1024 * 1024, cwd: getAiRootMain(),
@@ -1226,7 +1321,7 @@ ipcMain.handle('uai:gitFileView:diff', async (_event, dir: string, file: string,
   const { execFile } = require('node:child_process');
   const { promisify } = require('node:util');
   const execFileAsync = promisify(execFile);
-  const envPath = [process.env.PATH || '', '/opt/homebrew/bin', '/usr/local/bin'].join(':');
+  const envPath = shellPath();
   try {
     const { stdout } = await execFileAsync('python3', [scriptPath, '--dir', dir, '--file', file, '--from', fromHash, '--to', toHash], {
       timeout: 30000, maxBuffer: 64 * 1024 * 1024, cwd: getAiRootMain(),
@@ -1245,7 +1340,7 @@ ipcMain.handle('uai:gitFileView:repos', async (_event, root: string) => {
   const { execFile } = require('node:child_process');
   const { promisify } = require('node:util');
   const execFileAsync = promisify(execFile);
-  const envPath = [process.env.PATH || '', '/opt/homebrew/bin', '/usr/local/bin'].join(':');
+  const envPath = shellPath();
   try {
     const { stdout } = await execFileAsync('python3', [scriptPath, '--dir', (root && root.trim()) || '.', '--repos'], {
       timeout: 30000, maxBuffer: 16 * 1024 * 1024, cwd: getAiRootMain(),
@@ -1266,10 +1361,32 @@ ipcMain.handle('uai:gitFileView:content', async (_event, dir: string, file: stri
   const { execFile } = require('node:child_process');
   const { promisify } = require('node:util');
   const execFileAsync = promisify(execFile);
-  const envPath = [process.env.PATH || '', '/opt/homebrew/bin', '/usr/local/bin'].join(':');
+  const envPath = shellPath();
   try {
     const { stdout } = await execFileAsync('python3', [scriptPath, '--dir', dir, '--file', file, '--show', ref], {
       timeout: 30000, maxBuffer: 64 * 1024 * 1024, cwd: getAiRootMain(),
+      env: { ...process.env, AI_ROOT: getAiRootMain(), PATH: envPath },
+    });
+    try { return JSON.parse(stdout); }
+    catch { return { ok: false, error: 'invalid JSON from git_file_view.py' }; }
+  } catch (err: any) {
+    return { ok: false, error: err.stderr || err.message || String(err) };
+  }
+});
+
+ipcMain.handle('uai:gitFileView:grep', async (_event, dir: string, pattern: string, toRef?: string) => {
+  if (typeof dir !== 'string' || !dir.trim()) return { ok: false, error: 'dir required' };
+  if (typeof pattern !== 'string' || !pattern.trim()) return { ok: true, matches: [] };
+  const scriptPath = path.join(getAiRootMain(), 'ai_general/scripts/utils/git_file_view.py');
+  const { execFile } = require('node:child_process');
+  const { promisify } = require('node:util');
+  const execFileAsync = promisify(execFile);
+  const envPath = shellPath();
+  const argv = [scriptPath, '--dir', dir, '--grep', pattern];
+  if (typeof toRef === 'string' && toRef.trim()) argv.push('--to', toRef);
+  try {
+    const { stdout } = await execFileAsync('python3', argv, {
+      timeout: 30000, maxBuffer: 32 * 1024 * 1024, cwd: getAiRootMain(),
       env: { ...process.env, AI_ROOT: getAiRootMain(), PATH: envPath },
     });
     try { return JSON.parse(stdout); }
@@ -1329,8 +1446,46 @@ ipcMain.handle('uai:fs:listDir', async (_event, dirPath: string, opts?: { dirsOn
     rows.sort((a, b) => (a.type === b.type ? a.name.localeCompare(b.name) : a.type === 'directory' ? -1 : 1));
     return rows;
   } catch (err: any) {
-    console.error('[uai:fs:listDir] Failed:', err?.message);
+    // ENOENT/ENOTDIR are EXPECTED for speculative listings (the @-path autocomplete
+    // lists as-you-type; a partial or not-yet-real path just yields no rows). Don't
+    // log those as errors — only genuinely unexpected failures (EACCES, EMFILE, …).
+    if (err?.code !== 'ENOENT' && err?.code !== 'ENOTDIR') {
+      console.error('[uai:fs:listDir] Failed:', err?.message);
+    }
     return [];
+  }
+});
+
+// Read a text file by absolute path — backs the in-app document/markdown viewer
+// tab (News & Reports, and any other .md opened in a tab rather than externally).
+// Capped so a runaway file can't blow up the renderer.
+ipcMain.handle('uai:fs:readFile', async (_event, filePath: string): Promise<{ ok: boolean; content?: string; truncated?: boolean; error?: string }> => {
+  const MAX_BYTES = 5 * 1024 * 1024;   // 5 MB
+  try {
+    if (!filePath || typeof filePath !== 'string') return { ok: false, error: 'no path' };
+    let resolved = filePath.trim();
+    if (resolved === '~' || resolved.startsWith('~/')) {
+      resolved = path.join(require('node:os').homedir(), resolved.slice(1));
+    }
+    // Resolve $AI_ROOT / ${AI_ROOT} and AI_ROOT-relative paths (e.g. scheduled
+    // job commands reference scripts as $AI_ROOT/ai_general/... or ai_general/...).
+    resolved = resolved.replace(/^\$\{?AI_ROOT\}?\/?/, () => getAiRootMain() + '/');
+    if (!path.isAbsolute(resolved)) {
+      resolved = path.join(getAiRootMain(), resolved);
+    }
+    const st = fs.statSync(resolved);
+    if (st.isDirectory()) return { ok: false, error: 'is a directory' };
+    const truncated = st.size > MAX_BYTES;
+    const fd = fs.openSync(resolved, 'r');
+    try {
+      const len = truncated ? MAX_BYTES : st.size;
+      const buf = Buffer.alloc(len);
+      fs.readSync(fd, buf, 0, len, 0);
+      return { ok: true, content: buf.toString('utf8'), truncated };
+    } finally { fs.closeSync(fd); }
+  } catch (err: any) {
+    console.error('[uai:fs:readFile] Failed:', err?.message);
+    return { ok: false, error: err?.message || 'read failed' };
   }
 });
 
@@ -1345,7 +1500,7 @@ ipcMain.handle('uai:comms:index', async (_event, verb: string, args: string[] = 
   const { execFile } = require('node:child_process');
   const { promisify } = require('node:util');
   const execFileAsync = promisify(execFile);
-  const envPath = [process.env.PATH || '', '/opt/homebrew/bin', '/usr/local/bin'].join(':');
+  const envPath = shellPath();
   try {
     const { stdout } = await execFileAsync('python3', [script, verb, ...(args || []), '--json'], {
       timeout: 15000,
@@ -1565,7 +1720,7 @@ ipcMain.handle('uai:tasks:list', async (_event, opts?: { platform?: string; stat
   const { execFile: ef } = require('node:child_process');
   const { promisify } = require('node:util');
   const execFileAsync = promisify(ef);
-  const envPath = [process.env.PATH || '', '/opt/homebrew/bin', '/usr/local/bin'].join(':');
+  const envPath = shellPath();
 
   const args = ['list_tasks'];
   if (opts?.platform) { args.push('--platform', opts.platform); }
@@ -1590,6 +1745,7 @@ ipcMain.handle('uai:tasks:list', async (_event, opts?: { platform?: string; stat
 
 import { loadStore as loadAssignedStore, saveStore as saveAssignedStore, runFullScan, updateTask as updateAssignedTask } from './assigned-tasks';
 import type { ScanEngine } from './assigned-tasks';
+import { aiRootMain as getAiRootMain, shellPath, buildChildEnv } from './paths';
 
 let assignedTasksScanAbort: AbortController | null = null;
 
@@ -1667,7 +1823,7 @@ ipcMain.handle('uai:assignedTasks:updateTask', async (_event, taskId: string, pa
 
 ipcMain.handle('uai:mcp:list', async () => {
   const discoverScript = path.join(getAiRootMain(), 'ai_general/scripts/setup/discover_mcp_tools.py');
-  const pythonCmd = '/opt/homebrew/bin/python3';
+  const pythonCmd = 'python3';   // resolved via the healthy PATH from buildChildEnv
   const { execFile: ef } = require('node:child_process');
   const { promisify } = require('node:util');
   const execFileAsync = promisify(ef);
@@ -1675,7 +1831,7 @@ ipcMain.handle('uai:mcp:list', async () => {
   try {
     const { stdout } = await execFileAsync(pythonCmd, [discoverScript], {
       timeout: 60000,
-      env: { ...process.env, AI_ROOT: getAiRootMain() },
+      env: buildChildEnv({ AI_ROOT: getAiRootMain() }),
     });
     return JSON.parse(stdout.trim());
   } catch (err) {
@@ -1834,7 +1990,7 @@ ipcMain.handle('transcript:read', async (_event, zellijSession: string, cliSessi
   const { execFile: ef } = require('node:child_process');
   const aiRootMain = getAiRootMain();
   const readJsonlPath = path.join(aiRootMain, 'ai_general/scripts/jsonl/read_jsonl.py');
-  const envPath = [process.env.PATH || '', '/opt/homebrew/bin', '/usr/local/bin'].join(':');
+  const envPath = shellPath();
 
   const uuid = cliSessionId;
   if (!uuid) {
@@ -1891,7 +2047,7 @@ ipcMain.handle('terminal:captureScrollback', async (_event, params: { sessionNam
 
   const aiRootMain = getAiRootMain();
   const sessionOpsPath = path.join(aiRootMain, 'ai_general/scripts/session_mgmt/session_ops.py');
-  const envPath = [process.env.PATH || '', '/opt/homebrew/bin', '/usr/local/bin'].join(':');
+  const envPath = shellPath();
 
   try {
     const text: string = await new Promise((resolve, reject) => {
@@ -1920,7 +2076,7 @@ ipcMain.handle('uai:prompts:hasPromptText', async (_event, trackingId: string) =
   const { execFile: ef } = require('node:child_process') as typeof import('node:child_process');
   const { homedir } = require('node:os') as typeof import('node:os');
   const script = path.join(homedir(), 'bin', 'ai', 'prompting', 'get_prompt_area_texts.py');
-  const envPath = [process.env.PATH || '', '/opt/homebrew/bin', '/usr/local/bin'].join(':');
+  const envPath = shellPath();
   try {
     const stdout: string = await new Promise((resolve, reject) => {
       // default (no --include-empty) returns only occupied prompt areas
@@ -1942,7 +2098,7 @@ ipcMain.handle('transcript:history', async (_event, cliSessionId: string) => {
   const { execFile: ef } = require('node:child_process');
   const aiRootMain = getAiRootMain();
   const readJsonlPath = path.join(aiRootMain, 'ai_general/scripts/jsonl/read_jsonl.py');
-  const envPath = [process.env.PATH || '', '/opt/homebrew/bin', '/usr/local/bin'].join(':');
+  const envPath = shellPath();
 
   if (!cliSessionId) return { ok: false, error: 'No CLI UUID', messages: [] };
 
@@ -2150,7 +2306,7 @@ ipcMain.handle('uai:prompts:getPromptAreas', async () => {
   const { execFile: ef } = require('node:child_process') as typeof import('node:child_process');
   const { homedir } = require('node:os') as typeof import('node:os');
   const script = path.join(homedir(), 'bin', 'ai', 'prompting', 'get_prompt_area_texts.py');
-  const envPath = [process.env.PATH || '', '/opt/homebrew/bin', '/usr/local/bin'].join(':');
+  const envPath = shellPath();
   try {
     const stdout: string = await new Promise((resolve, reject) => {
       ef('python3', [script, '--all-active'], {
@@ -2181,7 +2337,7 @@ function isValidSchedName(name: string): boolean {
 /** Shell out to scheduled_task_mgr.py using execFile (no shell injection). */
 function runSchedTaskMgr(args: string[], timeoutMs = 30000): Promise<{ ok: boolean; stdout: string; stderr: string }> {
   const { execFile: ef } = require('node:child_process') as typeof import('node:child_process');
-  const envPath = [process.env.PATH || '', '/opt/homebrew/bin', '/usr/local/bin'].join(':');
+  const envPath = shellPath();
   return new Promise((resolve) => {
     ef('python3', [SCHED_TASKS_SCRIPT, ...args], {
       timeout: timeoutMs,
@@ -2391,13 +2547,34 @@ ipcMain.handle('clipboard:read', () => {
 
 ipcMain.handle('uai:dialog:openDirectory', async (_event, defaultPath?: string) => {
   if (!mainWindow) return null;
-  const result = await dialog.showOpenDialog(mainWindow, {
-    properties: ['openDirectory'],
-    defaultPath: defaultPath || path.join(require('node:os').homedir(), 'AI/ai_root'),
-    title: 'Select Directory',
-  });
-  if (result.canceled || result.filePaths.length === 0) return null;
-  return result.filePaths[0];
+  // NSOpenPanel silently fails to present when handed a relative or non-existent
+  // defaultPath (e.g. the Git Viewer's default dir 'ai_general'). Resolve it to an
+  // existing absolute directory, walking up to the nearest existing ancestor, and
+  // fall back to ai_root if nothing resolves — so the panel ALWAYS opens.
+  const resolveDefault = (p?: string): string => {
+    const aiRoot = getAiRootMain();
+    let cand = p && p.trim() ? p.trim() : aiRoot;
+    if (cand === '~' || cand.startsWith('~/')) cand = path.join(require('node:os').homedir(), cand.slice(1));
+    if (!path.isAbsolute(cand)) cand = path.join(aiRoot, cand);
+    for (let cur = cand; ;) {
+      try { if (fs.statSync(cur).isDirectory()) return cur; } catch { /* keep walking up */ }
+      const parent = path.dirname(cur);
+      if (parent === cur) return aiRoot;
+      cur = parent;
+    }
+  };
+  try {
+    const result = await dialog.showOpenDialog(mainWindow, {
+      properties: ['openDirectory'],
+      defaultPath: resolveDefault(defaultPath),
+      title: 'Select Directory',
+    });
+    if (result.canceled || result.filePaths.length === 0) return null;
+    return result.filePaths[0];
+  } catch (err: any) {
+    console.error('[uai:dialog:openDirectory] Failed:', err?.message);
+    return null;
+  }
 });
 
 // Prompt Box attach: pick one or more files → return absolute paths so the Prompt Box
@@ -2672,7 +2849,7 @@ function announceInstanceRole(): void {
   try {
     const { spawn } = require('node:child_process');
     const notifier = path.join(getAiRootMain(), 'ai_general', 'scripts', 'notifications', 'send_user_notification.py');
-    const envPath = [process.env.PATH || '', '/opt/homebrew/bin', '/usr/local/bin'].join(':');
+    const envPath = shellPath();
     spawn('python3', [notifier, 'info', msg], {
       detached: true, stdio: 'ignore',
       env: { ...process.env, PATH: envPath, AI_ROOT: getAiRootMain() },

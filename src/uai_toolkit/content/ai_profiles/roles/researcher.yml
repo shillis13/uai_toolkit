@@ -11,10 +11,9 @@ responsibilities:
   - Knowledge synthesis
   does_not_own:
   - Chat history processing (librarian domain)
-  - Direct shard content (managed by Gemini instances)
+  - Direct shard content (the Gemini-backed shard subsystem was retired 2026-07-12)
 context_files:
   methods:
-  - ai_context_files/instructions/how_tos/instr_search_agent_bootstrap
   - ai_context_files/instructions/how_tos/instr_history_search
 _registry:
   id: researcher

@@ -242,6 +242,13 @@ CODEX_CTX_FOOTER_RE = re.compile(r'Context\s+(\d+)%\s+(left|used)', re.IGNORECAS
 CODEX_WORKING_RE = re.compile(r'·\s*Working\b')
 CODEX_READY_RE = re.compile(r'·\s*Ready\b')
 CODEX_INTERRUPT_RE = re.compile(r'esc to interrupt', re.IGNORECASE)
+# Claude-Code-lineage CLIs (Grok Build, Antigravity) — busy markers observed live.
+# Grok shows a "[stop]" interrupt affordance in the live-turn footer; Antigravity
+# shows a "Working..." indicator. Both print the ai_root statusLine, so context%
+# comes from "Used: N%" generically.
+GROK_BUSY_RE = re.compile(r'\[stop\]', re.IGNORECASE)
+AGY_BUSY_RE = re.compile(r'\bWorking\.\.\.', re.IGNORECASE)
+AIROOT_CTX_RE = re.compile(r'Used:\s*(\d+)%', re.IGNORECASE)
 # Memorex canonical verb-line (cross-CLI active-response tell): a single glyph,
 # whitespace, a single word, then a gerund-tied ellipsis — anchored at the TRUE
 # (untrimmed) start of line. Source: memorex.md §2.5 (impl /^\S\s+\S+…/).
@@ -299,6 +306,10 @@ def parse_ai_status(platform: str, screen_text: str) -> dict:
         _parse_codex_status(result, full_text, bottom_text)
     elif platform == "gemini_cli":
         _parse_gemini_status(result, full_text, bottom_text)
+    elif platform == "grok_cli":
+        _parse_grok_status(result, full_text, bottom_text)
+    elif platform == "antigravity_cli":
+        _parse_antigravity_status(result, full_text, bottom_text)
 
     return result
 
@@ -559,27 +570,49 @@ def _parse_gemini_status(result: dict, full_text: str, bottom_text: str) -> None
         result["state"] = "unknown"
 
 
+def _parse_lineage_cli_status(result: dict, full_text: str, bottom_text: str, busy_re) -> None:
+    """Shared status parse for Claude-Code-lineage CLIs (Grok Build, Antigravity).
+
+    Both print the ai_root statusLine, so context% comes from "Used: N%". State is
+    a busy marker (platform-specific) vs an empty prompt box (idle).
+    """
+    m = AIROOT_CTX_RE.search(full_text)
+    if m:
+        result["context_percent"] = int(m.group(1))
+
+    if busy_re.search(bottom_text) or busy_re.search(full_text[-2000:]):
+        result["state"] = "responding"
+    elif re.search(r'[>❯]\s*$', bottom_text, re.MULTILINE):
+        result["state"] = "idle"
+    else:
+        result["state"] = "unknown"
+
+
+def _parse_grok_status(result: dict, full_text: str, bottom_text: str) -> None:
+    """Parse Grok Build terminal output. Busy = "[stop]" affordance in the footer."""
+    _parse_lineage_cli_status(result, full_text, bottom_text, GROK_BUSY_RE)
+    m = re.search(r'(Grok[^·|\n]*?)\s*·', full_text)  # footer: "Grok 4.5 (high) · always-approve"
+    if m:
+        result["model"] = m.group(1).strip()
+
+
+def _parse_antigravity_status(result: dict, full_text: str, bottom_text: str) -> None:
+    """Parse Antigravity (agy) terminal output. Busy = "Working..." indicator."""
+    _parse_lineage_cli_status(result, full_text, bottom_text, AGY_BUSY_RE)
+    m = re.search(r'^([^\n|]+?)\s*\|\s*Used:', full_text, re.MULTILINE)  # ai_root statusline
+    if m:
+        result["model"] = m.group(1).strip()
+
+
 # =============================================================================
 # High-level operations
 # =============================================================================
 
 def _discover_tmux_servers() -> list[str | None]:
-    """Discover all running tmux servers from socket directory.
-
-    Returns a list of server names. None represents the default (unnamed) server.
-    """
-    uid = os.getuid()
-    socket_dir = Path("/tmp") / "tmux-{}".format(uid)
-    if not socket_dir.is_dir():
-        return [None]
-    servers = []
-    for entry in sorted(socket_dir.iterdir()):
-        name = entry.name
-        if name == "default":
-            servers.append(None)  # default server = no -L flag
-        else:
-            servers.append(name)
-    return servers or [None]
+    """Discover all running tmux servers. None represents the default server.
+    Delegates to the substrate (Codex review #4 — tmux mechanics live there)."""
+    from uai_toolkit.session_mgmt.lib_session_substrate import TmuxSubstrate
+    return TmuxSubstrate.discover_servers()
 
 
 def list_sessions(substrate: str | None = None) -> list[dict]:
@@ -682,6 +715,16 @@ def reset_window_size_op(session: str | None = None, server: str | None = None,
         if not targets:
             where = f" on server '{server}'" if server else " on any server"
             return {"ok": False, "error": f"session '{session}' not found{where}"}
+        # Codex review #1: a mutating single-session reset must NOT silently touch
+        # the same name on multiple servers. Require --server to disambiguate.
+        if len(targets) > 1:
+            servers = sorted({s for s, _ in targets})
+            return {
+                "ok": False,
+                "error": (f"session '{session}' exists on multiple servers "
+                          f"({', '.join(servers)}); pass --server to disambiguate"),
+                "servers": servers,
+            }
 
     if reset_all and not confirm:
         return {
@@ -691,14 +734,20 @@ def reset_window_size_op(session: str | None = None, server: str | None = None,
         }
 
     results = []
+    any_fail = False
     for label, name in targets:
         srv = None if label == "default" else label
         try:
-            after = TmuxSubstrate(server_name=srv).reset_window_size(name)
-            results.append({"server": label, "session": name, "window_size_now": after})
+            # Codex review #2: reset_window_size now VERIFIES and returns
+            # {ok, window_size, override_set, note?} for THIS session.
+            res = TmuxSubstrate(server_name=srv).reset_window_size(name)
+            if not res.get("ok"):
+                any_fail = True
+            results.append({"server": label, "session": name, **res})
         except Exception as e:
-            results.append({"server": label, "session": name, "error": str(e)})
-    return {"ok": True, "reset": results}
+            any_fail = True
+            results.append({"server": label, "session": name, "ok": False, "error": str(e)})
+    return {"ok": not any_fail, "reset": results}
 
 
 def _print_geometry(report: list[dict]) -> None:
@@ -767,7 +816,19 @@ def read_terminal(session_name: str, full: bool = False, substrate: str | None =
 
 
 def _infer_platform(session_name: str) -> str:
-    """Infer platform from session/tracking ID prefix."""
+    """Infer platform from a session/tracking ID.
+
+    New tracking IDs end with a platform code suffix (_cla/_cod/_gem/_grk/_agy);
+    resolve that via the canonical CODE_PLATFORMS registry. Falls back to the
+    legacy full-name prefix match, then claude_cli.
+    """
+    try:
+        from uai_toolkit.session_mgmt.session_store import CODE_PLATFORMS
+        code = session_name.rsplit("_", 1)[-1]
+        if code in CODE_PLATFORMS:
+            return CODE_PLATFORMS[code]
+    except Exception:
+        pass
     for prefix in ("codex_cli", "gemini_cli", "claude_cli"):
         if session_name.startswith(prefix):
             return prefix

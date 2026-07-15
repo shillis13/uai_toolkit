@@ -3374,11 +3374,22 @@ def repl(identity: Optional[str] = None) -> int:
                 continue
 
             try:
+                # Filter in SQL BEFORE limiting, so a targeted lookup finds a session
+                # even when it isn't among the newest rows (was: LIMIT 100 truncated
+                # first, then filtered in Python — a session ranked >100 by created_at
+                # was invisible to `list-sessions <name>`).
+                sql = ("SELECT tracking_id, cli_session_id, terminal_session, display_name, platform "
+                       "FROM sessions")
+                params = []
+                if pattern:
+                    like = "%{}%".format(pattern)
+                    sql += (" WHERE lower(tracking_id) LIKE ? OR lower(cli_session_id) LIKE ?"
+                            " OR lower(terminal_session) LIKE ? OR lower(display_name) LIKE ?"
+                            " OR lower(platform) LIKE ?")
+                    params = [like, like, like, like, like]
+                sql += " ORDER BY created_at DESC LIMIT 1000"
                 with store._connect() as conn:
-                    rows = conn.execute(
-                        "SELECT tracking_id, cli_session_id, terminal_session, display_name, platform "
-                        "FROM sessions ORDER BY created_at DESC LIMIT 100"
-                    ).fetchall()
+                    rows = conn.execute(sql, params).fetchall()
             except Exception as e:
                 print("  {}".format(_c(_RED, "Error: {}".format(e))))
                 continue
@@ -4165,11 +4176,18 @@ def _run_subcommand(args: argparse.Namespace) -> int:
             result = {"error": "Session store unavailable"}
         else:
             try:
+                sql = ("SELECT tracking_id, cli_session_id, terminal_session, display_name, platform "
+                       "FROM sessions")
+                params = []
+                if args.pattern:
+                    like = "%{}%".format(args.pattern.lower())
+                    sql += (" WHERE lower(tracking_id) LIKE ? OR lower(cli_session_id) LIKE ?"
+                            " OR lower(terminal_session) LIKE ? OR lower(display_name) LIKE ?"
+                            " OR lower(platform) LIKE ?")
+                    params = [like, like, like, like, like]
+                sql += " ORDER BY created_at DESC LIMIT 1000"
                 with store._connect() as conn:
-                    rows = conn.execute(
-                        "SELECT tracking_id, cli_session_id, terminal_session, display_name, platform "
-                        "FROM sessions ORDER BY created_at DESC LIMIT 100"
-                    ).fetchall()
+                    rows = conn.execute(sql, params).fetchall()
                 sessions_list = []
                 unread_map = {}
                 if args.with_msgs or args.with_unread:

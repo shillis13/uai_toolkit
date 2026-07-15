@@ -12,7 +12,7 @@
  * persist, restore focus + selection). The hook stays agnostic about how text is stored.
  */
 
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { getCaretRect, type CaretRect } from './caret';
 import type { MentionItem, MentionMatch, MentionSource } from './types';
 
@@ -116,6 +116,38 @@ export function useMention({ textareaRef, sources, onApply }: UseMentionOpts): U
       close();
     }
   }, [onApply, close, textareaRef, sync]);
+
+  // Dismiss on click/focus away — the popover was "too sticky" because it only
+  // closed on Escape / apply / a broken match. Any pointer-down outside the
+  // textarea AND outside the popover closes it. Uses capture so it fires before
+  // the click lands; the popover rows preventDefault their mousedown, so this
+  // never races an in-progress selection.
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as Node | null;
+      const ta = textareaRef.current;
+      if (ta && t && ta.contains(t)) return;
+      if (t && (t as HTMLElement).closest?.('.mention-popover')) return;
+      close();
+    };
+    // Focus leaving the textarea for anything other than the popover also
+    // dismisses (a second signal, in case a click lands somewhere the mousedown
+    // path doesn't cover). Popover rows preventDefault their mousedown, so
+    // selecting an item never blurs the textarea.
+    const onFocusOut = (e: FocusEvent) => {
+      const next = e.relatedTarget as Node | null;
+      if (next && (next as HTMLElement).closest?.('.mention-popover')) return;
+      close();
+    };
+    const ta = textareaRef.current;
+    document.addEventListener('mousedown', onDown, true);
+    ta?.addEventListener('focusout', onFocusOut);
+    return () => {
+      document.removeEventListener('mousedown', onDown, true);
+      ta?.removeEventListener('focusout', onFocusOut);
+    };
+  }, [open, close, textareaRef]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent): boolean => {
     if (!open || items.length === 0) return false;

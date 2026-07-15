@@ -20,6 +20,9 @@ interface PromptBoxConfiguratorProps {
   /** Whether the 📎 Attach button is shown in the control pane. */
   showAttach: boolean;
   onToggleShowAttach: () => void;
+  /** Whether the 🔖 Library button is shown in the control pane. */
+  showLibrary: boolean;
+  onToggleShowLibrary: () => void;
   /** Editable quick actions (label + text sent). Order = display order. */
   quickNudges: QuickAction[];
   onQuickNudgesChange: (next: QuickAction[]) => void;
@@ -29,6 +32,8 @@ interface PromptBoxConfiguratorProps {
   /** Default prompt-box height in lines (the floor it opens/collapses to). */
   defaultHeightLines: number;
   onDefaultHeightLinesChange: (n: number) => void;
+  multiSendDelaySec: number;
+  onMultiSendDelayChange: (sec: number) => void;
   /** Target session — reminders are per-session, so we label the section with it. */
   sessionName: string;
   /** Current per-session reminder (undefined = none set). */
@@ -47,12 +52,16 @@ export default function PromptBoxConfigurator({
   onToggleAutoSubmit,
   showAttach,
   onToggleShowAttach,
+  showLibrary,
+  onToggleShowLibrary,
   quickNudges,
   onQuickNudgesChange,
   quickNudgeColumns,
   onQuickNudgeColumnsChange,
   defaultHeightLines,
   onDefaultHeightLinesChange,
+  multiSendDelaySec,
+  onMultiSendDelayChange,
   sessionName,
   reminder,
   onReminderChange,
@@ -169,6 +178,16 @@ export default function PromptBoxConfigurator({
             </span>
           </span>
         </label>
+        <label className="promptbox-config-row">
+          <input type="checkbox" checked={showLibrary} onChange={onToggleShowLibrary} />
+          <span className="promptbox-config-label">
+            <span className="promptbox-config-name">Library button</span>
+            <span className="promptbox-config-desc">
+              Show the {'🔖'} Library button in the control pane (saved-prompts repository →
+              {' '}insert, send, or save the current draft). Turn off to hide it.
+            </span>
+          </span>
+        </label>
         <label className="promptbox-config-row" style={{ alignItems: 'center' }}>
           <input
             type="number"
@@ -185,6 +204,25 @@ export default function PromptBoxConfigurator({
               How tall the prompt box opens, and the floor it collapses to when you
               {' '}double-click the resize bar. Default 15. You can still drag it taller for a
               {' '}single message.
+            </span>
+          </span>
+        </label>
+        <label className="promptbox-config-row" style={{ alignItems: 'center' }}>
+          <input
+            type="number"
+            min={0}
+            max={30}
+            step={0.25}
+            value={multiSendDelaySec}
+            onChange={(e) => onMultiSendDelayChange(Number(e.target.value))}
+            style={{ width: 56 }}
+          />
+          <span className="promptbox-config-label">
+            <span className="promptbox-config-name">Multi-send pause (seconds)</span>
+            <span className="promptbox-config-desc">
+              When one Send goes to several recipients, wait this long between each
+              {' '}delivery — lets each session's terminal settle instead of firing back-to-back.
+              {' '}Default 0 (no pause). Only applies when sending to more than one recipient.
             </span>
           </span>
         </label>

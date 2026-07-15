@@ -911,7 +911,8 @@ def select_intervals(spec: str, intervals: list):
     SPEC grammar (shared by every interval-aware tool):
       * a single integer      — 0=prologue, 1..N
       * the words last / live — the final interval (current/live region)
-      * negative indices      — -1 = last, -2 = second-to-last, ...
+      * negative indices      — OFFSET FROM live: -1 = one before live, -2 = two before, ...
+                                (live itself is `live`/`last`, never a negative)
       * comma lists           — "1,3"
       * ranges                — "2-4"
     Returns (selected_intervals, None) or (None, error_message).
@@ -926,11 +927,19 @@ def select_intervals(spec: str, intervals: list):
         if token in ("last", "live"):
             chosen.append(intervals[-1]["index"])
         elif token.startswith("-"):
+            # Negative = OFFSET FROM LIVE (the named anchor), NOT Python from-the-end indexing.
+            # live == the last interval (index max_index); -1 = one BEFORE live (max_index-1),
+            # -2 = two before, ... So a negative always steps back FROM live; live itself is
+            # reachable as live/last/max_index, never as a negative.
             try:
-                idx = int(token)
-                chosen.append(intervals[idx]["index"])
-            except (ValueError, IndexError):
-                return None, f"Invalid/out-of-range interval index: {token}"
+                offset = int(token)               # e.g. -1, -2  (negative)
+            except ValueError:
+                return None, f"Invalid interval index: {token}"
+            target = max_index + offset           # max_index + (-1) = one before live
+            if target < 0:
+                return None, (f"{token} steps past the oldest interval — only {max_index} "
+                              f"interval(s) exist before live (0..{max_index})")
+            chosen.append(target)
         elif "-" in token:
             lo_s, hi_s = token.split("-", 1)
             try:

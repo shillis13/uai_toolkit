@@ -66,6 +66,17 @@ predicate applies the filter during the walk.
 - Commit ticks (solid, accent, bottom-anchored) are styled distinctly from the
   date gridlines (dashed, full-height, aligned with the axis labels).
 
+## Default scope & the file-view panel
+- **Default dir = `ai_general` (repo root)** for the standalone view, so its
+  todo/AI/contributor filters list everything in the repo — not just commits under
+  one subdir. (An earlier narrower default made repo-wide todos like todo_0319
+  absent from the filter even though they had commits; the filter options are built
+  from the *loaded* commits, so the dir governs what's filterable.)
+- The **file-view (diff) panel** is manually resizable — drag the `.gfv-vresize`
+  handle above it (height = pane-bottom → cursor, clamped). Header buttons:
+  **⤢ maximize** (hides `.gfv-main`, panel fills the pane), **⤡ restore previous**,
+  **⧉ default**. Height + maximized flag persist in the snapshot.
+
 ## State & persistence (#6)
 Each pane owns its React state. Because `Workspace` mounts **only the active app
 tab**, switching tools unmounts the Git Viewer — so state is snapshotted per tab
@@ -109,6 +120,18 @@ placements don't collide.
 dir="ai_general" since={todo.created} filter={{kind:'todo', value: todoKey}} />`
 so the Files tab is a git-backed change view of exactly the commits carrying the
 selected todo's `Todo:` trailer. Selecting another todo re-drives `filter`/`since`.
+
+**Reference embed — worker Files aspect** (`WorkerFilesView` in `ProjectEditor.tsx`,
+used by the Session Work page + the Project/Team Files aspect): renders the Git
+File View filtered to the **union of a worker's todos** —
+`filter={{kind:'todos', values: leafTodoIds}}`, `dir="ai_general"`, a ~180-day
+`since` (the `Todo:` trailer discipline is recent). Empty todo set → a "nothing to
+show" note (data sparsity is correct; the filter is never broadened).
+
+### Filter kinds
+`{kind:'author'|'ai'|'todo', value}` (single) · `{kind:'todos', values}` (the
+UNION of a set — worker scope). `matchFilter` handles each; timeline ticks, extents,
+count, and the delta all derive from it, so a new kind needs no other wiring.
 
 ## Component-architecture conformance (#7)
 - **Viewport reporters** (the "get state" API): `git_viewer` (activeTab +

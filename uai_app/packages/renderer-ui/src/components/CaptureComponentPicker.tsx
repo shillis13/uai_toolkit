@@ -11,7 +11,7 @@
  * checked, only the ancestor's subtree is added (the descendant is already in it).
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import type { ViewportNode } from '@contracts/viewport';
 
 export interface PickerTheme {
@@ -57,21 +57,29 @@ export default function CaptureComponentPicker({ open, theme, getTree, onAdd, on
   // immediately visible; deeper levels collapse until opened.
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
-  // (Re)snapshot the live tree each time the drawer opens.
+  // Snapshot the live tree ONCE, on the open→true edge only. getTree is read via a
+  // ref so an unstable prop (NoteDialog recreates it each render) can't re-fire this
+  // effect mid-session — re-snapshotting would reset the user's expand/check state
+  // and re-collapse nested nodes, making components "disappear" off the list.
+  const getTreeRef = useRef(getTree); getTreeRef.current = getTree;
   useEffect(() => {
     if (!open) return;
     let t: ViewportNode | null = null;
-    try { t = getTree(); } catch { t = null; }
+    try { t = getTreeRef.current(); } catch { t = null; }
     setTree(t);
     setChecked(new Set());
-    // Auto-expand the root + its immediate children so the tree isn't a wall.
+    // Auto-expand every node with children down a few levels so nested capturable
+    // pieces (e.g. a tab's panes) are visible from the start, not buried.
     const exp = new Set<string>();
-    if (t) {
-      exp.add('');
-      t.children.forEach((_, i) => exp.add(pathKey([i])));
-    }
+    const expandDeep = (node: ViewportNode, path: number[], depth: number) => {
+      if (node.children.length === 0) return;
+      exp.add(pathKey(path));
+      if (depth <= 0) return;
+      node.children.forEach((c, i) => expandDeep(c, [...path, i], depth - 1));
+    };
+    if (t) expandDeep(t, [], 3);
     setExpanded(exp);
-  }, [open, getTree]);
+  }, [open]);
 
   if (!open) return null;
 

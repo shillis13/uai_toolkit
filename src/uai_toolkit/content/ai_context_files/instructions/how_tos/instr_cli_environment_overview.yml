@@ -24,7 +24,7 @@ platform:
   - knowledge (history/archive search, memory, context library)
   - sessions (session lifecycle, reasoning, scheduled tasks)
   - workflow (todos, tasks, playbooks, devtrees)
-  - chat (web/desktop chat browser automation)
+  - chat (web chat browser automation via CDP)
   - All other configured MCP servers (chrome-control, filesystem, etc.)
   note: 'Claude Code interactive sessions inherit all MCP servers from config.
 

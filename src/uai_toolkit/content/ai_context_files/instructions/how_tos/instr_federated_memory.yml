@@ -5,7 +5,7 @@ metadata:
   title: Working Memory Operational Guide
   version: 2.0.0
   created: 2026-03-16
-  authors: [PianoMan, Claude Desktop]
+  authors: [PianoMan]
   supersedes: instr_federated_memory_v1.0 (concept rename + path update)
   status: active
 ```
@@ -25,16 +25,19 @@ Write observations immediately. Curate later.
 
 ```
 ai_memories/80_working_memory/
-  manifest.yml        ← read this first — slot purposes + load tiers
+  manifest.yml        ← read this first — slot purposes + load tiers (authoritative)
   03.yml              ← user model
   04.yml              ← communication patterns
   05.yml              ← tool/pattern discoveries
   06.yml              ← current context
-  07.yml              ← cross-AI notes
+  07.yml              ← limitations & workarounds
   08.yml              ← learnings
-  09.yml              ← project history
+  09.yml              ← cross-AI notes
+  10.yml              ← project history
   11.yml              ← novel phrasing / originality evidence
 ```
+
+The list above mirrors `manifest.yml`; the manifest is authoritative if they ever diverge.
 
 ## Entry Format
 
@@ -51,12 +54,22 @@ Full form when needed:
   reads: 0
 ```
 
-## Write Paths
+This is the *stored* shape — the memory tools produce it for you. You do not hand-write it.
 
-| Platform | How to write |
+## Write / Read Paths
+
+Use the **knowledge MCP memory tools** — do **not** hand-edit the slot `.yml` files. The tools own timestamping, append-only semantics, and load-tracking; a direct file edit bypasses all of that and is not the supported path.
+
+| Operation | Tool |
 |---|---|
-| Desktop / CLI | `edit_block` append to slot file directly |
-| Web / iOS | `<<<INSERT type=memory_v1.1>>>` block inline |
+| Write an observation | `knowledge_memory_append(slot, content)` |
+| Read a slot | `knowledge_memory_read(slot, …)` — filter with `since` / `limit` |
+| Search across slots | `knowledge_memory_search(query, …)` |
+| Curate an entry | `knowledge_memory_update(slot, index, content)` |
+| Remove / prune | `knowledge_memory_delete(slot, …)` |
+| Slot counts & sizes | `knowledge_memory_stats()` |
+
+(The tools target the shared `ai_memories/80_working_memory/` slots directly — a raw-file fallback is only for when the knowledge MCP is unavailable.)
 
 ## What to Log
 
@@ -67,10 +80,10 @@ Full form when needed:
 
 ## Cross-Reference
 
-- **Allowed**: read any AI's slots
+- **Allowed**: read any AI's slots (`knowledge_memory_read` with the target `--ai`)
 - **Never**: write to another AI's declared slot unilaterally
-- Use task coordination to pass information to other AIs
+- Use the comms MCP to pass information to other AIs
 
 ## Full Protocol
 
-`REF:ai_general/docs/70_instructions/versions/instr_working_memory_protocol_v3.0.md`
+See the companion `instr_memory_slot_protocol` for slot lifecycle and load tiers.

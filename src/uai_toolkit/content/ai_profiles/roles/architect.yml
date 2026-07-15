@@ -36,6 +36,5 @@ context_files:
     - ai_context_files/instructions/templates/architecture_decision_record
 
 skills:
-  - brainstorming      # design exploration
   - peer-review        # design review variant
   - research-orchestration  # historical context for design decisions

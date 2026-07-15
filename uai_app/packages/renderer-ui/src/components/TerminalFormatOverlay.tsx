@@ -13,6 +13,7 @@ import { useEffect, useCallback, useRef, useState } from 'react';
 import { useViewport } from '../viewport';
 import type { Terminal } from 'xterm';
 import { dedupConsecutiveBlocks } from './memorex-dedup';
+import { focusTodoInWorkMgr, focusNoteInNotesMgr, todoTooltip, noteTooltip, ensureRefIndexLoaded } from './RefLink';
 
 // Claude CLI markers
 const R = '\u23FA';  // ⏺ response/tool
@@ -137,7 +138,7 @@ function linkifyElement(parent: HTMLElement): void {
             e.preventDefault();
             e.stopPropagation();
             if (f.url.startsWith('http')) {
-              window.open(f.url, '_blank');
+              window.uai.openUrl(f.url);
             } else {
               window.uai.openPath(f.url);
             }
@@ -150,6 +151,64 @@ function linkifyElement(parent: HTMLElement): void {
         frag.appendChild(link);
       }
     }
+    node.parentNode?.replaceChild(frag, node);
+  }
+}
+
+// Matches todo_#### / note_#### references in terminal text.
+const REF_RE = /todo_\d+|note_\d+/g;
+
+/** Replace todo_/note_ references in a text node with clickable ref spans that
+ *  open Work Mgr / Notes Mgr (RefLink), with a name/status/assignee tooltip.
+ *  A separate pass from linkifyElement (URLs) — same text-node replacement shape,
+ *  independent of the settled-region/cover detection so it can't cause blanking. */
+function linkifyRefsInElement(parent: HTMLElement): void {
+  ensureRefIndexLoaded();
+  const textNodes: Text[] = [];
+  const walk = (el: Node) => {
+    for (const child of Array.from(el.childNodes)) {
+      if (child.nodeType === Node.TEXT_NODE && child.textContent) {
+        textNodes.push(child as Text);
+      } else if (child.nodeType === Node.ELEMENT_NODE) {
+        // Don't descend into already-linkified spans (URL or ref).
+        const el2 = child as HTMLElement;
+        if (!el2.dataset.reflink) walk(child);
+      }
+    }
+  };
+  walk(parent);
+
+  for (const node of textNodes) {
+    if (!node.textContent) continue;
+    const text = node.textContent;
+    const matches = [...text.matchAll(REF_RE)];
+    if (matches.length === 0) continue;
+
+    const frag = document.createDocumentFragment();
+    let lastEnd = 0;
+    for (const m of matches) {
+      const start = m.index ?? 0;
+      if (start > lastEnd) frag.appendChild(document.createTextNode(text.slice(lastEnd, start)));
+      const ref = m[0];
+      const isTodo = ref.startsWith('todo_');
+      const span = document.createElement('span');
+      span.textContent = ref;
+      span.dataset.reflink = '1';
+      span.style.cssText = `text-decoration:underline;text-decoration-style:dotted;cursor:pointer;color:var(${isTodo ? '--accent-blue' : '--accent-orange'});`;
+      const setTitle = () => { span.title = isTodo ? todoTooltip(ref) : noteTooltip(ref); };
+      setTitle();
+      // The metadata index loads async; the imperative span never re-renders, so
+      // refresh the tooltip on hover — by then the index is populated.
+      span.addEventListener('mouseenter', setTitle);
+      span.addEventListener('click', (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        if (isTodo) focusTodoInWorkMgr(ref); else focusNoteInNotesMgr(ref);
+      });
+      frag.appendChild(span);
+      lastEnd = start + ref.length;
+    }
+    if (lastEnd < text.length) frag.appendChild(document.createTextNode(text.slice(lastEnd)));
     node.parentNode?.replaceChild(frag, node);
   }
 }
@@ -1130,6 +1189,7 @@ const TerminalFormatOverlay = ({ termRef, containerRef, sessionName, sessionId, 
                   renderAnsiLine(line, lineDiv, dc);
                 }
                 linkifyElement(lineDiv);
+                linkifyRefsInElement(lineDiv);
                 parent.appendChild(lineDiv);
               }
             } else {
@@ -1226,6 +1286,7 @@ const TerminalFormatOverlay = ({ termRef, containerRef, sessionName, sessionId, 
           renderAnsiLine(line, lineDiv, defaultColor);
         }
         linkifyElement(lineDiv);
+        linkifyRefsInElement(lineDiv);
         container.appendChild(lineDiv);
       }
     }

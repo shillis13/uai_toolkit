@@ -16,10 +16,15 @@
 
 export const GFV_SET_SCOPE_EVENT = 'uai:gitFileView:setScope';
 
-/** The delta filter — restrict the change set to one contributor / AI session / todo. */
+/**
+ * The delta filter — restrict the change set to one contributor / AI session /
+ * todo, or (for a worker-scoped view) the UNION of a set of todos. Single-value
+ * kinds use `value`; the `todos` kind uses `values` (a worker's todo ids).
+ */
 export interface GitFileViewFilter {
-  kind: 'author' | 'ai' | 'todo';
-  value: string;
+  kind: 'author' | 'ai' | 'todo' | 'todos';
+  value?: string;
+  values?: string[];
 }
 
 export interface GitFileViewScope {

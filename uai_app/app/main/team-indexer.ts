@@ -22,6 +22,7 @@ import type {
   TeamStatus,
 } from '@uai/shared/types';
 import { callStore as callSessionStore } from './session-store';
+import { aiRoot as getAiRoot } from './paths';
 
 interface RawTeamYaml {
   schema_version?: unknown;
@@ -33,15 +34,13 @@ interface RawTeamYaml {
   slots?: unknown;
   comms?: unknown;
   projects?: unknown;
+  ui_hidden?: unknown;
 }
 
 const VALID_TEAM_STATUSES = new Set<TeamStatus>(['active', 'disbanded', 'paused']);
 const VALID_PLATFORMS = new Set<Platform>(['claude_cli', 'codex_cli', 'gemini_cli']);
 const VALID_FEEDBACK = new Set(['none', 'message', 'prompt']);
 
-function getAiRoot(): string {
-  return process.env.AI_ROOT || path.join(os.homedir(), 'AI/ai_root');
-}
 
 function getTeamsDir(): string {
   return path.join(getAiRoot(), 'ai_general', 'data', 'teams');
@@ -163,6 +162,7 @@ function computeContentHash(content: string): string {
 
 export interface TeamDefinition extends Team {
   slots: TeamSlot[];
+  ui_hidden?: boolean;  // pure UI visibility flag (todo_0532); no on-disk move/delete
 }
 
 function normalizeTeamDefinition(teamId: string, filePath: string, raw: RawTeamYaml, stat: fs.Stats, contentHash: string): TeamDefinition {
@@ -185,6 +185,7 @@ function normalizeTeamDefinition(teamId: string, filePath: string, raw: RawTeamY
     indexed_at: new Date().toISOString(),
     availability: 'available',
     parse_error: null,
+    ui_hidden: raw.ui_hidden === true || raw.ui_hidden === 'true',
   };
 }
 
@@ -277,8 +278,11 @@ function extractAssignedProjectIds(team: TeamDefinition, relationships: EntityRe
   return Array.from(new Set(team.project_ids));
 }
 
-export async function listTeams(): Promise<TeamCard[]> {
-  const definitions = loadAllTeamDefinitions();
+export async function listTeams(opts?: { includeHidden?: boolean }): Promise<TeamCard[]> {
+  // ui_hidden (todo_0532): drop hidden teams from the default list. Pure visibility
+  // flag — the team's yml stays in place; nothing is moved or deleted.
+  const definitions = loadAllTeamDefinitions()
+    .filter(d => opts?.includeHidden || !d.ui_hidden);
   if (definitions.length === 0) {
     return [];
   }

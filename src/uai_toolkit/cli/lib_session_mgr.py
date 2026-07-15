@@ -35,6 +35,11 @@ UUID_RE = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]
 _store = SessionStore()
 CODEX_SESSIONS_DIR = Path.home() / '.codex' / 'sessions'
 GEMINI_TMP_DIR = Path.home() / '.gemini' / 'tmp'
+# Grok Build stores per-session transcripts under a URL-encoded working-dir key:
+#   ~/.grok/sessions/<quote(cwd, safe='')>/<session_id>/chat_history.jsonl
+# Because grok honors our pre-assigned --session-id, <session_id> == cli_uuid, so
+# discovery is deterministic (verified 2026-07-13).
+GROK_SESSIONS_DIR = Path.home() / '.grok' / 'sessions'
 
 
 def get_store() -> SessionStore:
@@ -137,8 +142,14 @@ def reserve_draft(
 
 
 def pre_assign_uuid(platform: str, seed_uuid: str) -> str | None:
-    """Return a launch-time UUID when the platform supports pre-assignment."""
-    return seed_uuid if platform == 'claude_cli' else None
+    """Return a launch-time UUID when the platform supports pre-assignment.
+
+    Claude (`--session-id`) and Grok Build (`--session-id`) both accept a caller-
+    chosen UUID for a new conversation, so the tracking ID's uuid8 == cli
+    UUID[:8] by construction. Codex/Antigravity generate their own IDs and are
+    discovered post-launch instead.
+    """
+    return seed_uuid if platform in ('claude_cli', 'grok_cli') else None
 
 
 def build_launch_env(
@@ -311,6 +322,35 @@ def compute_transcript_path(platform: str, cli_uuid: str | None, workdir: str) -
                         return json.dumps([str(f)])
                 except (json.JSONDecodeError, OSError, KeyError):
                     continue
+
+    if platform == 'grok_cli' and cli_uuid:
+        from urllib.parse import quote
+        enc = quote(workdir or str(AI_ROOT), safe='')
+        sess_dir = GROK_SESSIONS_DIR / enc / cli_uuid
+        for fname in ('chat_history.jsonl', 'events.jsonl'):
+            f = sess_dir / fname
+            if f.exists():
+                return json.dumps([str(f)])
+
+    if platform == 'antigravity_cli' and cli_uuid:
+        db_path = Path.home() / '.gemini' / 'antigravity-cli' / 'conversations' / f'{cli_uuid}.db'
+        if db_path.exists():
+            cache_dir = Path.home() / '.gemini' / 'antigravity-cli' / 'cache' / 'transcripts'
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            cache_path = cache_dir / f'{cli_uuid}.jsonl'
+            try:
+                db_mtime = db_path.stat().st_mtime
+                cache_mtime = cache_path.stat().st_mtime if cache_path.exists() else 0
+                if db_mtime > cache_mtime:
+                    ai_root = os.environ.get('AI_ROOT') or str(get_ai_root())
+                    converter_script = Path(ai_root) / 'ai_general' / 'scripts' / 'jsonl' / 'agy_to_jsonl.py'
+                    with open(cache_path, 'w') as out:
+                        subprocess.run([sys.executable, str(converter_script), str(db_path)], stdout=out, check=True)
+            except Exception:
+                pass
+            if cache_path.exists():
+                return json.dumps([str(cache_path)])
+
     return None
 
 
@@ -430,6 +470,8 @@ def _pid_alive(pid: int, platform: str) -> bool:
         'claude_cli': 'claude',
         'codex_cli': 'codex',
         'gemini_cli': 'gemini',
+        'antigravity_cli': 'agy',
+        'grok_cli': 'grok',
     }.get(platform, 'claude')
 
     try:

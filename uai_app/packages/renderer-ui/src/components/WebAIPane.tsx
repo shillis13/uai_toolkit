@@ -39,8 +39,8 @@ const WebAIPane = ({ url }: WebAIPaneProps): JSX.Element => {
 
   const handleOpenExternal = useCallback(() => {
     if (currentUrl) {
-      // Electron shell.openExternal via window.open fallback
-      window.open(currentUrl, '_blank');
+      // Open in the topmost non-incognito Chrome window (main-process handler).
+      window.uai.openUrl(currentUrl);
     }
   }, [currentUrl]);
 
@@ -68,10 +68,10 @@ const WebAIPane = ({ url }: WebAIPaneProps): JSX.Element => {
     };
 
     const onNewWindow = (e: any) => {
-      // Prevent new Electron windows -- open in default browser instead
+      // Prevent new Electron windows -- open in Chrome instead.
       e.preventDefault();
       if (e.url) {
-        window.open(e.url, '_blank');
+        window.uai.openUrl(e.url);
       }
     };
 

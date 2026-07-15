@@ -10,7 +10,7 @@ updated: '2026-04-15'
 # Export Recent Chats for Pipeline Processing
 
 ## Purpose
-Export Claude chats updated since a specified date to `ai_memories/_incoming/chats/claude/` for pipeline processing into the chat history archive.
+Export chat conversations updated since a specified date to `ai_memories/_incoming/chats/claude/` for pipeline processing into the chat history archive.
 
 ## Trigger
 User asks: "Export chats since [date]" or "Catch up chat exports"
@@ -28,12 +28,12 @@ Or use user-specified date.
 
 ### Step 2: Query Recent Chats
 
-Use the `recent_chats` tool with `after` parameter:
+Use the `chat` MCP to list conversations updated since the cutoff:
 ```
-recent_chats(after="YYYY-MM-DDTHH:MM:SSZ", n=20)
+chat.list(after="YYYY-MM-DDTHH:MM:SSZ", n=20)
 ```
 
-Paginate if needed using `before` with earliest result's timestamp.
+Paginate if needed using `before` with the earliest result's timestamp.
 
 ### Step 3: Filter Relevant Chats
 
@@ -59,15 +59,13 @@ Proceed with export?
 
 ### Step 5: Execute Export
 
-For each URL, call:
+For each conversation, export it via the `chat` MCP (or copy its transcript
+JSONL) into the incoming directory:
 ```bash
-~/bin/ai/chats/ai_export_chat.sh claude-web --url [URL]
+chat.export(id="[CHAT_ID]", dest="~/AI/ai_root/ai_memories/_incoming/chats/claude/")
 ```
 
-Or batch:
-```bash
-~/bin/ai/chats/export_chats_since.sh --url [URL1] --url [URL2] ...
-```
+Batch by iterating the IDs collected in Step 4.
 
 ### Step 6: Verify Results
 
@@ -87,14 +85,11 @@ Summarize:
 
 ## Automation Notes
 
-The `recent_chats` tool is only available inside Claude conversations.
-This workflow requires Claude Desktop orchestration - cannot be fully automated via cron.
-
-Potential enhancement: MCP server that exposes chat history query capability to external scripts.
+The `chat` MCP exposes conversation query/export to the CLI, so this workflow can
+run non-interactively and be scheduled via cron / the `sessions` scheduler.
 
 ## Related Files
 
-- Export script: `~/bin/ai/chats/ai_export_chat.sh`
-- Batch export: `~/bin/ai/chats/export_chats_since.sh`  
+- Chat query/export: `chat` MCP
 - Pipeline destination: `ai_memories/_incoming/chats/claude/`
 - Chat index: `ai_memories/40_histories/indexes/chat_index.latest.csv`

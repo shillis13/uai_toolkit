@@ -26,6 +26,16 @@ new foundation.
 4. **Event System** — Fine-grained subscriptions replace polling. Components react to state changes.
 5. **MVC Separation** — Model (component state), View (React rendering), Controller (command handlers).
    Views never mutate state directly.
+6. **Data Ownership Boundary** — *Only app-unique, app-specific data can be maintained and stored by
+   the UAI app. All other state data pertaining to objects and entities that exist outside the app
+   must be maintained and stored outside the app as part of the data store for those objects and
+   entities.* The app may READ and DISPLAY external entity data (sourced live from that entity's own
+   store), but must never own, persist, or become the source of truth for it. Examples of
+   externally-owned data the app must only read: a session's Turns, Messages, Context Used, queued
+   Prompts, and Comms (inbox) — these originate outside the app (per-session state file written by
+   scaffolding; the `ai_comms` message store; the prompt queue) and are read-only to the app.
+   App-unique data the app MAY own: tab layout, pinned session, panel/view UI state, per-session
+   UI prefs (draft text, notes-display toggles), custom themes, feature flags.
 
 ## Directory Structure
 

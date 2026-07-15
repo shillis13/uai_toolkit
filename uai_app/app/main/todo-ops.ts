@@ -9,10 +9,8 @@
  */
 import * as path from 'node:path';
 import * as fs from 'node:fs';
+import { aiRoot as getAiRoot, shellPath } from './paths';
 
-function getAiRoot(): string {
-  return process.env.AI_ROOT_MAIN || process.env.AI_ROOT || path.join(require('node:os').homedir(), 'AI/ai_root');
-}
 
 const PY_SRC_ROOT = path.join(process.env.HOME || '', 'bin', 'all_languages', 'python', 'src');
 const TODO_MGR_PY = path.join(PY_SRC_ROOT, 'todo_mgr', 'todo_mgr.py');
@@ -26,7 +24,7 @@ export async function runTodoMgr(verb: string, args: string[] = []): Promise<str
   const { execFile: ef } = require('node:child_process');
   const { promisify } = require('node:util');
   const execFileAsync = promisify(ef);
-  const envPath = [process.env.PATH || '', '/opt/homebrew/bin', '/usr/local/bin'].join(':');
+  const envPath = shellPath();
   const { stdout } = await execFileAsync('python3', [TODO_MGR_PY, verb, ...args], {
     timeout: 20000,
     maxBuffer: 16 * 1024 * 1024,

@@ -141,6 +141,20 @@ export default function RecipientPicker({
       return a.label.localeCompare(b.label);
     });
 
+  // "Select all listed" acts on exactly the sessions currently visible (respects the
+  // search box + Active/Open/platform filters), so you can narrow then bulk-select.
+  const listedSessionIds = Array.from(new Set(sessions.flatMap((t) => t.memberIds)));
+  const allListedSelected = listedSessionIds.length > 0 && listedSessionIds.every((id) => selected.includes(id));
+  const someListedSelected = listedSessionIds.some((id) => selected.includes(id));
+  const toggleAllListed = () => {
+    if (allListedSelected) {
+      const drop = new Set(listedSessionIds);
+      onChange(selected.filter((id) => !drop.has(id)));
+    } else {
+      onChange([...new Set([...selected, ...listedSessionIds])]);
+    }
+  };
+
   return (
     <div className="promptbox-recipients-popover" ref={ref} role="dialog" aria-label="Choose recipients" style={anchorStyle}>
       <div className="promptbox-recipients-head">
@@ -183,6 +197,18 @@ export default function RecipientPicker({
           >{PLATFORM_ICONS[p]}</button>
         ))}
       </div>
+      {sessions.length > 1 && (
+        <label className="promptbox-recipients-selectall" title="Select every session currently listed (respects the filters above)">
+          <input
+            type="checkbox"
+            checked={allListedSelected}
+            ref={(el) => { if (el) el.indeterminate = someListedSelected && !allListedSelected; }}
+            onChange={toggleAllListed}
+          />
+          <span className="promptbox-recipients-name">Select all listed</span>
+          <span className="promptbox-recipients-count">{listedSessionIds.length}</span>
+        </label>
+      )}
       <div className="promptbox-recipients-list">
         {groups.length === 0 && sessions.length === 0 && (
           <div className="promptbox-recipients-empty">No matching recipients.</div>

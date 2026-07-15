@@ -11,6 +11,7 @@
 
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { showContextMenu, type ContextMenuItem } from '../utils/context-menu';
+import { executeCommand } from '../utils/execute-command';
 
 interface NewsItem {
   type: 'news' | 'report';
@@ -141,19 +142,37 @@ export default function NewsTab(): JSX.Element {
     setCollapsedDirs(prev => { const n = new Set(prev); n.has(key) ? n.delete(key) : n.add(key); return n; });
   };
 
-  const handleOpen = (item: NewsItem) => {
-    window.uai.openPath(item.path);
-    if (!item.isDir) mark([item.path], true);  // opening marks read
-  };
+  // Open a file in a formatted, in-app markdown tab (default gesture). Non-md
+  // files still render as text in the same viewer.
+  const openInTab = useCallback((item: NewsItem) => {
+    if (item.isDir) return;
+    executeCommand('workspace.tabs.open', { type: 'markdown', targetId: item.path, label: item.name });
+    mark([item.path], true);  // opening marks read
+  }, [mark]);
 
-  const itemMenu = useCallback((e: React.MouseEvent, paths: string[]) => {
+  // Open in the system default application (moved from the default click to the
+  // context menu, per PianoMan).
+  const openExternal = useCallback((item: NewsItem) => {
+    window.uai.openPath(item.path);
+    if (!item.isDir) mark([item.path], true);
+  }, [mark]);
+
+  const itemMenu = useCallback((e: React.MouseEvent, paths: string[], fileItem?: NewsItem) => {
     const anyUnread = paths.some(p => !readPaths.has(p));
-    const items_: ContextMenuItem[] = [
+    const items_: ContextMenuItem[] = [];
+    // Single-file menus get open actions; folder/multi menus are mark-only.
+    if (fileItem && !fileItem.isDir) {
+      items_.push(
+        { label: 'Open in Tab', action: () => openInTab(fileItem) },
+        { label: 'Open in Ext App', action: () => openExternal(fileItem) },
+      );
+    }
+    items_.push(
       { label: paths.length > 1 ? `Mark ${paths.length} as Read` : 'Mark as Read', action: () => mark(paths, true), disabled: !anyUnread },
       { label: paths.length > 1 ? `Mark ${paths.length} as Unread` : 'Mark as Unread', action: () => mark(paths, false) },
-    ];
+    );
     showContextMenu(e, items_);
-  }, [readPaths, mark]);
+  }, [readPaths, mark, openInTab, openExternal]);
 
   const newsFiles = descendantFilePaths(newsTree);
   const newsUnread = newsFiles.filter(p => !isRead(p)).length;
@@ -207,9 +226,10 @@ export default function NewsTab(): JSX.Element {
             key={key}
             className={`nav-apps-item nav-news-item${read ? ' nav-news-read' : ' nav-news-unread'}`}
             style={{ paddingLeft: `${16 + depth * 14}px`, color: fileColor }}
-            onClick={() => handleOpen(it)}
-            onContextMenu={(e) => itemMenu(e, [it.path])}
-            title={`${it.path}\n${formatDate(it.modified)}`}
+            onClick={() => openInTab(it)}
+            onDoubleClick={() => openInTab(it)}
+            onContextMenu={(e) => itemMenu(e, [it.path], it)}
+            title={`${it.path}\n${formatDate(it.modified)}\n\nClick to open in a tab · right-click for options`}
           >
             {/* empty chevron-width spacer so files align/indent under their
                 parent folder (folders spend this column on a real chevron). */}

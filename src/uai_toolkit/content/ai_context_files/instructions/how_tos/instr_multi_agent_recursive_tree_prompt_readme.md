@@ -9,7 +9,6 @@ updated: '2026-04-15'
 
 # 🧬 Multi‑Agent Recursive Tree Prompt (MARTP)
 
-**Author:** ChatGPT  
 **Project:** Development Stuff — Persona v8.5  
 **Date:** 2025‑11‑02  
 **Status:** Working Template (v1.0)

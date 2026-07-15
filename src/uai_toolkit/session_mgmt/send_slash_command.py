@@ -112,88 +112,16 @@ def _resolve_to_endpoint(identifier: str) -> tuple[str | None, dict]:
     return endpoint, info
 
 
-# Commands that may NEVER be sent programmatically via this script. They must
-# originate from the user's keyboard (a typed slash command). /self-compact is
-# here because its sole job is to MINT a compaction authorization token — a
-# session sending it to itself would be authorizing its own compaction.
-#
-# HONEST SCOPE — this is defense-in-depth, NOT airtight enforcement. This block
-# closes the send-a-slash-command path; `disable-model-invocation: true` on the
-# self-compact skill closes the Skill-tool path. Together those shut the two easy
-# doors. But a session runs as the same user with full file access, so it can
-# still hand-forge a <token>.auth file and call /compact directly — no local
-# check can stop that (any signal we'd verify is itself a file the session can
-# write). That path is a DELIBERATE circumvention of a safety control — a
-# reportable violation, not a casual bypass. Real enforcement would have to live
-# in the harness (which actually runs /compact), which we don't control.
-NEVER_SEND_COMMANDS = {"self-compact"}
-
-# Commands that require a valid one-time authorization_token when sent.
-# A token is a <session_dir>/<token>.auth file (issuer + expiry JSON, or a legacy
-# zero-byte file), minted by compact_auth.mint from a trusted issuer: the
-# user-typed /self-compact path (UserPromptSubmit 07), the auto-threshold Stop
-# hook, or the deferred self-compact timer. Validated (existence + TTL) and
-# consumed on use. See the HONEST SCOPE note above: the token file is forgeable.
-GUARDED_COMMANDS = {"compact"}
-
-
-def _check_authorization(command, session_dir, authorization_token):
-    """Check whether a command may be sent.
-
-    Returns (authorized: bool, error_message: str or None).
-    On success for a guarded command, the token file is consumed (deleted).
-    """
-    # Extract base command (e.g., "/compact --foo" -> "compact")
-    base_cmd = command.strip("/").split()[0].lower()
-
-    # Hard block: never sendable programmatically — must be user-typed.
-    if base_cmd in NEVER_SEND_COMMANDS:
-        return False, (
-            f"/{base_cmd} cannot be sent programmatically. It must be typed by "
-            f"the user — a session should not initiate its own compaction. "
-            f"(Forging a token to route around this is a deliberate safety-control "
-            f"violation, not a supported path.)"
-        )
-
-    if base_cmd not in GUARDED_COMMANDS:
-        return True, None  # not guarded, always allowed
-
-    if not authorization_token:
-        return False, f"/{base_cmd} requires an authorization_token. Tokens are issued only by the user typing /self-compact or by the auto-threshold system. Do not fabricate."
-
-    if not session_dir:
-        return False, "Cannot validate token: no session directory"
-
-    token_path = Path(session_dir) / f"{authorization_token}.auth"
-    # Existence + TTL check via the shared token module — the TTL guards against a
-    # stale token from an abandoned deferred-compact trigger authorizing a compaction
-    # much later. Legacy zero-byte tokens stay valid-by-existence. Falls back to a
-    # plain existence check if the module can't be imported.
-    try:
-        import sys as _sys
-        _d = str(Path(__file__).resolve().parent)
-        if _d not in _sys.path:
-            _sys.path.insert(0, _d)
-        from uai_toolkit.session_mgmt import compact_auth
-        valid = compact_auth.is_valid(session_dir, authorization_token)
-    except Exception:
-        valid = token_path.exists()
-    if not valid:
-        return False, f"Authorization token not found, expired, or already used. /{base_cmd} requires a valid, unused token."
-
-    # Valid — consume (delete) the token file
-    try:
-        token_path.unlink()
-    except OSError:
-        pass
-
-    return True, None
+# NOTE: the /compact authorization-token guard (NEVER_SEND / GUARDED /
+# _check_authorization) was removed 2026-07-14 — self-compaction is now freely
+# invocable, so the whole "block the skill -> hook mints a token -> this script
+# validates + consumes it" dance is gone. Slash commands (incl. /compact and
+# /self-compact) are sent unguarded from here.
 
 
 def send_slash_command(
     identifier: str,
     command: str,
-    authorization_token: str = "",
 ) -> dict:
     """Send a slash command to a session.
 
@@ -202,9 +130,6 @@ def send_slash_command(
             display name, or 'self'.
         command: Slash command to send (e.g. '/compact', '/color cyan').
             Prefixed with '/' if not already present.
-        authorization_token: One-time token for guarded commands.
-            Token files (<session_dir>/<token>.auth) are created by
-            authorizing hook handlers and consumed on use.
 
     Returns:
         Dict with results of the operation.
@@ -225,25 +150,6 @@ def send_slash_command(
         return result
 
     result["endpoint"] = endpoint
-
-    # Check authorization for guarded commands
-    # Resolve session_dir from the target session
-    target_session_dir = None
-    target_tid = info.get("tracking_id")
-    if target_tid:
-        try:
-            store = SessionStore()
-            session = store.resolve(target_tid)
-            if session:
-                target_session_dir = session.get("session_dir")
-        except Exception:
-            pass
-
-    authorized, auth_error = _check_authorization(command, target_session_dir, authorization_token)
-    if not authorized:
-        result["ok"] = False
-        result["error"] = auth_error
-        return result
 
     # Send directly via session_ops.write_to
     terminal_session = info.get("terminal_session")
@@ -278,12 +184,11 @@ def main() -> int:
     )
     parser.add_argument("identifier", help="prompt:// URI, tracking ID, CLI UUID, terminal name, or 'self'")
     parser.add_argument("command_parts", nargs="+", help="Slash command and its arguments")
-    parser.add_argument("--token", default="", help="Authorization token for guarded commands")
 
     args = parser.parse_args()
     command = " ".join(args.command_parts)
 
-    r = send_slash_command(args.identifier, command, authorization_token=args.token)
+    r = send_slash_command(args.identifier, command)
     print(json.dumps(r, indent=2))
     return 0 if r.get("ok") else 1
 

@@ -22,12 +22,11 @@ When a chat breaks (context limits, error, etc.) or needs to be continued in a n
 ### Files
 - Condensation prompt: `ai_general/ai_context_files/methods/_archive_condensation/prompt_condense_chat_history.md`
 - Continuation seed: `ai_general/ai_context_files/methods/prompt_continuation_seed.md`
-- Export script: `~/bin/ai/chats/ai_export_chat.sh`
+- Source transcript: the active session's conversation JSONL (or a path supplied by the user)
 
 ### Capabilities
-- Desktop Commander MCP (file ops)
-- Chrome Control MCP (browser automation) - optional
-- AppleScript access
+- Bash filesystem access (Claude Code / Codex CLI)
+- `chat` MCP (locate/read source conversations) - optional
 
 ---
 
@@ -35,30 +34,20 @@ When a chat breaks (context limits, error, etc.) or needs to be continued in a n
 
 ### Step 1: Identify Source Chat
 
-If current chat:
-```applescript
--- Get URL from Claude Desktop
-tell application "Claude" to activate
-tell application "System Events" to tell process "Claude"
-    click menu bar item "View" of menu bar 1
-    click menu item "Copy URL" of menu 1 of menu bar item "View" of menu bar 1
-end tell
-```
+If current session: use the active session's transcript path (the CLI records the
+conversation JSONL under the session data directory).
 
-If different chat: User provides URL or use `recent_chats` to find it.
+If a different chat: the user provides the path/ID, or use the `chat` MCP to
+locate it.
 
 ### Step 2: Export Chat History
 
 ```bash
-~/bin/ai/chats/ai_export_chat.sh claude-web --url [CHAT_URL]
+EXPORT_FILE="$HOME/AI/ai_root/ai_claude/work/chat_exports/$(date +%Y%m%d_%H%M%S)_export.json"
+cp "$SOURCE_TRANSCRIPT" "$EXPORT_FILE"
 ```
 
-Output: JSON file in Downloads or configured location.
-Move to working directory:
-```bash
-EXPORT_FILE="$HOME/AI/ai_root/ai_claude/work/chat_exports/$(date +%Y%m%d_%H%M%S)_export.json"
-mv ~/Downloads/claude-chat-*.json "$EXPORT_FILE"
-```
+Output: JSON/JSONL file copied into the working directory for processing.
 
 ### Step 3: Condense the Export
 
@@ -71,9 +60,6 @@ Load the export and apply the condensation prompt directly.
   "Condense the chat export at $EXPORT_FILE following the guidelines in ~/AI/ai_root/ai_general/ai_context_files/methods/_archive_condensation/prompt_condense_chat_history.md. Save result to ~/AI/ai_root/ai_claude/work/chat_exports/condensed_$(date +%Y%m%d_%H%M%S).md"
 ```
 
-**Option C: Use Gemini (1M context)**
-For very large chats, delegate to Gemini which can hold the entire export.
-
 ### Step 4: Create Continuation Seed
 
 Populate the continuation template:
@@ -85,32 +71,22 @@ FEEDBACK_FILE="$HOME/AI/ai_root/ai_comms/announcements/feedback_req_$(date +%Y%m
 # Read template, substitute placeholders, write seed
 ```
 
-### Step 5: Create New Chat
+### Step 5: Create New Session
 
-**Desktop App:**
-```applescript
-tell application "Claude"
-    activate
-    -- Cmd+N for new chat
-    tell application "System Events" to keystroke "n" using command down
-    delay 1
-end tell
-```
-
-**Web UI:**
-Navigate to `https://claude.ai/new`
+Launch a fresh CLI session for the continuation (e.g. via the `sessions` MCP or
+your launcher). The new session starts empty and will be seeded with the
+condensed history in the next step.
 
 ### Step 6: Attach Condensed History
 
-**Method A: Paste as context**
-Copy condensed content, paste into new chat.
-
-**Method B: File attachment**
-Use file picker automation to attach the condensed file and continuation seed.
+Pass the condensed file and continuation seed to the new session directly on
+disk — the CLI has full filesystem access, so the seed prompt can reference the
+condensed file by absolute path, or its contents can be inlined into the initial
+prompt.
 
 ### Step 7: Submit Continuation Prompt
 
-Paste the continuation seed template with placeholders filled:
+Deliver the continuation seed template with placeholders filled:
 - `{{CONDENSED_HISTORY}}` → content of condensed file
 - `{{CONTEXT_DIGEST}}` → optional additional context
 - `{{FEEDBACK_FILE_PATH}}` → path to feedback request file
@@ -123,13 +99,13 @@ Paste the continuation seed template with placeholders filled:
 
 ---
 
-## Quick Command (for Claude Desktop)
+## Quick Command
 
 When asked to continue a chat, run this sequence:
-1. `recent_chats` to find the chat (if not current)
-2. Get URL, export via script
-3. Condense (delegate to CLI or self-process)
-4. Create new chat with seed attached
+1. `chat` MCP to find the conversation (if not current)
+2. Copy the transcript to the working directory
+3. Condense (delegate to a CLI worker or self-process)
+4. Launch a new session with seed attached
 5. Confirm handoff
 
 ---
@@ -147,7 +123,6 @@ When asked to continue a chat, run this sequence:
 
 ## Troubleshooting
 
-**Export fails**: Check Claude Chat Exporter extension is installed in Chrome
+**Export fails**: Confirm the source transcript path exists and is readable
 **Condensation too large**: Increase compression, focus on outcomes not process
-**New chat doesn't pick up context**: Verify seed template is properly formatted
-**AppleScript fails**: Ensure Claude Desktop has Accessibility permissions
+**New session doesn't pick up context**: Verify seed template is properly formatted

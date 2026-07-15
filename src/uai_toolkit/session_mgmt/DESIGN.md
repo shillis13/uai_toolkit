@@ -13,7 +13,6 @@
 
 - session_store.py is the authoritative source for session data. Direct JSON registry file reads are legacy.
 - All session queries, writes, and updates go through session_store.py.
-- The architect owns session_store.py.
 
 ## session_ops.py
 

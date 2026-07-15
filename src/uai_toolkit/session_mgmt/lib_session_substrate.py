@@ -674,6 +674,14 @@ class TmuxSubstrate(SessionSubstrate):
                 f"Session '{name}' does not exist",
                 code="SESSION_NOT_FOUND",
             )
+        # A TRAILING literal newline, sent via `send-keys -l`, is read as Enter by CLIs
+        # that submit on a bare newline (e.g. grok): it submits+clears the input line, so
+        # the post-send tail-verification below can't find the text (false
+        # DELIVERY_TRUNCATED → success:false) AND the prompt is submitted prematurely even
+        # when the caller asked to type WITHOUT submitting. Submission is always explicit
+        # (send_keys / press_enter), never an embedded newline — so strip trailing newlines.
+        # (send_prompt wraps messages as "…{message}\n", so this fires on real prompts.)
+        text = text.rstrip("\r\n")
         if not text:
             return
         self._cancel_copy_mode_if_needed(name)
@@ -849,26 +857,59 @@ class TmuxSubstrate(SessionSubstrate):
             "clients": clients,
         }
 
-    def reset_window_size(self, name: str) -> str:
+    def reset_window_size(self, name: str) -> dict:
         """Remove any per-session window-size override so the session inherits the
-        server default (latest). Explicit, caller-invoked recovery — NEVER called
-        on attach. Returns the effective window-size after the reset."""
+        server default. Explicit, caller-invoked recovery — NEVER called on attach.
+
+        VERIFIES the outcome (Codex review #2): checks the unset return code, then
+        re-reads the session's EFFECTIVE geometry. Returns
+        {ok, window_size, override_set, note?}. `ok` is False if the unset command
+        failed OR the session is still effectively `manual` afterward (e.g. manual
+        is inherited from a global/window scope that a session-level unset cannot
+        clear) — so the caller never reports a false success."""
         if not self.session_exists(name):
             raise SubstrateError(
                 f"Session '{name}' does not exist", code="SESSION_NOT_FOUND",
             )
-        subprocess.run(
+        rc = subprocess.run(
             self._tmux_cmd("set-option", "-u", "-t", name, "window-size"),
             capture_output=True, text=True,
         )
-        r = subprocess.run(
-            self._tmux_cmd("show-options", "-g"), capture_output=True, text=True,
-        )
-        for line in (r.stdout if r.returncode == 0 else "").splitlines():
-            kv = line.split(" ", 1)
-            if kv[0] == "window-size":
-                return kv[1] if len(kv) == 2 else "latest"
-        return "latest"
+        geo = self.get_window_geometry(name)  # effective state for THIS session
+        still_manual = geo["window_size"] == "manual"
+        result = {
+            "ok": rc.returncode == 0 and not still_manual,
+            "window_size": geo["window_size"],
+            "override_set": geo["override_set"],
+        }
+        if rc.returncode != 0:
+            result["note"] = (rc.stderr or "set-option -u failed").strip()
+        elif still_manual:
+            # unset succeeded but it's still manual → inherited from a scope the
+            # session-level unset can't reach (global or window). Surface it.
+            result["note"] = (
+                "still 'manual' after session-level unset — inherited from global/"
+                "window scope; a session unset cannot clear that"
+            )
+        return result
+
+    @staticmethod
+    def discover_servers() -> list[str | None]:
+        """All tmux servers (socket labels) for this user. `None` = the default
+        (unnamed) server, i.e. no -L flag. Keeps socket-dir/tmux mechanics inside
+        the substrate (Codex review #4); callers orchestrate via substrate APIs."""
+        socket_dir = Path(os.environ.get("TMUX_TMPDIR") or f"/tmp/tmux-{os.getuid()}")
+        if not socket_dir.is_dir():
+            return [None]
+        servers: list[str | None] = []
+        for entry in sorted(socket_dir.iterdir()):
+            try:
+                if not entry.is_socket():
+                    continue
+            except OSError:
+                continue
+            servers.append(None if entry.name == "default" else entry.name)
+        return servers or [None]
 
     def attach_pty(self, name: str, socket_dir: str = "/tmp/uai_pty") -> dict:
         """Spawn tmux attach inside a PTY and bridge it to a unix socket.

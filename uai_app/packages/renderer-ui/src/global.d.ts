@@ -66,7 +66,8 @@ interface SystemMetrics {
   cpu_avg_6h?: number;
   top_cpu_processes?: TopProcess[];
   top_mem_processes?: TopProcess[];
-  claude_tokens?: { dtd?: TokenBucket; mtd?: TokenBucket; ytd?: TokenBucket; itd?: TokenBucket };
+  claude_tokens?: { dtd?: TokenBucket; wtd?: TokenBucket; mtd?: TokenBucket; ytd?: TokenBucket; itd?: TokenBucket };
+  sparks?: Record<string, number[]>;
   sysmon_events?: SysmonEvent[];
   claude_5h_pct?: number | null;
   claude_5h_reset?: string | null;
@@ -82,8 +83,9 @@ interface TopProcess {
   phys_gb: number;
 }
 
-/** Token counter bucket (day/month/year/inception to date). */
-interface TokenBucket { in: number; out: number; total: number }
+/** Token counter bucket (day/month/year/inception to date). `since` = local ISO
+ *  timestamp this window started counting (itd = ledger inception). */
+interface TokenBucket { in: number; out: number; total: number; cost?: number; since?: string }
 
 /** An active sysmon event (alert / assessment / episode) while it persists. */
 interface SysmonEvent {
@@ -103,6 +105,17 @@ interface DiskVolume {
   used_gb: number;
   free_gb: number;
   used_pct: number;
+}
+
+/** One entry in the AI awareness feed (ai_comms/feed/activity.jsonl). */
+interface FeedEntry {
+  ts: string;
+  session: string;
+  name: string;
+  channel: string;
+  kind: string;
+  text: string;
+  ref?: string[];
 }
 
 interface UaiApi {
@@ -163,6 +176,9 @@ interface UaiApi {
   systemMetrics(): Promise<SystemMetrics>;
   diskVolumes(): Promise<DiskVolume[]>;
   bootHistory(limit?: number): Promise<Array<{ when: string }>>;
+  aiFeed: {
+    read(limit?: number): Promise<FeedEntry[]>;
+  };
   logError(payload: { message: string; stack?: string; session?: string; level?: 'error' | 'warn' }): Promise<{ ok: boolean }>;
   getRecentErrors(limit?: number): Promise<Array<{ ts: string; source: string; session: string; message: string }>>;
   getLastError(): Promise<{ ts: string; source: string; session: string; message: string } | null>;
@@ -212,9 +228,11 @@ interface UaiApi {
     diff(dir: string, file: string, fromHash: string, toHash: string): Promise<unknown>;
     content(dir: string, file: string, ref: string): Promise<unknown>;
     repos(root: string): Promise<unknown>;
+    grep(dir: string, pattern: string, toRef?: string): Promise<unknown>;
   };
   fs: {
     listDir(dirPath: string, opts?: { dirsOnly?: boolean; showHidden?: boolean }): Promise<Array<{ name: string; path: string; type: 'file' | 'directory'; size: number | null; modified: string | null }>>;
+    readFile(filePath: string): Promise<{ ok: boolean; content?: string; truncated?: boolean; error?: string }>;
   };
   git: {
     filesForTodos: (todoIds: string[]) => Promise<string[]>;
@@ -334,6 +352,7 @@ interface UaiApi {
     readServerFile(filePath: string): Promise<string>;
   };
   openPath(filePath: string): Promise<{ ok: boolean; error?: string }>;
+  openUrl(url: string): Promise<{ ok: boolean; error?: string }>;
   globals: {
     list(): Promise<Array<{ name: string; path: string; ext: string }>>;
   };

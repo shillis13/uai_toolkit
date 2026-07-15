@@ -20,7 +20,7 @@ Log feedback when you notice:
 
 Do NOT use feedback for:
 - Task completion status (use task protocol)
-- TODO items requiring action (use todo_mgr)
+- TODO items requiring action (use todos-mgr)
 - Errors blocking your current work (report immediately to orchestrator)
 
 ## Feedback Location

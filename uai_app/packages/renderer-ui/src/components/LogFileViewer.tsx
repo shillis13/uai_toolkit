@@ -140,9 +140,11 @@ export default function LogFileViewer({ filePath, schema, sessionFilter, searchF
           if (isJsonl && schema) {
             const el = formatJsonlLine(line, schema, sessionFilter);
             if (el === null) return null; // filtered out
-            return <div key={i}>{el}</div>;
+            // data-copyrow: copy this row as ONE line (fields space-joined), not one
+            // field per line — see copyFlatten.ts.
+            return <div key={i} data-copyrow>{el}</div>;
           }
-          return <div key={i}>{formatTextLine(line)}</div>;
+          return <div key={i} data-copyrow>{formatTextLine(line)}</div>;
         })}
       </div>
       {!tailing && (

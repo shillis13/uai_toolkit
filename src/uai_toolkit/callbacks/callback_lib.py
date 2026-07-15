@@ -29,6 +29,8 @@ _PLATFORM_TARGETS = {
     "claude_cli": "claude-cli",
     "codex_cli": "codex-cli",
     "gemini_cli": "gemini-cli",
+    "antigravity_cli": "antigravity-cli",
+    "grok_cli": "grok-cli",
 }
 
 

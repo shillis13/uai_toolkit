@@ -59,6 +59,10 @@ interface ScheduledStatusJob {
   lastRun: ScheduledTaskRun | null;
   nextFire: string | null;
   state: string;
+  // Exposed by Noctis's sched_run wrapper via status_all() (todo_0458 #6):
+  command?: string;    // the TARGET script/command, un-wrapped
+  jobLog?: string;     // per-job timestamped log path
+  groupLog?: string;   // per-group timestamped log path
 }
 
 /** Group-level health rollup (mirrors the SwiftBar group badge). Health counts
@@ -144,6 +148,45 @@ function fmtTime(ts?: string | null): string {
   const d = new Date(ts);
   if (isNaN(d.getTime())) return ts;
   return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
+// ── Log rendering: strip ANSI, colour by severity (todo_0440 #1/#2, todo_0458 #2) ──
+// Raw logs arrive with terminal colour codes (e.g. \x1b[36m…\x1b[0m) and, for jobs
+// installed through Noctis's sched_run wrapper, lines tagged `[ts] [OUT|ERR] …`.
+// We strip the escape codes and colour each line by severity so a failure reads AS
+// a failure instead of hiding in a wall of grey text.
+const ANSI_RE = /\x1b\[[0-9;]*m/g;   // eslint-disable-line no-control-regex
+function stripAnsi(s: string): string { return (s || '').replace(ANSI_RE, ''); }
+
+type LogSeverity = 'err' | 'warn' | 'meta' | '';
+function logLineSeverity(line: string): LogSeverity {
+  const t = line.trim();
+  if (!t) return '';
+  // sched_run wrapper stream tag wins: `[2026-… ] [ERR] …` / `[OUT]`.
+  const tag = /\]\s*\[(OUT|ERR)\]/.exec(line);
+  if (tag) return tag[1] === 'ERR' ? 'err' : '';
+  // Wrapper header/footer framing: `=== group/job START … ===`.
+  if (/^===.*===$/.test(t)) return 'meta';
+  if (/(^|\b)(error|traceback|exception|fatal|cannot|can['’]t open|no such file|permission denied|denied|unauthorized|forbidden|refused|failed|fail(ure)?)\b|\b(401|403|404|500|502|503)\b/i.test(t)) return 'err';
+  if (/(^|\b)(warn(ing)?|deprecat|retry|skipp?ed)\b/i.test(t)) return 'warn';
+  return '';
+}
+
+/** ANSI-stripped, severity-coloured log block. Replaces raw <pre> log dumps. */
+function LogView({ text, className, empty }: { text?: string | null; className?: string; empty?: string }): JSX.Element {
+  const clean = stripAnsi(text || '').replace(/\s+$/, '');
+  if (!clean) return <pre className={`sched-mgr-log-content sched-log ${className || ''}`}>{empty || '(empty)'}</pre>;
+  const lines = clean.split('\n');
+  return (
+    <pre className={`sched-mgr-log-content sched-log ${className || ''}`}>
+      {lines.map((ln, i) => {
+        const sev = logLineSeverity(ln);
+        return (
+          <span key={i} className={`sched-log-line${sev ? ' sev-' + sev : ''}`}>{ln || ' '}{'\n'}</span>
+        );
+      })}
+    </pre>
+  );
 }
 
 // ── Canonical job status — JOB_STATUS_MODEL.md (SwiftBar + UAI must match) ──
@@ -293,6 +336,9 @@ export default function ScheduledTasksPane({ tabId }: ScheduledTasksPaneProps): 
   const [logViewJob, setLogViewJob] = useState<{ group: string; jobId: string } | null>(null);
   const [logContent, setLogContent] = useState<string>('');
   const [logLoading, setLogLoading] = useState(false);
+
+  // Script peek (todo_0440 #3, todo_0458 #7) — Context-Mgr-style source peek.
+  const [peekJob, setPeekJob] = useState<{ jobId: string; path: string; content: string; loading: boolean; error?: string } | null>(null);
 
   // Consolidated group logs (item 5): tail every job's log in the selected group.
   const [groupLogs, setGroupLogs] = useState<Array<{ jobId: string; content: string }> | null>(null);
@@ -552,6 +598,24 @@ export default function ScheduledTasksPane({ tabId }: ScheduledTasksPaneProps): 
     }
   }, []);
 
+  // Peek the target SCRIPT source (todo_0440 #3 / todo_0458 #7). Pulls the first
+  // script-looking token out of the job command and reads it (fs.readFile resolves
+  // $AI_ROOT / relative paths); toggles closed if the same job is peeked again.
+  const handlePeekJob = useCallback(async (jobId: string, command: string) => {
+    if (peekJob && peekJob.jobId === jobId) { setPeekJob(null); return; }
+    const m = /(\S+\.(?:py|sh|js|mjs|cjs|ts|rb|pl|zsh|bash))\b/.exec(command || '');
+    if (!m) { setPeekJob({ jobId, path: '', content: '', loading: false, error: 'No script path found in this job command.' }); return; }
+    const scriptPath = m[1].replace(/^["']|["']$/g, '');
+    setPeekJob({ jobId, path: scriptPath, content: '', loading: true });
+    try {
+      const r = await window.uai.fs.readFile(scriptPath);
+      if (r.ok) setPeekJob({ jobId, path: scriptPath, content: r.content || '', loading: false });
+      else setPeekJob({ jobId, path: scriptPath, content: '', loading: false, error: r.error || 'read failed' });
+    } catch (err: any) {
+      setPeekJob({ jobId, path: scriptPath, content: '', loading: false, error: err?.message || 'read failed' });
+    }
+  }, [peekJob]);
+
   // Consolidated logs: tail every logged job in the group in parallel (item 5).
   const loadGroupLogs = useCallback(async (gname: string, jobs: ScheduledJob[]) => {
     const withLogs = jobs.filter(j => j.log);
@@ -807,7 +871,7 @@ export default function ScheduledTasksPane({ tabId }: ScheduledTasksPaneProps): 
                   </div>
                 </div>
                 {logLoading && <div className="sched-mgr-loading">Loading log...</div>}
-                {!logLoading && <pre className="sched-mgr-log-content">{logContent || '(empty)'}</pre>}
+                {!logLoading && <LogView text={logContent} />}
               </div>
             )}
 
@@ -846,6 +910,19 @@ export default function ScheduledTasksPane({ tabId }: ScheduledTasksPaneProps): 
                       {showAddJob ? 'Cancel' : '+ Add Job'}
                     </button>
                     <span className="sched-mgr-jobs-label">Jobs ({groupDetail.jobs.length})</span>
+                    {/* [Delete Group] relocated here — before the jobs, right-justified
+                        (todo_0440 #7 / todo_0458 #4). Deliberate far-placement. */}
+                    <div className="sched-mgr-jobs-header-right">
+                      {confirmDelete && confirmDelete.type === 'group' && confirmDelete.group === groupDetail.name ? (
+                        <span className="sched-mgr-confirm">
+                          <span className="sched-mgr-confirm-q">Delete group '{groupDetail.name}' and all its jobs?</span>
+                          <button className="sched-mgr-btn sched-mgr-btn-sm sched-mgr-btn-danger" onClick={() => handleDeleteGroup(groupDetail.name)} disabled={mutating}>Delete</button>
+                          <button className="sched-mgr-btn sched-mgr-btn-sm" onClick={() => setConfirmDelete(null)}>Cancel</button>
+                        </span>
+                      ) : (
+                        <button className="sched-mgr-btn sched-mgr-btn-sm sched-mgr-btn-danger" onClick={() => setConfirmDelete({ type: 'group', group: groupDetail.name })}>Delete Group</button>
+                      )}
+                    </div>
                   </div>
 
                   {/* Add job form */}
@@ -905,6 +982,15 @@ export default function ScheduledTasksPane({ tabId }: ScheduledTasksPaneProps): 
                             <span className="sched-mgr-job-id">{job.id}</span>
                             <span className="sched-mgr-job-schedule" title={job.schedule}>{scheduleToEnglish(job.schedule)}</span>
                             <span className="sched-mgr-job-desc">{job.description}</span>
+                            {/* Discoverable reason for any non-green status — inline,
+                                not just a hover tooltip (todo_0440 #4/#5). */}
+                            {(() => {
+                              const sj = selectedGroupStatusJobs.get(job.id);
+                              if (!sj) return null;
+                              const c = classifyJob(sj);
+                              if (c.colour === 'green' || c.colour === 'gray') return null;
+                              return <span className={`sched-mgr-job-reason sched-reason-${c.colour}`} title={c.healthLabel}>{c.healthLabel}</span>;
+                            })()}
                           </div>
                           <div className="sched-mgr-job-detail">
                             <span className="sched-mgr-job-cmd" title={job.command}>{job.command}</span>
@@ -915,10 +1001,24 @@ export default function ScheduledTasksPane({ tabId }: ScheduledTasksPaneProps): 
                             <button className="sched-mgr-action-btn" onClick={() => handleRunJob(groupDetail.name, job.id)} disabled={runningJobId === job.id || mutating} title="Run Now">
                               {runningJobId === job.id ? 'Running...' : '\u25B6'}
                             </button>
+                            <button className={`sched-mgr-action-btn${peekJob && peekJob.jobId === job.id ? ' active' : ''}`} onClick={() => handlePeekJob(job.id, job.command)} title="Peek script source">{'\u{1F441}'}</button>
                             {job.log && <button className="sched-mgr-action-btn" onClick={() => handleViewLog(groupDetail.name, job.id)} title="View Log">{'\u2261'}</button>}
                             <button className="sched-mgr-action-btn" onClick={() => { setEditingJob(job.id); setEditFields({}); }} title="Edit">{'\u270E'}</button>
                             <button className="sched-mgr-action-btn sched-mgr-action-danger" onClick={() => setConfirmDelete({ type: 'job', group: groupDetail.name, jobId: job.id })} title="Delete">{'\u2715'}</button>
                           </div>
+
+                          {/* Script peek (Context-Mgr style) \u2014 todo_0440 #3 / todo_0458 #7 */}
+                          {peekJob && peekJob.jobId === job.id && (
+                            <div className="sched-mgr-peek">
+                              <div className="sched-mgr-peek-header">
+                                <span className="sched-mgr-peek-path" title={peekJob.path}>{peekJob.path || 'script'}</span>
+                                <button className="sched-mgr-btn sched-mgr-btn-sm" onClick={() => setPeekJob(null)}>Close</button>
+                              </div>
+                              {peekJob.loading && <div className="sched-mgr-loading">Loading\u2026</div>}
+                              {!peekJob.loading && peekJob.error && <div className="sched-mgr-peek-error">{peekJob.error}</div>}
+                              {!peekJob.loading && !peekJob.error && <LogView text={peekJob.content} empty="(empty file)" />}
+                            </div>
+                          )}
 
                           {/* Delete confirmation */}
                           {confirmDelete && confirmDelete.type === 'job' && confirmDelete.jobId === job.id && (
@@ -956,7 +1056,7 @@ export default function ScheduledTasksPane({ tabId }: ScheduledTasksPaneProps): 
                   {groupLogs && groupLogs.map(gl => (
                     <div key={gl.jobId} className="sched-mgr-group-log-block">
                       <div className="sched-mgr-group-log-jobid">{gl.jobId}</div>
-                      <pre className="sched-mgr-group-log-pre">{gl.content?.trim() || '(empty)'}</pre>
+                      <LogView text={gl.content} className="sched-mgr-group-log-pre" />
                     </div>
                   ))}
                 </div>
@@ -968,22 +1068,10 @@ export default function ScheduledTasksPane({ tabId }: ScheduledTasksPaneProps): 
                       <span className={`sched-mgr-exit-badge${runOutput.exitCode === 0 ? ' ok' : ' fail'}`}>Exit {runOutput.exitCode}</span>
                       <button className="sched-mgr-btn sched-mgr-btn-sm" onClick={() => setRunOutput(null)}>Close</button>
                     </div>
-                    <pre className="sched-mgr-run-content">{runOutput.stdout || runOutput.stderr || '(no output)'}</pre>
+                    <LogView text={runOutput.stdout || runOutput.stderr} className="sched-mgr-run-content" empty="(no output)" />
                   </div>
                 )}
 
-                {/* Group delete */}
-                <div className="sched-mgr-group-danger">
-                  {confirmDelete && confirmDelete.type === 'group' && confirmDelete.group === groupDetail.name ? (
-                    <div className="sched-mgr-confirm">
-                      <span>Delete entire group '{groupDetail.name}' and all its jobs?</span>
-                      <button className="sched-mgr-btn sched-mgr-btn-sm sched-mgr-btn-danger" onClick={() => handleDeleteGroup(groupDetail.name)} disabled={mutating}>Delete Group</button>
-                      <button className="sched-mgr-btn sched-mgr-btn-sm" onClick={() => setConfirmDelete(null)}>Cancel</button>
-                    </div>
-                  ) : (
-                    <button className="sched-mgr-btn sched-mgr-btn-sm sched-mgr-btn-danger" onClick={() => setConfirmDelete({ type: 'group', group: groupDetail.name })}>Delete Group</button>
-                  )}
-                </div>
               </div>
             )}
 

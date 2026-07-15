@@ -29,6 +29,9 @@ export interface GfvSnapshot {
   barOpen: boolean;
   collapsed: string[];
   expandedCommits: string[];
+  /** File-view (diff) panel height in px (null = default), and maximized flag. */
+  diffHeight?: number | null;
+  diffMax?: boolean;
 }
 
 /** Viewer-wrapper slice — which sub-tab is active + the Commit View's target. */

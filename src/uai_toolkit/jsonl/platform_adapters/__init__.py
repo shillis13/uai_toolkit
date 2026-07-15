@@ -5,13 +5,14 @@ from pathlib import Path
 from typing import Any
 
 from uai_toolkit.jsonl.standardized_session import is_standardized_session_file
-from uai_toolkit.jsonl.platform_adapters import claude, codex, gemini, agy
+from uai_toolkit.jsonl.platform_adapters import claude, codex, gemini, agy, grok
 
 ADAPTERS = {
     "claude": claude,
     "codex": codex,
     "gemini": gemini,
     "agy": agy,
+    "grok": grok,
 }
 
 
@@ -35,7 +36,15 @@ def detect_platform(path: str | Path) -> str:
     if is_standardized_session_file(path):
         return "standardized"
     first_obj = _first_json_object(path)
-    for name, adapter in (("agy", agy), ("codex", codex), ("gemini", gemini), ("claude", claude)):
+    # Priority: path/format-distinct adapters first. Grok after agy (agy's
+    # step_index signature is unambiguous); before codex/claude which are broader.
+    for name, adapter in (
+        ("agy", agy),
+        ("grok", grok),
+        ("codex", codex),
+        ("gemini", gemini),
+        ("claude", claude),
+    ):
         if adapter.sniff(path, first_obj):
             return name
     return "claude"

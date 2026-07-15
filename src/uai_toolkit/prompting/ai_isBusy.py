@@ -44,10 +44,13 @@ BUSY_PATTERNS = {
     "gemini-cli": r"esc to cancel",
     "codex-cli": r"esc to interrupt",
     "claude-cli": r"\((thought|thinking|[0-9]+ tokens)",
+    "grok-cli": r"\[stop\]",
+    "antigravity-cli": r"Working\.\.\.",
 }
-SESSION_HINT = {"claude-cli": "claude", "codex-cli": "codex", "gemini-cli": "gemini"}
+SESSION_HINT = {"claude-cli": "claude", "codex-cli": "codex", "gemini-cli": "gemini",
+                "grok-cli": "grok", "antigravity-cli": "agy"}
 
-USAGE = "Usage: ai_isBusy.py <claude-cli|codex-cli|gemini-cli> [--session <name>]"
+USAGE = "Usage: ai_isBusy.py <claude-cli|codex-cli|gemini-cli|grok-cli|antigravity-cli> [--session <name>]"
 RECHECK_DELAY_S = 2
 TAIL_LINES = 5
 

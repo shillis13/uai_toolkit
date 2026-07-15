@@ -15,6 +15,7 @@ import { ReadFilterSplitPill, type ReadFilter } from './CommsReadFilter';
 import { showContextMenu, type ContextMenuItem } from '../utils/context-menu';
 import { sessionColor } from '../utils/session-color';
 import { useSessionStore } from '../stores/session-store';
+import { LinkifyRefs } from './RefLink';
 
 type MsgFolder = 'inbox' | 'sent' | 'archive';
 
@@ -57,6 +58,35 @@ function setDraft(msgId: string, text: string): void {
 }
 function clearDraft(msgId: string): void {
   try { localStorage.removeItem(DRAFT_PREFIX + msgId); } catch { /* ignore */ }
+}
+
+// ── Selected subtab persistence (note_0024) ─────────────────────────────────
+// The Comms folder (Inbox/Sent/Archive) and read filter are local state, so
+// they reset to Inbox every time the right panel remounts on a tab change. The
+// user wants the last-selected subtab to still be active on return, so we stash
+// the choice in localStorage (a single global preference — the subtab you like,
+// regardless of which session tab is active).
+const FOLDER_KEY = 'uai:commsFolder';
+const READFILTER_KEY = 'uai:commsReadFilter';
+function loadFolder(): MsgFolder {
+  try {
+    const v = localStorage.getItem(FOLDER_KEY);
+    if (v === 'inbox' || v === 'sent' || v === 'archive') return v;
+  } catch { /* ignore */ }
+  return 'inbox';
+}
+function saveFolder(f: MsgFolder): void {
+  try { localStorage.setItem(FOLDER_KEY, f); } catch { /* ignore */ }
+}
+function loadReadFilter(): ReadFilter {
+  try {
+    const v = localStorage.getItem(READFILTER_KEY);
+    if (v === 'all' || v === 'read' || v === 'unread') return v;
+  } catch { /* ignore */ }
+  return 'all';
+}
+function saveReadFilter(r: ReadFilter): void {
+  try { localStorage.setItem(READFILTER_KEY, r); } catch { /* ignore */ }
 }
 
 // Read state is singular per message: for a direct message it's whether the
@@ -156,8 +186,12 @@ interface MessagesTabProps {
 }
 
 export default function MessagesTab({ sessionTrackingId }: MessagesTabProps): JSX.Element {
-  const [folder, setFolder] = useState<MsgFolder>('inbox');
-  const [readFilter, setReadFilter] = useState<ReadFilter>('all');
+  // Initialize from the persisted preference (note_0024) so the subtab the user
+  // last had open is still active after a tab change.
+  const [folder, setFolderState] = useState<MsgFolder>(loadFolder);
+  const [readFilter, setReadFilterState] = useState<ReadFilter>(loadReadFilter);
+  const setFolder = useCallback((f: MsgFolder) => { setFolderState(f); saveFolder(f); }, []);
+  const setReadFilter = useCallback((r: ReadFilter) => { setReadFilterState(r); saveReadFilter(r); }, []);
   const [messages, setMessages] = useState<InboxMessage[]>([]);
   const [loading, setLoading] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -357,6 +391,12 @@ export default function MessagesTab({ sessionTrackingId }: MessagesTabProps): JS
   return (
     <div className="messages-tab">
       <div className="msg-folder-bar">
+        {/* Read/Unread filter — split pill (PianoMan picked this for the 2-value
+            case; the cycle pill in CommsReadFilter.tsx is kept for future 3-4
+            value filters). Left-aligned at the head of the folder bar. */}
+        <span style={{ display: 'inline-flex', alignItems: 'center', marginRight: 8 }}>
+          <ReadFilterSplitPill value={readFilter} onChange={setReadFilter} />
+        </span>
         {(['inbox', 'sent', 'archive'] as MsgFolder[]).map(f => (
           <button
             key={f}
@@ -379,13 +419,6 @@ export default function MessagesTab({ sessionTrackingId }: MessagesTabProps): JS
         >
           {selectMode ? 'Done' : 'Select'}
         </button>
-        {/* Read/Unread filter — split pill (PianoMan picked this for the 2-value
-            case; the cycle pill in CommsReadFilter.tsx is kept for future 3-4
-            value filters). Right-aligned; the folder bar wraps if the panel is
-            narrow so this never gets clipped. */}
-        <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center' }}>
-          <ReadFilterSplitPill value={readFilter} onChange={setReadFilter} />
-        </span>
       </div>
 
       {loading ? (
@@ -474,7 +507,19 @@ export default function MessagesTab({ sessionTrackingId }: MessagesTabProps): JS
                           <span className="msg-meta-dt">{formatDateTime(msg.created_at)}</span>
                           <span className="msg-meta-size">{formatSize(msg.content)}</span>
                         </div>
-                        <div className="msg-content" style={{ color: authorColor }}>{msg.content}</div>
+                        <div className="msg-content" style={{ color: authorColor }}><LinkifyRefs text={msg.content} /></div>
+                        {/* Visible Reply affordance (right-click also has it, but a
+                            button is discoverable). Disabled in the Sent folder. */}
+                        {replyingTo !== msg.id && (
+                          <div className="msg-expanded-actions">
+                            <button
+                              className="msg-reply-btn"
+                              onClick={(e) => { e.stopPropagation(); openReply(msg.id); }}
+                              disabled={folder === 'sent'}
+                              title={folder === 'sent' ? "Can't reply from the Sent folder" : `Reply to ${resolveDisplayName(msg.from, sessions)}`}
+                            >{'↩ Reply'}</button>
+                          </div>
+                        )}
                         {msg.body_file && (
                           <button
                             className="msg-offload-link"

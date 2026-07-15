@@ -15,75 +15,24 @@ import * as path from 'node:path';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import type { BrowserWindow } from 'electron';
+import { aiRootMain as getAiRootMain, shellPath as getPythonPath } from './paths';
 
 interface PtyEntry {
   process: IPty;
   sessionId: string;
   cols?: number;
   rows?: number;
-  /** Timestamp of the last PTY output — used to tell whether the CLI is actively
-   *  responding (streaming) vs idle, so we can hold resizes during a response. */
-  lastDataAt?: number;
-  /** A resize requested while the CLI was actively responding, held until the
-   *  output goes quiet (so we don't repaint — and corrupt — an overflowing response
-   *  mid-stream). Only the latest requested size is kept. */
-  pendingResize?: { cols: number; rows: number };
-  /** Timer that flushes pendingResize once output has been quiet long enough. */
-  quietTimer?: ReturnType<typeof setTimeout>;
 }
-
-// A session is treated as "actively responding" if it produced PTY output within
-// this window. A resize is held while responding and applied this long after the
-// last output (i.e. once the response settles). Most tool calls emit output (⎿
-// results) that re-arm the window, so the hold spans typical tool pauses too.
-const RESPONDING_QUIET_MS = 1000;
 
 const ptyEntries = new Map<string, PtyEntry>();
 
-/** Canonical main ai_root — for production scripts and data. */
-function getAiRootMain(): string {
-  const resolved = process.env.AI_ROOT_MAIN || path.join(os.homedir(), 'AI/ai_root');
-  console.log(`[terminal] getAiRootMain: ${resolved}`);
-  return resolved;
-}
 
 function getSessionOpsPath(): string {
   return path.join(getAiRootMain(), 'ai_general/scripts/session_mgmt/session_ops.py');
 }
 
-/**
- * Build a PATH that always includes the standard system directories.
- *
- * When UAI is launched from the macOS GUI (Finder/Dock/launchd) or a wrapper
- * with a sanitized environment, the Electron main process can inherit a
- * minimal/empty PATH that lacks /bin and /usr/bin. Passing that straight to a
- * spawned shell makes even `ls`, `sed`, and `sh` "command not found"
- * (e.g. `env: sh: No such file or directory`). We prepend the caller's PATH
- * (so their preferences win) and append the standard locations, de-duplicated.
- */
-function buildShellPath(): string {
-  const dirs = [
-    ...(process.env.PATH ? process.env.PATH.split(':') : []),
-    '/opt/homebrew/bin',
-    '/usr/local/bin',
-    '/usr/bin',
-    '/bin',
-    '/usr/sbin',
-    '/sbin',
-  ];
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const d of dirs) {
-    if (!d || seen.has(d)) continue;
-    seen.add(d);
-    out.push(d);
-  }
-  return out.join(':');
-}
-
-function getPythonPath(): string {
-  return buildShellPath();
-}
+// (buildShellPath removed — PATH construction now lives in paths.ts shellPath(),
+//  imported here as getPythonPath. Same behavior, one definition.)
 
 /**
  * Build the attach command. Routes through session_ops.py which resolves
@@ -134,10 +83,6 @@ export function attachTerminal(
 
   ptyProcess.onData((data: string) => {
     if (ptyEntries.get(sessionId) !== entry) return;
-    entry.lastDataAt = Date.now();
-    // Output is flowing → the CLI is responding. If a resize is being held, push its
-    // flush back so it only lands once the response settles.
-    if (entry.pendingResize) armQuietFlush(entry);
     if (window && !window.isDestroyed()) {
       window.webContents.send('terminal:data', sessionId, data);
     }
@@ -146,7 +91,6 @@ export function attachTerminal(
   ptyProcess.onExit(({ exitCode }) => {
     console.log(`[terminal] PTY exited: sessionId=${sessionId} exitCode=${exitCode}`);
     if (ptyEntries.get(sessionId) !== entry) return;
-    if (entry.quietTimer) { clearTimeout(entry.quietTimer); entry.quietTimer = undefined; }
     ptyEntries.delete(sessionId);
     if (window && !window.isDestroyed()) {
       window.webContents.send('terminal:exit', sessionId, exitCode);
@@ -166,62 +110,28 @@ export function writeTerminal(sessionId: string, data: string): boolean {
   }
 }
 
-/** Apply a resize to the PTY now (fires SIGWINCH). No-op if the size is unchanged. */
-function applyResize(entry: PtyEntry, c: number, r: number): void {
-  if (entry.cols === c && entry.rows === r) return;
-  try {
-    entry.process.resize(c, r);
-    entry.cols = c;
-    entry.rows = r;
-  } catch {
-    // PTY may have exited — ignore EBADF
-  }
-}
-
-/** (Re)arm the timer that flushes a held resize once PTY output has been quiet. */
-function armQuietFlush(entry: PtyEntry): void {
-  if (entry.quietTimer) clearTimeout(entry.quietTimer);
-  entry.quietTimer = setTimeout(() => {
-    entry.quietTimer = undefined;
-    const pending = entry.pendingResize;
-    if (pending) {
-      entry.pendingResize = undefined;
-      applyResize(entry, pending.cols, pending.rows);  // safe now — output has settled
-    }
-  }, RESPONDING_QUIET_MS);
-}
-
 export function resizeTerminal(sessionId: string, cols: number, rows: number): void {
   const entry = ptyEntries.get(sessionId);
-  if (!entry) return;
-  const c = Math.max(2, cols);
-  const r = Math.max(2, rows);
-
-  // Skip a same-size resize: pty.resize() fires ioctl(TIOCSWINSZ) → SIGWINCH even
-  // when the grid is unchanged, and that spurious SIGWINCH makes the CLI repaint —
-  // which corrupts an overflowing response's scrollback. Only resize on real change.
-  if (entry.cols === c && entry.rows === r) {
-    entry.pendingResize = undefined;  // a held resize that matches reality is moot
-    return;
+  if (entry) {
+    const c = Math.max(2, cols);
+    const r = Math.max(2, rows);
+    // Skip a same-size resize: pty.resize() fires ioctl(TIOCSWINSZ) → SIGWINCH even
+    // when the grid is unchanged, and that spurious SIGWINCH makes the CLI repaint —
+    // which corrupts an overflowing response's scrollback. Only resize on real change.
+    if (entry.cols === c && entry.rows === r) return;
+    try {
+      entry.process.resize(c, r);
+      entry.cols = c;
+      entry.rows = r;
+    } catch {
+      // PTY may have exited — ignore EBADF
+    }
   }
-
-  // If the CLI is actively responding (recent PTY output), HOLD the resize — a
-  // repaint mid-response is what corrupts an overflowing response. Keep only the
-  // latest requested size; it's flushed once output goes quiet (armQuietFlush).
-  const responding = entry.lastDataAt !== undefined && (Date.now() - entry.lastDataAt) < RESPONDING_QUIET_MS;
-  if (responding) {
-    entry.pendingResize = { cols: c, rows: r };
-    armQuietFlush(entry);
-    return;
-  }
-
-  applyResize(entry, c, r);
 }
 
 export function detachTerminal(sessionId: string): void {
   const entry = ptyEntries.get(sessionId);
   if (entry) {
-    if (entry.quietTimer) { clearTimeout(entry.quietTimer); entry.quietTimer = undefined; }
     try { process.kill(entry.process.pid, 'SIGKILL'); } catch { /* ignore */ }
     ptyEntries.delete(sessionId);
   }
@@ -300,7 +210,7 @@ export function createStandaloneTerminal(
         ...process.env,
         TERM: 'xterm-256color',
         COLORTERM: 'truecolor',
-        PATH: buildShellPath(),
+        PATH: getPythonPath(),
       } as Record<string, string>,
     },
   );

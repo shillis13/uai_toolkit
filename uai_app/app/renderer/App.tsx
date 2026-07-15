@@ -23,6 +23,7 @@ import Workspace from '@uai/renderer-ui/components/Workspace';
 import BottomPanel from '@uai/renderer-ui/components/BottomPanel';
 import SettingsPanel from '@uai/renderer-ui/components/SettingsPanel';
 import { executeCommand } from '@uai/renderer-ui/utils/execute-command';
+import { installCopyFlatten } from '@uai/renderer-ui/copyFlatten';
 import type { AppearancePrefs, DeepLinkEvent } from '@uai/shared/types';
 
 /** Apply appearance preferences to CSS custom properties on :root */
@@ -75,6 +76,10 @@ export default function App(): JSX.Element {
       applyAppearancePrefs(appState.appearance);
     }
   }, [appState.appearance]);
+
+  // Flatten structured rows (log tabs, search results, …) to one line on copy, so a
+  // copied error row doesn't paste as one-field-per-line. Opt-in via `data-copyrow`.
+  useEffect(() => installCopyFlatten(), []);
 
   // Capture uncaught renderer errors → main process log (App Log + error log)
   useEffect(() => {
