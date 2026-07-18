@@ -15,18 +15,31 @@ Install: `pip install uai-toolkit` (core) or `pip install 'uai-toolkit[full,mcp]
 for the heavier features. Nothing here is macOS-specific — the toolkit is the
 WSL/Windows-portable subset.
 
-| Package | pip name | Tier (`pyproject`) | Why |
-|---|---|---|---|
-| pyyaml | `pyyaml>=6` | **core** | pervasive — YAML config/content (26 modules) |
-| tomli | `tomli; python<3.11` | **core** | `config.toml` on Python < 3.11 (stdlib `tomllib` on 3.11+) |
-| psutil | `psutil>=5.9` | `full` | process/session discovery |
-| httpx | `httpx>=0.27` | `full` | local-LLM quality gate + session tools |
-| websockets | `websockets>=12` | `full` | CDP / live session tooling |
-| tqdm | `tqdm>=4` | `full` | progress bars |
-| mcp | `mcp>=1.0` | `mcp` | Model Context Protocol SDK (the server surface) |
-| jsonschema | `jsonschema>=4` | `mcp` | MCP tool-schema validation |
-| pillow | `pillow>=10` | `images` | image-dimension-check hook (guarded lazy import) |
-| pytest | `pytest>=7` | `dev` | test runner |
+┌─────────────┬──────────────────────┬───────────────────────┬─────────────────────────────────────────────────────────┐
+│ **Package** │ **pip name**         │ **Tier**              │ **Why**                                                 │
+│             │                      │ **(`pyproject`)**     │                                                         │
+├─────────────┼──────────────────────┼───────────────────────┼─────────────────────────────────────────────────────────┤
+│ pyyaml      │ `pyyaml>=6`          │ **core**              │ pervasive — YAML config/content (26 modules)            │
+├─────────────┼──────────────────────┼───────────────────────┼─────────────────────────────────────────────────────────┤
+│ tomli       │ `tomli; python<3.11` │ **core**              │ `config.toml` on Python < 3.11 (stdlib `tomllib` on     │
+│             │                      │                       │ 3.11+)                                                  │
+├─────────────┼──────────────────────┼───────────────────────┼─────────────────────────────────────────────────────────┤
+│ psutil      │ `psutil>=5.9`        │ `full`                │ process/session discovery                               │
+├─────────────┼──────────────────────┼───────────────────────┼─────────────────────────────────────────────────────────┤
+│ httpx       │ `httpx>=0.27`        │ `full`                │ local-LLM quality gate + session tools                  │
+├─────────────┼──────────────────────┼───────────────────────┼─────────────────────────────────────────────────────────┤
+│ websockets  │ `websockets>=12`     │ `full`                │ CDP / live session tooling                              │
+├─────────────┼──────────────────────┼───────────────────────┼─────────────────────────────────────────────────────────┤
+│ tqdm        │ `tqdm>=4`            │ `full`                │ progress bars                                           │
+├─────────────┼──────────────────────┼───────────────────────┼─────────────────────────────────────────────────────────┤
+│ mcp         │ `mcp>=1.0`           │ `mcp`                 │ Model Context Protocol SDK (the server surface)         │
+├─────────────┼──────────────────────┼───────────────────────┼─────────────────────────────────────────────────────────┤
+│ jsonschema  │ `jsonschema>=4`      │ `mcp`                 │ MCP tool-schema validation                              │
+├─────────────┼──────────────────────┼───────────────────────┼─────────────────────────────────────────────────────────┤
+│ pillow      │ `pillow>=10`         │ `images`              │ image-dimension-check hook (guarded lazy import)        │
+├─────────────┼──────────────────────┼───────────────────────┼─────────────────────────────────────────────────────────┤
+│ pytest      │ `pytest>=7`          │ `dev`                 │ test runner                                             │
+└─────────────┴──────────────────────┴───────────────────────┴─────────────────────────────────────────────────────────┘
 
 **Added this pass:** `pillow` (`images` extra) — the scan found `from PIL import
 Image` in the image-dimension hook, previously undeclared. It's a guarded lazy
@@ -36,12 +49,17 @@ import, so without it the hook skips the check instead of crashing.
 
 Needed by the vendored tools that shell out. Install via Homebrew (mac) / apt (WSL):
 
-| Tool | Purpose | WSL/Windows |
-|---|---|---|
-| `zellij` / `tmux` | terminal-multiplexer substrate | work on WSL |
-| `ripgrep` (`rg`) | fast search | `apt install ripgrep` |
-| `git` | version control | native everywhere |
-| `node` + `npm` | build/run the vendored `uai_app/` Electron monorepo | native everywhere |
+┌───────────────────┬─────────────────────────────────────────────────────┬───────────────────────┐
+│ **Tool**          │ **Purpose**                                         │ **WSL/Windows**       │
+├───────────────────┼─────────────────────────────────────────────────────┼───────────────────────┤
+│ `zellij` / `tmux` │ terminal-multiplexer substrate                      │ work on WSL           │
+├───────────────────┼─────────────────────────────────────────────────────┼───────────────────────┤
+│ `ripgrep` (`rg`)  │ fast search                                         │ `apt install ripgrep` │
+├───────────────────┼─────────────────────────────────────────────────────┼───────────────────────┤
+│ `git`             │ version control                                     │ native everywhere     │
+├───────────────────┼─────────────────────────────────────────────────────┼───────────────────────┤
+│ `node` + `npm`    │ build/run the vendored `uai_app/` Electron monorepo │ native everywhere     │
+└───────────────────┴─────────────────────────────────────────────────────┴───────────────────────┘
 
 ## 3. Node (the `uai_app/` sibling)
 
@@ -55,10 +73,15 @@ Two lazy imports reference internal modules that the materialize keystone does N
 vendor into the toolkit, so they'd fail **if that code path runs** on a fresh box.
 They're lazy (inside functions), so import-time is safe, but the feature breaks:
 
-| Import | Where | Status |
-|---|---|---|
-| `lllm_prompt` | `jsonl/summarizer.py` (local-LLM summary path) | not vendored, not a pip pkg — vendor it or guard the feature |
-| `lib_branch_index` | `jsonl/read_jsonl.py` (devTree branch index) | not vendored — vendor it or guard the feature |
+┌────────────────────┬──────────────────────────────────────────┬──────────────────────────────────────────────────────┐
+│ **Import**         │ **Where**                                │ **Status**                                           │
+├────────────────────┼──────────────────────────────────────────┼──────────────────────────────────────────────────────┤
+│ `lllm_prompt`      │ `jsonl/summarizer.py` (local-LLM summary │ not vendored, not a pip pkg — vendor it or guard the │
+│                    │ path)                                    │ feature                                              │
+├────────────────────┼──────────────────────────────────────────┼──────────────────────────────────────────────────────┤
+│ `lib_branch_index` │ `jsonl/read_jsonl.py` (devTree branch    │ not vendored — vendor it or guard the feature        │
+│                    │ index)                                   │                                                      │
+└────────────────────┴──────────────────────────────────────────┴──────────────────────────────────────────────────────┘
 
 These are tracked here rather than silently shipped as if resolvable. Fix =
 add them to the materialize manifest (`MODULES`) or gate the calling feature
