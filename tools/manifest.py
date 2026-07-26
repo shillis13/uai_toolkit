@@ -61,6 +61,10 @@ APP_TEXT_SUFFIXES = CONTENT_TEXT_SUFFIXES | {".ts", ".tsx", ".js", ".jsx", ".mjs
 IMPORT_REWRITES = [
     (r"\bfrom common_utils\.", "from uai_toolkit.common_utils."),
     (r"\bfrom utils\.standard_colors\b", "from uai_toolkit.common_utils.standard_colors"),
+    # text_utils + calc (pylib) vendored 2026-07-26: bare sibling / package imports -> toolkit form.
+    (r"\bfrom standard_colors import\b", "from uai_toolkit.common_utils.standard_colors import"),
+    (r"\bfrom file_utils\.lib_fileInput\b", "from uai_toolkit.file_utils.lib_fileInput"),
+    (r"\bfrom calc\b", "from uai_toolkit.calc"),
     # shared env-var resolver: Noctis's env-migration writes `from utils.paths` in
     # source (interim, since uai_toolkit isn't on ai_general's path yet) -> toolkit form.
     (r"\bfrom utils\.paths\b", "from uai_toolkit.paths"),
@@ -165,6 +169,17 @@ MODULES = [
     {"dest": "common_utils/lib_readline.py",          "source": "pylib:common_utils/lib_readline.py",          "kind": "clean"},
     {"dest": "common_utils/lib_undo.py",              "source": "pylib:common_utils/lib_undo.py",              "kind": "clean"},
     {"dest": "common_utils/standard_colors.py",       "source": "ai:utils/standard_colors.py",                 "kind": "clean"},
+    # text_utils (pylib) — clean_text + field_reorder + the md-table reformatters (PianoMan 2026-07-26).
+    # __init__.py is a NATIVE trimmed copy (native, not materialized): the source __init__
+    # eagerly imports text_formatter, which was NOT requested and isn't vendored.
+    {"dest": "text_utils/clean_text.py",              "source": "pylib:text_utils/clean_text.py",              "kind": "clean"},
+    {"dest": "text_utils/field_reorder.py",           "source": "pylib:text_utils/field_reorder.py",           "kind": "clean"},
+    {"dest": "text_utils/md_table_reformat_shared.py","source": "pylib:text_utils/md_table_reformat_shared.py", "kind": "clean"},
+    {"dest": "text_utils/md_table_reformat.py",       "source": "pylib:text_utils/md_table_reformat.py",       "kind": "clean"},
+    {"dest": "text_utils/md_file_table_reformat.py",  "source": "pylib:text_utils/md_file_table_reformat.py",  "kind": "clean"},
+    # file_utils — dependency of the text_utils tools (shared stdin/clipboard input helper).
+    {"dest": "file_utils/__init__.py",                "source": "pylib:file_utils/__init__.py",                "kind": "clean"},
+    {"dest": "file_utils/lib_fileInput.py",           "source": "pylib:file_utils/lib_fileInput.py",           "kind": "clean"},
 
     # ---- jsonl ----
     {"dest": "jsonl/standardized_session.py",         "source": "ai:jsonl/lib_standardized_session.py",        "kind": "clean"},
@@ -252,6 +267,12 @@ MODULES = [
 # exclude/include_only, applies per-file `kind` overrides. Symlinks in source are
 # excluded (their canonical targets are ported elsewhere).
 MODULE_DIRS = [
+    # calc (pylib) — the calculator package: engine + frontends + cli (PianoMan 2026-07-26).
+    # Absolute `from calc.` imports are rewritten to `from uai_toolkit.calc.`; carries its
+    # own __init__.py files. Test files excluded (pytest is dev-only).
+    {"dest": "calc", "source": "pylib:calc", "kind": "clean",
+     "exclude": ["test_cli.py", "test_repl.py", "test_evaluate.py", "test_parser.py",
+                 "test_tokenizer.py", "docs"]},
     {"dest": "session_mgmt", "source": "ai:session_mgmt", "kind": "clean",
      "exclude": ["trait_mgr.py", "session_traits.py"],                # symlinks -> context_files / session_context_registry
      # tag_mgr/build_footer: source has an importlib-by-path paths.py workaround for

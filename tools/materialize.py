@@ -137,11 +137,15 @@ def process(entry: dict, apply: bool, show_diff: bool) -> dict:
         return result
 
     # clean
-    old = dest.read_text(encoding="utf-8", errors="replace") if dest.exists() else ""
-    if new_text == old:
+    dest_exists = dest.exists()
+    old = dest.read_text(encoding="utf-8", errors="replace") if dest_exists else ""
+    # An absent destination and an existing empty file both read as "". Keep the
+    # existence bit so empty package markers such as file_utils/__init__.py are
+    # created instead of being falsely reported as unchanged.
+    if dest_exists and new_text == old:
         result["status"] = "unchanged"
         return result
-    result["status"] = "UPDATE" if old else "CREATE"
+    result["status"] = "UPDATE" if dest_exists else "CREATE"
     n_added = sum(1 for _ in difflib.unified_diff(old.splitlines(), new_text.splitlines(), n=0))
     result["detail"] = f"{len(old.splitlines())} -> {len(new_text.splitlines())} lines"
     if show_diff:
