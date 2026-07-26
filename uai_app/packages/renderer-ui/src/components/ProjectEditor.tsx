@@ -1,13 +1,12 @@
 /**
  * ProjectEditor — the Project tab's Center Pane.
  *
- * Splits the Center Pane into Navigator Panel · Detail Area · Right Panel,
- * parallel to how a Session tab splits into Title Bar / Terminal / Prompt / Right Panel.
+ * Uses a title bar, horizontal aspect tabs, and one full-width aspect surface.
+ * File/team selection details dock below that surface rather than in a permanent
+ * right rail.
  * Design: docs/designs/2026-06-21-project-editor-design.md  (todo_0320)
  *
- * Aspects (Navigator): Overview · Work List · Team · Comms.
- * Decisions (locked 2026-06-21): (1) nav expands uniformly into each aspect's items;
- * (2) Doc Folder == Work Folder == one generic tree; (3) Right Panel == reused ContextPanel.
+ * Aspects: Overview · Work List · Team · Comms plus project-only Playbook/Workspace.
  *
  * Build state: SHELL. Navigator + routing are live; Overview reuses ProjectDetailView;
  * Work/Team/Comms detail bodies are scaffolds wired to real nav data, filled per the
@@ -17,68 +16,97 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { ProjectCard, SessionCard } from '@uai/shared/cards';
-import ProjectOverview, { FileMetaPanel } from './ProjectOverview';
+import ProjectOverview from './ProjectOverview';
 import ProjectFolderTree, { type FsEntry } from './ProjectFolderTree';
+import { PlaybookView, WorkspaceView, FilePreviewPanel } from './ProjectPlaybook';
 import ProjectCommsDetail, { useProjectConversations, formatTime, type Conversation } from './ProjectComms';
 import ProjectTeamDetail, { TeamMemberPanel } from './ProjectTeam';
-import TodoItemView from './TodoItemView';
+import WorkSurface from './WorkSurface';
+import { scopeTodos } from './work-scope';
+import { STATUS_ORDER, statusColor, itemDate } from './WorkMgrPane';
+import type { WorkItem } from './WorkMgrPane';
+import StatusFilterMenu from './StatusFilterMenu';
 import GitFileViewPane from './GitFileViewPane';
 import { executeCommand } from '../utils/execute-command';
 
-type AspectKey = 'overview' | 'work' | 'team' | 'comms' | 'files' | 'docs';
+type AspectKey = 'overview' | 'work' | 'team' | 'comms' | 'files' | 'playbook' | 'workspace';
 type WorkerKind = 'project' | 'team' | 'session';
 
 interface AspectDef { key: AspectKey; label: string; icon: string; }
 // isProject inversion: a worker is a TEAM by default — the base aspects below are
 // what any Team (and Project) has. Being a Project (isProject) UNLOCKS the extra
-// PROJECT_ASPECTS on top (Docs today; Board/DevTree later). Panel order (todo_0418):
-// Overview · Team · Comms · Files · Work List; Docs slots in before Work List.
+// PROJECT_ASPECTS. Panel order (todo_0623, PianoMan): Overview · Team · Comms ·
+// Playbook · Work List · Workspace · Files — Playbook sits just before Work List,
+// Workspace just after it, and Files is last.
 const ASPECTS: AspectDef[] = [
   { key: 'overview', label: 'Overview', icon: '◉' },
   { key: 'team', label: 'Team', icon: '👥' },
   { key: 'comms', label: 'Comms', icon: '💬' },
-  { key: 'files', label: 'Files', icon: '📁' },
   { key: 'work', label: 'Work List', icon: '☑' },
+  { key: 'files', label: 'Files', icon: '📁' },
 ];
 // Project-only aspects — only surfaced when isProject (a Team never has a working_dir,
 // so Docs is meaningless for it). This is the "Project unlocks more than a Team".
 const PROJECT_ASPECTS: AspectDef[] = [
-  { key: 'docs', label: 'Docs', icon: '📄' },
+  { key: 'playbook', label: 'Playbook', icon: '📓' },
+  { key: 'workspace', label: 'Workspace', icon: '🗂' },
 ];
 
-interface TodoItem { id?: string; name: string; dirName: string; path: string; status: string; tags: string[]; flags: string[]; assigned?: string[]; project?: string | null; }
+interface TodoItem { id?: string; name: string; dirName: string; path: string; status: string; tags: string[]; flags: string[]; assigned?: string[]; project?: string | null; updated?: string; created?: string; }
 
-// A selected Navigator item — the thing whose detail fills the center / overflow fills the right.
+
+// The active aspect and its optional selected row.
 interface Selection { aspect: AspectKey; itemId: string | null; }
 
-const STATUS_BADGE: Record<string, { label: string; color: string }> = {
-  In_Progress: { label: 'IP', color: 'var(--accent-green)' },
-  Blocked: { label: 'BL', color: 'var(--accent-orange)' },
-  Reviewing: { label: 'RV', color: 'var(--accent-blue)' },
-  Ready: { label: 'RD', color: 'var(--accent-blue)' },
-  Triaging: { label: 'TR', color: 'var(--accent-purple)' },
-  Done: { label: 'DN', color: 'var(--text-muted)' },
-};
-
-function badgeFor(status: string): { label: string; color: string } {
-  return STATUS_BADGE[status] || { label: status.slice(0, 2).toUpperCase(), color: 'var(--text-muted)' };
+// Per-worker UI persistence (todo_0623 #3): the focused aspect survives leaving and
+// returning to a worker's tab, and app restarts. This is app-owned VIEW state (per the
+// data-ownership rule) keyed by the worker's stable id — see the "UI state persistence"
+// rule in this directory's DESIGN.md.
+const PE_ASPECT_STORE = 'uai:pe:aspect';
+function readAspectStore(): Record<string, AspectKey> {
+  try {
+    const parsed: unknown = JSON.parse(localStorage.getItem(PE_ASPECT_STORE) || '{}');
+    return parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? parsed as Record<string, AspectKey>
+      : {};
+  } catch { return {}; }
+}
+function loadAspect(key: string): AspectKey | null {
+  return readAspectStore()[key] || null;
+}
+function saveAspect(key: string, aspect: AspectKey): void {
+  try {
+    localStorage.setItem(PE_ASPECT_STORE, JSON.stringify({ ...readAspectStore(), [key]: aspect }));
+  } catch { /* ignore */ }
 }
 
-// Full status palette for the vital-signs bar (mirrors Work Mgr's STATUS_COLORS,
-// all via --accent-* vars so a recolor is one place). Ordered active→finalized.
-const STATUS_FULL: Record<string, { abbr: string; color: string }> = {
-  In_Progress: { abbr: 'IP', color: 'var(--accent-blue)' },
-  Blocked: { abbr: 'BL', color: 'var(--accent-red)' },
-  Reviewing: { abbr: 'RV', color: 'var(--accent-purple)' },
-  Accepting: { abbr: 'AC', color: 'var(--accent-cyan)' },
-  Ready: { abbr: 'RD', color: 'var(--accent-green)' },
-  Needs_Derivation: { abbr: 'DV', color: 'var(--accent-yellow)' },
-  Needs_Research: { abbr: 'RS', color: 'var(--accent-orange)' },
-  Triaging: { abbr: 'TR', color: 'var(--text-sec, #b8c0cc)' },
-  Done: { abbr: 'DN', color: 'var(--pe-done, #55607a)' },
-  Cancelled: { abbr: 'CX', color: 'var(--text-muted)' },
+// Work-bar (vital-signs) filter — a view preference (status set + a "since" date),
+// persisted globally (todo_0623 #1.3; DESIGN.md UI-state-persistence).
+const PE_VITALS_STORE = 'uai:pe:vitalsFilter';
+interface VitalsFilterState { schemaV: number; statuses: string[] | null; since: string }
+function loadVitalsFilter(): VitalsFilterState {
+  try {
+    const v = JSON.parse(localStorage.getItem(PE_VITALS_STORE) || '{}');
+    return {
+      schemaV: v?.schemaV === 2 ? 2 : 1,
+      statuses: Array.isArray(v?.statuses) ? v.statuses.filter((s: unknown): s is string => typeof s === 'string') : null,
+      since: typeof v?.since === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v.since) ? v.since : '',
+    };
+  } catch { return { schemaV: 2, statuses: null, since: '' }; }
+}
+function saveVitalsFilter(statuses: string[], since: string): void {
+  try { localStorage.setItem(PE_VITALS_STORE, JSON.stringify({ schemaV: 2, statuses, since })); } catch { /* ignore */ }
+}
+
+// The vital-signs bar reuses Work Mgr's canonical status ORDER + COLORS (todo_0623
+// #1.1/#1.2) — one source of truth, so the bar always matches the Work Mgr status
+// filter (ascending lifecycle left→right). Only the abbreviations are local.
+const STATUS_ABBR: Record<string, string> = {
+  In_Progress: 'IP', Blocked: 'BL', Reviewing: 'RV', Accepting: 'AC', Ready: 'RD',
+  Needs_Derivation: 'DV', Needs_Research: 'RS', Triaging: 'TR', Done: 'DN', Cancelled: 'CX',
 };
-const STATUS_SEQ = ['In_Progress', 'Blocked', 'Reviewing', 'Accepting', 'Ready', 'Needs_Derivation', 'Needs_Research', 'Triaging', 'Done', 'Cancelled'];
+const abbrFor = (s: string): string => STATUS_ABBR[s] || (s || '?').slice(0, 2).toUpperCase();
+const STATUS_SEQ = Object.keys(STATUS_ORDER).sort((a, b) => STATUS_ORDER[a] - STATUS_ORDER[b]);
 const OPEN_STATUS = (s: string) => s !== 'Done' && s !== 'Cancelled';
 const statusLabelPE = (s: string) => (s || '').replace(/_/g, ' ');
 
@@ -118,17 +146,58 @@ export function WorkerFilesView({ todoIds }: { todoIds: string[] }): JSX.Element
 }
 
 function VitalSignsBar({ todos }: { todos: TodoItem[] }): JSX.Element {
+  // Filter the bar by status and/or a "since" date (todo_0623 #1.3); persisted.
+  const initialFilter = useMemo(() => loadVitalsFilter(), []);
+  const [statusFilter, setStatusFilter] = useState<Set<string>>(() => {
+    const known = (initialFilter.statuses || []).filter(s => STATUS_SEQ.includes(s));
+    // v1 briefly used [] to mean "no restriction", while StatusFilterMenu defines
+    // [] as None. Migrate that stored default to All; schema v2 can persist a real None.
+    if (initialFilter.statuses === null
+        || (initialFilter.schemaV < 2 && known.length === 0)
+        || (initialFilter.statuses.length > 0 && known.length === 0)) {
+      return new Set(STATUS_SEQ);
+    }
+    return new Set(known);
+  });
+  const [since, setSince] = useState<string>(() => initialFilter.since);
+  useEffect(() => { saveVitalsFilter([...statusFilter], since); }, [statusFilter, since]);
+  const filterActive = statusFilter.size !== STATUS_SEQ.length || !!since;
+  const toggleStatus = (s: string) => setStatusFilter(prev => { const n = new Set(prev); if (n.has(s)) n.delete(s); else n.add(s); return n; });
+  const clearFilter = () => { setStatusFilter(new Set(STATUS_SEQ)); setSince(''); };
+
+  const filtered = useMemo(() => todos.filter(t => {
+    if (!statusFilter.has(t.status)) return false;
+    if (since) { const d = itemDate(t); if (!d || d.slice(0, 10) < since) return false; }
+    return true;
+  }), [todos, statusFilter, since]);
+
   const counts = useMemo(() => {
     const m: Record<string, number> = {};
-    todos.forEach(t => { m[t.status] = (m[t.status] || 0) + 1; });
+    filtered.forEach(t => { m[t.status] = (m[t.status] || 0) + 1; });
     return m;
-  }, [todos]);
-  const total = todos.length;
+  }, [filtered]);
+  // Group todos per status so a segment's tooltip can list the actual work items
+  // (id + title), capped at 10 (todo_0623 #1.4).
+  const byStatus = useMemo(() => {
+    const m: Record<string, TodoItem[]> = {};
+    filtered.forEach(t => { (m[t.status] ||= []).push(t); });
+    return m;
+  }, [filtered]);
+  const segTitle = (s: string): string => {
+    const list = byStatus[s] || [];
+    const lines = list.slice(0, 10).map(t => {
+      const num = (t.id || t.dirName || t.name || '').match(/todo_\d+/)?.[0];
+      return `${num ? num + ' — ' : ''}${t.name}`.trim();
+    });
+    const more = list.length > 10 ? `\n…and ${list.length - 10} more` : '';
+    return `${statusLabelPE(s)} · ${list.length}\n${lines.join('\n')}${more}`;
+  };
+  const total = filtered.length;
   const present = STATUS_SEQ.filter(s => counts[s]);
-  const openCount = todos.filter(t => OPEN_STATUS(t.status)).length;
+  const openCount = filtered.filter(t => OPEN_STATUS(t.status)).length;
   const blocked = counts['Blocked'] || 0;
 
-  if (total === 0) {
+  if (todos.length === 0) {
     return <div className="pe-vitals pe-vitals-empty">No work items assigned yet.</div>;
   }
   return (
@@ -137,15 +206,27 @@ function VitalSignsBar({ todos }: { todos: TodoItem[] }): JSX.Element {
         <span className="pe-vitals-title">Work</span>
         <span className="pe-vitals-stat">{openCount} open</span>
         {blocked > 0 && <span className="pe-vitals-stat pe-vitals-blocked">{blocked} blocked</span>}
-        <span className="pe-vitals-stat pe-vitals-total">{total} total</span>
+        <span className="pe-vitals-stat pe-vitals-total">{filterActive ? `${total} of ${todos.length}` : `${total} total`}</span>
       </div>
+      <div className="pe-vitals-filters">
+        <StatusFilterMenu
+          statuses={STATUS_SEQ} active={statusFilter} onToggle={toggleStatus}
+          onAll={() => setStatusFilter(new Set(STATUS_SEQ))} onNone={() => setStatusFilter(new Set())}
+          statusColor={statusColor} statusLabel={statusLabelPE}
+        />
+        <label className="pe-vitals-since">since <input type="date" value={since} onChange={e => setSince(e.target.value)} /></label>
+        {filterActive && <button className="pe-vitals-clear" onClick={clearFilter} title="Clear the work filter">clear</button>}
+      </div>
+      {total === 0
+        ? <div className="pe-note pe-vitals-nomatch">No work items match this filter.</div>
+        : <>
       <div className="pe-vitals-bar">
         {present.map(s => {
           const c = counts[s]; const pct = (c / total) * 100;
           return (
-            <div key={s} className="pe-vitals-seg" style={{ width: `${pct}%`, background: STATUS_FULL[s].color }}
-              title={`${statusLabelPE(s)}: ${c}`}>
-              <span className="pe-vitals-seg-lbl">{pct > 8 ? `${STATUS_FULL[s].abbr} ${c}` : c}</span>
+            <div key={s} className="pe-vitals-seg" style={{ width: `${pct}%`, background: statusColor(s) }}
+              title={segTitle(s)}>
+              <span className="pe-vitals-seg-lbl">{pct > 8 ? `${abbrFor(s)} ${c}` : c}</span>
             </div>
           );
         })}
@@ -153,11 +234,12 @@ function VitalSignsBar({ todos }: { todos: TodoItem[] }): JSX.Element {
       <div className="pe-vitals-legend">
         {present.map(s => (
           <span key={s} className="pe-vitals-leg">
-            <span className="pe-vitals-dot" style={{ background: STATUS_FULL[s].color }} />
+            <span className="pe-vitals-dot" style={{ background: statusColor(s) }} />
             {statusLabelPE(s)} <b>{counts[s]}</b>
           </span>
         ))}
       </div>
+      </>}
     </div>
   );
 }
@@ -179,93 +261,6 @@ function StatCard({ label, value, accent, bar, onClick, title }: {
   );
 }
 
-// The right panel's rich DEFAULT (nothing selected): a live worker digest so the
-// third column earns its space instead of showing "Select an item…".
-function WorkerDigest({ todos, conversations, roster, kind }: {
-  todos: TodoItem[]; conversations: Conversation[]; roster: SessionCard[]; kind: WorkerKind;
-}): JSX.Element {
-  const open = todos.filter(t => OPEN_STATUS(t.status));
-  const blocked = todos.filter(t => t.status === 'Blocked');
-  const needsInput = conversations.filter(c => c.needs_input);
-  const running = roster.filter(s => (s as any).process_status === 'running').length;
-  const topOpen = open.slice(0, 4);
-  const topConv = [...conversations].sort((a, b) => (b.needs_input ? 1 : 0) - (a.needs_input ? 1 : 0)).slice(0, 4);
-
-  return (
-    <div className="pe-digest">
-      <div className="pe-digest-title">At a glance</div>
-
-      {blocked.length > 0 && (
-        <div className="pe-digest-alert">⚠ {blocked.length} blocked</div>
-      )}
-
-      <div className="pe-digest-sec">
-        <div className="pe-digest-h">Open work <span className="pe-digest-n">{open.length}</span></div>
-        {topOpen.length === 0
-          ? <div className="pe-digest-empty">Nothing open.</div>
-          : topOpen.map(t => {
-              const b = badgeFor(t.status);
-              return (
-                <div key={t.dirName} className="pe-digest-row" title={t.name}>
-                  <span className="pe-digest-dot" style={{ background: STATUS_FULL[t.status]?.color || 'var(--text-muted)' }} />
-                  <span className="pe-digest-lbl">{t.name}</span>
-                  <span className="pe-digest-badge" style={{ color: b.color }}>{b.label}</span>
-                </div>
-              );
-            })}
-        {open.length > topOpen.length && <div className="pe-digest-more">+{open.length - topOpen.length} more</div>}
-      </div>
-
-      <div className="pe-digest-sec">
-        <div className="pe-digest-h">Conversations <span className="pe-digest-n">{conversations.length}</span>
-          {needsInput.length > 0 && <span className="pe-digest-need">{needsInput.length} need input</span>}
-        </div>
-        {topConv.length === 0
-          ? <div className="pe-digest-empty">No conversations.</div>
-          : topConv.map(c => (
-              <div key={c.id} className={`pe-digest-row${c.needs_input ? ' need' : ''}`} title={c.topic || ''}>
-                {c.needs_input && <span className="pe-digest-dot" style={{ background: 'var(--accent-orange)' }} />}
-                <span className="pe-digest-lbl">{c.topic || '(untitled)'}</span>
-                <span className="pe-digest-badge">{c.message_count}</span>
-              </div>
-            ))}
-      </div>
-
-      {kind !== 'session' && (
-        <div className="pe-digest-sec">
-          <div className="pe-digest-h">Roster <span className="pe-digest-n">{roster.length}</span></div>
-          <div className="pe-digest-roster">
-            <span className="pe-digest-rstat"><span className="pe-digest-dot" style={{ background: 'var(--accent-green)' }} />{running} running</span>
-            <span className="pe-digest-rstat"><span className="pe-digest-dot" style={{ background: 'var(--text-muted)' }} />{roster.length - running} idle</span>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// The right panel when a WORK item is selected — a typed inspector card.
-function TodoInspector({ todo }: { todo: TodoItem }): JSX.Element {
-  const b = badgeFor(todo.status);
-  const assignees = (todo.assigned || []).map(a => a.split('/').pop() || a);
-  return (
-    <div className="pe-inspect">
-      <div className="pe-inspect-head">
-        <span className="pe-inspect-badge" style={{ background: STATUS_FULL[todo.status]?.color || 'var(--text-muted)' }}>{b.label}</span>
-        <span className="pe-inspect-status">{statusLabelPE(todo.status)}</span>
-      </div>
-      <div className="pe-inspect-name">{todo.name}</div>
-      <div className="pe-inspect-meta">
-        {todo.id && <div className="pe-inspect-row"><span className="pe-inspect-k">ID</span><span className="pe-inspect-v">{todo.id}</span></div>}
-        <div className="pe-inspect-row"><span className="pe-inspect-k">Assigned</span><span className="pe-inspect-v">{assignees.length ? assignees.join(' · ') : '—'}</span></div>
-        {todo.project && <div className="pe-inspect-row"><span className="pe-inspect-k">Project</span><span className="pe-inspect-v">{todo.project}</span></div>}
-        {todo.tags?.length > 0 && <div className="pe-inspect-row"><span className="pe-inspect-k">Tags</span><span className="pe-inspect-v">{todo.tags.join(' · ')}</span></div>}
-        {todo.flags?.length > 0 && <div className="pe-inspect-row"><span className="pe-inspect-k">Flags</span><span className="pe-inspect-v">{todo.flags.join(' · ')}</span></div>}
-      </div>
-      <div className="pe-inspect-hint">Open the item in the Detail area for files &amp; contents; status/assignee actions land here next.</div>
-    </div>
-  );
-}
 
 interface ProjectEditorProps {
   /** Worker = project | team (a project with the 'team' tag). Omit when `session` is set. */
@@ -285,68 +280,72 @@ export default function ProjectEditor({ project, session, sessions = [] }: Proje
     // Base = a Team's aspects; a session worker also drops the Team aspect.
     const base = kind === 'session' ? ASPECTS.filter(a => a.key !== 'team') : ASPECTS;
     if (!isProject) return base;
-    // Project unlocks the extra aspects — insert them just before Work List.
+    // Project unlocks Playbook (before Work List) and Workspace (after Work List).
+    const [playbook, workspace] = PROJECT_ASPECTS;
     const i = base.findIndex(a => a.key === 'work');
-    return i < 0 ? [...base, ...PROJECT_ASPECTS] : [...base.slice(0, i), ...PROJECT_ASPECTS, ...base.slice(i)];
+    if (i < 0) return [...base, ...PROJECT_ASPECTS];
+    return [...base.slice(0, i), playbook, base[i], workspace, ...base.slice(i + 1)];
   }, [kind, isProject]);
-  const [sel, setSel] = useState<Selection>({ aspect: kind === 'team' ? 'team' : 'overview', itemId: null });
-  const [navCollapsed, setNavCollapsed] = useState(false); // collapse the active aspect's nav items on re-click (#pt1)
+  const persistKey = session ? `sess:${session.tracking_id}` : `proj:${String(project?.entity_id || project?.project_id || '')}`;
+  const defaultAspect: AspectKey = kind === 'team' ? 'team' : 'overview';
+  const [sel, setSel] = useState<Selection>(() => {
+    const saved = loadAspect(persistKey);
+    return {
+      // Validate before the first paint, not only in the effect below, so an old
+      // Project-only aspect cannot briefly render a blank Team surface.
+      aspect: saved && aspects.some(a => a.key === saved) ? saved : defaultAspect,
+      itemId: null,
+    };
+  });
+  // Restore/persist the focused aspect (todo_0623 #3). If a restored aspect isn't valid
+  // for this worker (e.g. a saved 'playbook' on a Team), fall back to the default.
+  useEffect(() => {
+    if (!aspects.some(a => a.key === sel.aspect)) {
+      setSel(s => ({ ...s, aspect: defaultAspect }));
+      return;
+    }
+    saveAspect(persistKey, sel.aspect);
+  }, [persistKey, sel.aspect, aspects, defaultAspect]);
   const [selectedFile, setSelectedFile] = useState<FsEntry | null>(null);
   const [todos, setTodos] = useState<TodoItem[]>([]);
   const [todosLoaded, setTodosLoaded] = useState(false);
-  // Resizable panels (drag the dividers between Navigator · Detail · Right).
-  const [navW, setNavW] = useState(196);
-  const [rightW, setRightW] = useState(234);
-  const startDrag = (which: 'nav' | 'right') => (e: React.MouseEvent) => {
-    e.preventDefault();
-    const startX = e.clientX, startNav = navW, startRight = rightW;
-    const onMove = (me: MouseEvent) => {
-      const dx = me.clientX - startX;
-      if (which === 'nav') setNavW(Math.max(150, Math.min(440, startNav + dx)));
-      else setRightW(Math.max(160, Math.min(560, startRight - dx)));
-    };
-    const onUp = () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
-  };
+  // WorkSurface asks for finalized (Done/Cancelled) todos when those status pills
+  // are toggled on; the engine hides them by default.
+  const [wantFinalized, setWantFinalized] = useState(false);
 
-  // Work List todos (todos.list is wired/live; project scoping is Phase-0 pending, so show all for now).
+  // Work List todos — the full set (scoped to this worker by `visibleTodos` below).
   const reloadTodos = useCallback(() => {
-    window.uai.todos.list()
+    window.uai.todos.list(wantFinalized)
       .then(rows => { setTodos(rows as TodoItem[]); setTodosLoaded(true); })
       .catch(() => setTodosLoaded(true));
-  }, []);
+  }, [wantFinalized]);
   useEffect(() => { reloadTodos(); }, [reloadTodos]);
 
-  const projectSessions = useMemo(
-    () => project ? sessions.filter(s => !s.archived && s.project_dir === project.working_dir) : [],
-    [sessions, project],
-  );
-
-  // Roster: project → sessions whose working dir matches; team → registry members
-  // (assigned_ais), resolved to sessions or a name-only pseudo-card; session → itself.
+  // Roster: a curated member list for BOTH teams AND projects (PianoMan, todo_0320:
+  // "Project membership should work just like Teams" — NOT auto-derived from the
+  // working dir). Registry `members:` (assigned_ais), resolved to live sessions or a
+  // name-only pseudo-card; session worker → itself.
   const roster = useMemo(() => {
     if (kind === 'session') return session ? [session] : [];
-    if (kind === 'team') return (project!.assigned_ais || []).map(m =>
+    return (project?.assigned_ais || []).map(m =>
       sessions.find(s => s.display_name === m || s.tracking_id === m)
       ?? ({ entity_id: `member:${m}`, tracking_id: m, display_name: m, platform: '', roles: [], project_dir: '', archived: false } as unknown as SessionCard));
-    return projectSessions;
-  }, [kind, session, project, sessions, projectSessions]);
+  }, [kind, session, project, sessions]);
 
-  // Work List filter — scope todos to THIS worker (#worker-pages).
-  const projectId = project ? String(project.entity_id || '').replace(/^project:/, '') : '';
+  // Work List filter — scope todos to THIS worker via the shared work-scope helper
+  // (A1), the SAME scoping the worker-Tab WorkSurface reuses. Rows carry both the
+  // WorkItem and TodoItem field sets (same engine payload), so cast across.
+  const workerId = project ? String(project.entity_id || '').replace(/^(project|team):/, '') : '';
   const visibleTodos = useMemo(() => {
-    if (kind === 'session') {
-      const uri = session ? `uai://session/${session.tracking_id}` : '';
-      return todos.filter(t => (t.assigned || []).includes(uri));
-    }
-    if (kind === 'project') {
-      return todos.filter(t => t.project === projectId || (t.assigned || []).includes(`uai://project/${projectId}`));
-    }
-    // team: any todo assigned to a member session
-    const memberUris = new Set(roster.map(s => `uai://session/${s.tracking_id}`));
-    return todos.filter(t => (t.assigned || []).some(a => memberUris.has(a)));
-  }, [kind, todos, session, projectId, roster]);
+    const all = todos as unknown as WorkItem[];
+    const members = roster.map(s => s.tracking_id).filter(Boolean) as string[];
+    const scoped = kind === 'session'
+      ? scopeTodos({ kind: 'session', trackingId: session?.tracking_id || '' }, all)
+      : kind === 'project'
+        ? scopeTodos({ kind: 'project', id: workerId, memberTrackingIds: members }, all)
+        : scopeTodos({ kind: 'team', id: workerId, memberTrackingIds: members }, all);
+    return scoped as unknown as TodoItem[];
+  }, [kind, todos, session, workerId, roster]);
 
   // Conversations for this worker's participants (gated to the Comms aspect).
   const { conversations, loading: convLoading } = useProjectConversations(
@@ -355,10 +354,14 @@ export default function ProjectEditor({ project, session, sessions = [] }: Proje
   // worker title-bar display
   const displayName = session ? (session.display_name || session.tracking_id.slice(0, 16)) : project!.display_name;
   const crumbIcon = kind === 'session' ? '🖥' : '📁';
-  const navGrpLabel = kind === 'session' ? 'Session' : kind === 'team' ? 'Team' : 'Project';
+  // Clarified from the cryptic "active · main · unknown" (todo_0623 #3): the three
+  // parts are the project lifecycle, the git branch, and the git working-tree status.
   const statusLine = session
     ? `● ${session.process_status || 'session'}${session.platform ? ' · ' + session.platform : ''}`
-    : `● ${project!.lifecycle_status || 'project'} · ${project!.branch || 'main'} · ${project!.git_status}`;
+    : `● ${project!.lifecycle_status || 'project'} · ⑂ ${project!.branch || 'main'} · git: ${project!.git_status}`;
+  const statusTitle = session
+    ? 'Process status · platform'
+    : 'Project lifecycle · git branch (⑂) · git working-tree status';
 
   const setAspect = (aspect: AspectKey) => { setSel({ aspect, itemId: null }); setSelectedFile(null); };
   const selectItem = (aspect: AspectKey, itemId: string) => setSel({ aspect, itemId });
@@ -385,12 +388,64 @@ export default function ProjectEditor({ project, session, sessions = [] }: Proje
     }).finally(() => setHiding(false));
   }, [project, kind]);
 
+  // Set/clear a team role from the Members & Roles view. Writes role_assignments
+  // in the entity's registry yml via the command bus (member=null clears). The
+  // card store refreshes on the resulting 'teams'/'projects' change event, so the
+  // roles re-render without a manual reload.
+  const roleCmd = useCallback((verb: 'setRoleAssignment' | 'addRole' | 'removeRole', payload: Record<string, unknown>) => {
+    if (!project) return;
+    const id = String(project.entity_id || project.project_id || '').replace(/^(project|team):/, '');
+    executeCommand(`${kind === 'team' ? 'team' : 'project'}.${verb}`, { id, sourcePath: project.source_path, ...payload });
+  }, [project, kind]);
+  const setRole = useCallback((role: string, member: string | null) => roleCmd('setRoleAssignment', { role, member }), [roleCmd]);
+  const addRole = useCallback((role: string) => roleCmd('addRole', { role }), [roleCmd]);
+  const removeRole = useCallback((role: string) => roleCmd('removeRole', { role }), [roleCmd]);
+  const setRoleContext = useCallback((role: string, context: string | null) => {
+    if (!project) return;
+    const id = String(project.entity_id || project.project_id || '').replace(/^(project|team):/, '');
+    executeCommand(kind === 'team' ? 'team.setRoleContext' : 'project.setRoleContext', { id, role, context, sourcePath: project.source_path });
+  }, [project, kind]);
+
+  // Members: the registry `members:` list (names). add/remove recompute the whole
+  // list and send it back through setMembers.
+  const currentMembers = useMemo(() => (project?.assigned_ais || []).slice(), [project]);
+  const setMembersCmd = useCallback((members: string[]) => {
+    if (!project) return;
+    const id = String(project.entity_id || project.project_id || '').replace(/^(project|team):/, '');
+    executeCommand(kind === 'team' ? 'team.setMembers' : 'project.setMembers', { id, members, sourcePath: project.source_path });
+  }, [project, kind]);
+  const addMember = useCallback((name: string) => {
+    if (!name || currentMembers.includes(name)) return;
+    setMembersCmd([...currentMembers, name]);
+  }, [currentMembers, setMembersCmd]);
+  const removeMember = useCallback((name: string) => setMembersCmd(currentMembers.filter(m => m !== name)), [currentMembers, setMembersCmd]);
+
+  // Promote a Team → Project (todo_0320): creates a home directory and converts the
+  // registry file .team.yml → .proj.yml (members/roles carry over). PianoMan clicking
+  // is the approval. window.prompt is disabled in Electron, so the folder name is
+  // derived from the team name; confirm makes the registry rename explicit.
+  const [promoting, setPromoting] = useState(false);
+  const promoteWorker = useCallback(() => {
+    if (!project) return;
+    const ok = window.confirm(
+      `Promote "${project.display_name}" to a Project?\n\nThis creates a home directory under ai_general/work/projects/ and renames the registry from .team.yml to .proj.yml. Members and roles carry over.`,
+    );
+    if (!ok) return;
+    setPromoting(true);
+    const id = String(project.entity_id || project.project_id || '').replace(/^(project|team):/, '');
+    executeCommand('team.promoteToProject', { id, sourcePath: project.source_path }).finally(() => setPromoting(false));
+  }, [project]);
+
+  // Playbook folder set (todo_0320) — which top-level working_dir folders belong to
+  // the Playbook; the rest fall to Workspace. Writes the project's registry list.
+  const setPlaybookFolders = useCallback((folders: string[]) => {
+    if (!project) return;
+    const id = String(project.entity_id || project.project_id || '').replace(/^(project|team):/, '');
+    executeCommand('project.setPlaybook', { id, folders, sourcePath: project.source_path });
+  }, [project]);
+
   const selectedSession = sel.aspect === 'team' && sel.itemId
     ? roster.find(s => s.tracking_id === sel.itemId) || null
-    : null;
-
-  const selectedTodo = sel.aspect === 'work' && sel.itemId
-    ? visibleTodos.find(t => t.dirName === sel.itemId) || null
     : null;
 
   return (
@@ -401,7 +456,17 @@ export default function ProjectEditor({ project, session, sessions = [] }: Proje
         <span className="pe-crumb-sep">›</span>
         <span className="pe-crumb-aspect">{aspects.find(a => a.key === sel.aspect)?.label}</span>
         <span className="pe-titlebar-spacer" />
-        <span className="pe-titlebar-status">{statusLine}</span>
+        <span className="pe-titlebar-status" title={statusTitle}>{statusLine}</span>
+        {project && kind === 'team' && (
+          <button
+            className="pe-titlebar-promote"
+            title="Promote this team to a project — creates a home directory and unlocks project-only surfaces"
+            disabled={promoting}
+            onClick={promoteWorker}
+          >
+            {promoting ? 'Promoting…' : 'Promote to Project'}
+          </button>
+        )}
         {project && (
           <button
             className="pe-titlebar-delete"
@@ -414,38 +479,29 @@ export default function ProjectEditor({ project, session, sessions = [] }: Proje
         )}
       </div>
 
-      <div className="pe-grid" style={{ gridTemplateColumns: `${navW}px 6px 1fr 6px ${rightW}px` }}>
-        {/* ── Navigator Panel ─────────────────────────────────── */}
-        <nav className="pe-nav">
-          <div className="pe-nav-grp">{navGrpLabel}</div>
+      {/* ── Aspect tabs (was a left Navigator rail; PianoMan 2026-07-20 — aspects
+             are tabs). Each aspect's own list + detail render full-width below. ── */}
+      <div className="pe-subtabs" role="tablist">
+        <div className="pe-subtabs-tabs">
           {aspects.map(a => (
-            <div key={a.key}>
-              <div
-                className={`pe-aspect${sel.aspect === a.key ? ' on' : ''}`}
-                onClick={() => { if (a.key === 'overview' || a.key === 'files' || a.key === 'docs') { setAspect(a.key); } else if (sel.aspect === a.key) setNavCollapsed(c => !c); else { setAspect(a.key); setNavCollapsed(false); } }}
-              >
-                <span className="pe-aspect-ic">{a.icon}</span>{a.label}
-                {sel.aspect === a.key && a.key !== 'overview' && a.key !== 'files' && a.key !== 'docs' && <span className="pe-aspect-chev">{navCollapsed ? '▸' : '▾'}</span>}
-              </div>
-              {sel.aspect === a.key && !navCollapsed && a.key !== 'overview' && a.key !== 'files' && a.key !== 'docs' && (
-                <NavItems
-                  aspect={a.key}
-                  todos={visibleTodos}
-                  todosLoaded={todosLoaded}
-                  sessions={roster}
-                  conversations={conversations}
-                  selectedItem={sel.itemId}
-                  onSelect={(id) => selectItem(a.key, id)}
-                />
-              )}
-            </div>
+            <button
+              key={a.key}
+              type="button"
+              role="tab"
+              aria-selected={sel.aspect === a.key}
+              className={`pe-subtab${sel.aspect === a.key ? ' on' : ''}`}
+              onClick={() => setAspect(a.key)}
+              title={a.label}
+            >
+              <span className="pe-subtab-ic">{a.icon}</span>{a.label}
+            </button>
           ))}
-        </nav>
+        </div>
+      </div>
 
-        <div className="pe-resize" onMouseDown={startDrag('nav')} title="Drag to resize" />
-
-        {/* ── Detail Area ─────────────────────────────────────── */}
-        <section className="pe-detail">
+      <div className="pe-body">
+        {/* ── Detail Area (full width) ─────────────────────────── */}
+        <section className="pe-detail pe-detail-full">
           {sel.aspect === 'overview' && (
             <div className="pe-overview-wrap">
               {session
@@ -453,30 +509,41 @@ export default function ProjectEditor({ project, session, sessions = [] }: Proje
                 : <ProjectOverview
                     project={project!}
                     sessions={roster}
-                    selectedFilePath={selectedFile?.path}
-                    onSelectFile={setSelectedFile}
-                    onGotoTeam={() => setAspect('team')}
+                    roleAssignments={project?.role_assignments || {}}
                     workSummary={<VitalSignsBar todos={visibleTodos} />}
-                    showDocs={false}
+                    onGotoTeam={() => setAspect('team')}
+                    onGotoComms={() => setAspect('comms')}
+                    onGotoWork={() => setAspect('work')}
+                    onOpenSession={openSession}
                   />}
             </div>
           )}
           {sel.aspect === 'work' && (
-            <WorkDetail
-              todos={visibleTodos}
-              allTodos={todos}
-              todosLoaded={todosLoaded}
-              selectedDir={sel.itemId}
-              onSelect={(dirName) => selectItem('work', dirName)}
+            <WorkSurface
+              todos={visibleTodos as unknown as WorkItem[]}
+              loading={!todosLoaded}
               onReload={reloadTodos}
+              onWantFinalized={setWantFinalized}
+              viewportId="project_work_surface"
+              emptyLabel="Select a work item from the list."
+              stacked
             />
           )}
           {sel.aspect === 'team' && (
             <ProjectTeamDetail
               sessions={roster}
+              allSessions={sessions}
+              roleAssignments={project?.role_assignments || {}}
+              roleContexts={project?.role_contexts || {}}
               selectedId={sel.itemId}
               onSelect={(id) => selectItem('team', id)}
               onOpenSession={openSession}
+              onSetRole={setRole}
+              onAddRole={addRole}
+              onRemoveRole={removeRole}
+              onSetRoleContext={setRoleContext}
+              onAddMember={addMember}
+              onRemoveMember={removeMember}
             />
           )}
           {sel.aspect === 'comms' && (
@@ -490,28 +557,50 @@ export default function ProjectEditor({ project, session, sessions = [] }: Proje
           {sel.aspect === 'files' && (
             <WorkerFilesView todoIds={visibleTodos.map(t => (t.id || t.dirName)).filter(Boolean) as string[]} />
           )}
-          {/* Docs — Project-only aspect (isProject unlock): the working_dir/docs tree. */}
-          {sel.aspect === 'docs' && (
-            <div className="pe-detail-body">
-              {project?.working_dir
-                ? <ProjectFolderTree rootPath={`${project.working_dir}/docs`} selectedPath={selectedFile?.path} onSelectFile={setSelectedFile} />
-                : <div className="pe-note">No working directory on this project.</div>}
+          {/* Playbook & Workspace — Project-only aspects (isProject unlock). Playbook =
+              the working_dir folders defined as the Playbook; Workspace = the rest,
+              with a Git File View toggle. */}
+          {sel.aspect === 'playbook' && (
+            <div className="pe-filebrowse">
+              <div className="pe-filebrowse-main">
+                <PlaybookView
+                  workingDir={project?.working_dir || ''}
+                  playbook={project?.playbook || []}
+                  onSetPlaybook={setPlaybookFolders}
+                  selectedPath={selectedFile?.path}
+                  onSelectFile={setSelectedFile}
+                />
+              </div>
+              {selectedFile && <aside className="pe-filebrowse-side"><FilePreviewPanel entry={selectedFile} /></aside>}
+            </div>
+          )}
+          {sel.aspect === 'workspace' && (
+            <div className="pe-filebrowse">
+              <div className="pe-filebrowse-main">
+                <WorkspaceView
+                  workingDir={project?.working_dir || ''}
+                  playbook={project?.playbook || []}
+                  selectedPath={selectedFile?.path}
+                  onSelectFile={setSelectedFile}
+                />
+              </div>
+              {selectedFile && <aside className="pe-filebrowse-side"><FilePreviewPanel entry={selectedFile} /></aside>}
             </div>
           )}
         </section>
 
-        <div className="pe-resize" onMouseDown={startDrag('right')} title="Drag to resize" />
-
-        {/* ── Right Panel — typed inspector on selection, live digest by default ── */}
-        <aside className="pe-right">
-          {selectedFile
-            ? <FileMetaPanel entry={selectedFile} />
-            : selectedSession
-              ? <TeamMemberPanel session={selectedSession} onOpen={openSession} />
-              : selectedTodo
-                ? <TodoInspector todo={selectedTodo} />
-                : <WorkerDigest todos={visibleTodos} conversations={conversations} roster={roster} kind={kind} />}
-        </aside>
+        {/* Detail-below strip: the selection inspector for aspects whose LIST lives
+            in the main area (file tree, team roster). Replaces the removed right
+            rail AND the "At a Glance" digest (PianoMan 2026-07-20 — the right panel
+            broke the "shows what's selected" convention). Work items carry their
+            own list+editor inside WorkSurface, so they need no inspector here. */}
+        {/* Team-member inspector docks below (files now preview in the right panel of
+            Playbook/Workspace — todo_0623 #5/#6.2). */}
+        {selectedSession && (
+          <aside className="pe-detail-below">
+            <TeamMemberPanel session={selectedSession} onOpen={openSession} />
+          </aside>
+        )}
       </div>
     </div>
   );
@@ -549,100 +638,7 @@ function SessionOverview({ session, convCount }: { session: SessionCard; convCou
   );
 }
 
-// ── Navigator items (uniform expand — decision 1) ──────────────────────────
-function NavItems({ aspect, todos, todosLoaded, sessions, conversations, selectedItem, onSelect }: {
-  aspect: AspectKey; todos: TodoItem[]; todosLoaded: boolean; sessions: SessionCard[];
-  conversations: Conversation[]; selectedItem: string | null; onSelect: (id: string) => void;
-}): JSX.Element {
-  if (aspect === 'work') {
-    if (!todosLoaded) return <div className="pe-nav-note">Loading todos…</div>;
-    if (todos.length === 0) return <div className="pe-nav-note">No todos.</div>;
-    return (
-      <>
-        {todos.slice(0, 40).map(t => {
-          const b = badgeFor(t.status);
-          return (
-            <div key={t.dirName}
-              className={`pe-item${selectedItem === t.dirName ? ' on' : ''}`}
-              onClick={() => onSelect(t.dirName)} title={t.name}>
-              <span className="pe-item-label">{t.name}</span>
-              <span className="pe-item-badge" style={{ color: b.color }}>{b.label}</span>
-            </div>
-          );
-        })}
-      </>
-    );
-  }
-  if (aspect === 'team') {
-    if (sessions.length === 0) return <div className="pe-nav-note">No sessions in this project.</div>;
-    return (
-      <>
-        {sessions.map(s => (
-          <div key={s.entity_id}
-            className={`pe-item${selectedItem === s.tracking_id ? ' on' : ''}`}
-            onClick={() => onSelect(s.tracking_id)} title={s.display_name}>
-            <span className="pe-item-dot" />
-            <span className="pe-item-label">{s.display_name}</span>
-          </div>
-        ))}
-      </>
-    );
-  }
-  if (aspect === 'comms') {
-    if (conversations.length === 0) return <div className="pe-nav-note">No conversations yet.</div>;
-    // needs-input first (actionable), otherwise keep the read's last-activity order.
-    const ordered = [...conversations].sort((a, b) => (b.needs_input ? 1 : 0) - (a.needs_input ? 1 : 0));
-    return (
-      <>
-        {ordered.map(c => (
-          <div key={c.id}
-            className={`pe-conv${selectedItem === c.id ? ' on' : ''}${c.needs_input ? ' needs' : ''}`}
-            onClick={() => onSelect(c.id)} title={c.topic}>
-            <div className="pe-conv-top">
-              {c.needs_input && <span className="pe-item-dot" style={{ background: 'var(--accent-orange)' }} />}
-              <span className="pe-conv-topic">{c.topic || '(untitled)'}</span>
-              <span className="pe-conv-time">{formatTime(c.last_activity)}</span>
-            </div>
-            <div className="pe-conv-sub">
-              <span className="pe-conv-count">{c.message_count} msg{c.message_count === 1 ? '' : 's'}</span>
-              {c.last_message_preview && <span className="pe-conv-preview">· {c.last_message_preview}</span>}
-            </div>
-          </div>
-        ))}
-      </>
-    );
-  }
-  // overview — sub-areas live inside the Overview detail (Docs / Team collapse)
-  return <></>;
-}
 
-// ── Work detail (todos.read is live) ───────────────────────────────────────
-function WorkDetail({ todos, allTodos, todosLoaded, selectedDir, onSelect, onReload }: {
-  todos: TodoItem[]; allTodos?: TodoItem[]; todosLoaded: boolean; selectedDir: string | null;
-  onSelect?: (dirName: string) => void; onReload?: () => void;
-}): JSX.Element {
-  const selected = todos.find(t => t.dirName === selectedDir) || null;
-  if (!todosLoaded) return <div className="pe-detail-body"><div className="pe-note">Loading…</div></div>;
-  if (!selected) return <div className="pe-detail-body"><div className="pe-note">Select a todo from the Navigator to see its detail. ({todos.length} todos)</div></div>;
-  const selId = selected.id || selected.dirName;
-  const parentOptions = (allTodos || todos).filter(t => (t.id || t.dirName) !== selId);
-  // Re-parenting works in every pane (todo.move Command Bus verb), not just Work Mgr.
-  const moveControl = (
-    <select className="wm-input wm-move-inline" value="" title="Re-parent this todo"
-      onChange={e => { const target = e.target.value; if (!target) return;
-        executeCommand('todo.move', { id: selId, target }); setTimeout(() => onReload?.(), 300); }}>
-      <option value="">choose a parent…</option>
-      {parentOptions.map(t => <option key={t.dirName} value={t.id || t.dirName}>todo_{(t.id || '').match(/(\d+)/)?.[1] || t.dirName} · {t.name}</option>)}
-      <option value="root">— move to root (top-level) —</option>
-    </select>
-  );
-  // Shared todo-item view (identical across Work Mgr / Session Work / Project Work).
-  return (
-    <TodoItemView
-      todo={{ ...(selected as any), id: selId }}
-      allTodos={(allTodos || todos) as any}
-      moveControl={moveControl}
-      onSelect={onSelect ? (id) => { const t = (allTodos || todos).find(x => (x.id || x.dirName) === id); if (t) onSelect(t.dirName); } : undefined}
-    />
-  );
-}
+// WorkDetail (the bespoke work-aspect detail) was removed in todo_0544 — the Work
+// aspect now mounts the shared <WorkSurface> (list + detail over the scoped set),
+// the same rendering the global Work Mgr uses.

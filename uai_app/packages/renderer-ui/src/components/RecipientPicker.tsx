@@ -17,6 +17,7 @@
  */
 
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
+import { useClampToViewport } from '../hooks/use-clamp-to-viewport';
 import type { Session } from '@uai/shared/types';
 import { useAppStateStore } from '../stores';
 import type { MentionTarget } from './PromptBox';
@@ -71,6 +72,9 @@ export default function RecipientPicker({
   targets, getSession, selected, currentSessionId, onChange, onClose, anchorStyle,
 }: RecipientPickerProps): JSX.Element {
   const ref = useRef<HTMLDivElement>(null);
+  // Keep the popover on-screen — e.g. a tall prompt box would push it off the
+  // top/bottom edge (note: reported offender).
+  useClampToViewport(ref, true, [anchorStyle, selected.length]);
   const [filter, setFilter] = useState('');
   const [activeOnly, setActiveOnly] = useState(true);
   const [openOnly, setOpenOnly] = useState(true);

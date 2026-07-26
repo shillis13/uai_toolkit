@@ -20,7 +20,9 @@ from uai_toolkit.hooks.common.lib_hook_base import run_hook, HookResult
 
 AI_ROOT = Path(os.environ.get("AI_ROOT", Path.home() / "AI/ai_root"))
 GLOBALS_DIR = AI_ROOT / "ai_general" / "ai_context_files" / "globals"
-SESSION_TRAITS = AI_ROOT / "ai_general" / "scripts" / "session_mgmt" / "session_traits.py"
+# session_traits.py was renamed to session_context_registry.py (2026-07). Point at
+# the real script so this hook doesn't depend on the compatibility symlink (todo_0621).
+SESSION_TRAITS = AI_ROOT / "ai_general" / "scripts" / "session_mgmt" / "session_context_registry.py"
 
 VALID_EXTENSIONS = {".md", ".yml", ".txt"}
 MAX_FILE_SIZE = 10 * 1024      # 10KB per file

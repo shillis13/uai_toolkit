@@ -152,24 +152,17 @@ def derive_starts(transcript_paths):
 # ── State-file write (shared with the SessionStart hook) ──────────────────────
 
 def write_start_history(session_dir, tracking_id, history):
-    """Read-modify-write session.start_history into the per-session state file,
-    preserving every other key. Returns True on success."""
-    path = Path(session_dir) / f"{tracking_id}_state.json"
-    try:
-        state = {}
-        if path.exists():
-            try:
-                state = json.loads(path.read_text())
-            except (json.JSONDecodeError, OSError):
-                state = {}
-        state["session.start_history"] = history
-        state["updated_at"] = datetime.now().isoformat()
-        tmp = path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(state, indent=2))
-        tmp.rename(path)
-        return True
-    except OSError:
-        return False
+    """Persist session.start_history (+ updated_at) through the shared writer
+    bridge (todo_0495): enrolled sessions land in the locked canonical accessor,
+    everyone else the legacy file. Returns True on success."""
+    _hook_common = Path(__file__).resolve().parents[2] / "data" / "hooks" / "common"
+    if str(_hook_common) not in sys.path:
+        sys.path.insert(0, str(_hook_common))
+    from uai_toolkit.hooks.common.lib_session_state_union import write_session_state
+    return write_session_state(session_dir, tracking_id, {
+        "session.start_history": history,
+        "updated_at": datetime.now().isoformat(),
+    })
 
 
 # ── CLI ───────────────────────────────────────────────────────────────────────

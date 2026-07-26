@@ -911,6 +911,8 @@ def select_intervals(spec: str, intervals: list):
     SPEC grammar (shared by every interval-aware tool):
       * a single integer      — 0=prologue, 1..N
       * the words last / live — the final interval (current/live region)
+      * the word all          — EVERY interval (whole history as one continuously-turned
+                                branch; the compaction seams stay in place as markers)
       * negative indices      — OFFSET FROM live: -1 = one before live, -2 = two before, ...
                                 (live itself is `live`/`last`, never a negative)
       * comma lists           — "1,3"
@@ -926,6 +928,8 @@ def select_intervals(spec: str, intervals: list):
             continue
         if token in ("last", "live"):
             chosen.append(intervals[-1]["index"])
+        elif token == "all":
+            chosen.extend(iv["index"] for iv in intervals)   # whole history, continuous turns
         elif token.startswith("-"):
             # Negative = OFFSET FROM LIVE (the named anchor), NOT Python from-the-end indexing.
             # live == the last interval (index max_index); -1 = one BEFORE live (max_index-1),

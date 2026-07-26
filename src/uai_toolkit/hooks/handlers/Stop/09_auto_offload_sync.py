@@ -62,6 +62,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "common"))
 from uai_toolkit.hooks.common.lib_hook_base import run_hook, HookResult
+from uai_toolkit.hooks.common.lib_session_state_union import read_union, write_session_state   # union read + write bridge (todo_0495)
 
 DEFAULT_WARN_PCT = 60
 DEFAULT_WARN2_PCT = 75
@@ -74,23 +75,11 @@ _JSONL_DIR = Path(__file__).resolve().parents[3] / "scripts" / "jsonl"
 _OFFLOAD_SCRIPT = _JSONL_DIR / "offload_tool_results.py"
 
 
-def _read_state(state_path):
-    if state_path.exists():
-        try:
-            return json.loads(state_path.read_text())
-        except (json.JSONDecodeError, OSError):
-            pass
-    return {}
-
-
-def _persist(state_path, updates):
-    """Read-modify-write the given keys into the state file (merge, don't clobber)."""
-    state = _read_state(state_path)
-    state.update(updates)
-    try:
-        state_path.write_text(json.dumps(state, indent=2))
-    except OSError:
-        pass
+def _persist(context, updates):
+    """Persist the given keys through the shared write bridge (todo_0495): enrolled
+    sessions use the locked canonical accessor, everyone else the legacy file.
+    Targeted update (merge, don't clobber)."""
+    write_session_state(context.session_dir, context.tracking_id, updates)
 
 
 def _as_int(val, default=None):
@@ -133,7 +122,7 @@ def _compute_otc(context):
         return None
 
 
-def _get_otc(context, state, state_path, ctx_pct):
+def _get_otc(context, state, ctx_pct):
     """Return otc (int or None), using the cache when fresh; else recompute+persist.
 
     Reuse the cached value iff it was computed within OTC_CACHE_TTL seconds AND the
@@ -155,7 +144,7 @@ def _get_otc(context, state, state_path, ctx_pct):
                 return cv  # fresh cache hit — do NOT recompute
     otc = _compute_otc(context)
     if otc is not None:
-        _persist(state_path, {
+        _persist(context, {
             "context.otc_tokens": otc,
             "context.otc_computed_at": now,
             "context.otc_at_pct": ctx_pct,
@@ -199,8 +188,12 @@ def handler(hook_input, context):
     if not context.tracking_id or not context.session_dir:
         return HookResult.skip("no session identity")
 
-    state_path = Path(context.session_dir) / f"{context.tracking_id}_state.json"
-    state = _read_state(state_path)
+    # Union read: config keys (context.auto_offload_pct, offload_warn_pct, …) are set
+    # via the set-auto-offload skill into the canonical accessor file; the hooks'
+    # runtime keys (context.used_pct, offload_warned_level) live in the legacy file
+    # until enrolled. read_union surfaces both so the .get()s below see skill-set
+    # config; writes go through the bridge via _persist (todo_0495).
+    state = read_union(context.session_dir, context.tracking_id)
 
     warn_pct = _as_int(state.get("context.offload_warn_pct", DEFAULT_WARN_PCT), DEFAULT_WARN_PCT)
     warn2_pct = _as_int(state.get("context.offload_warn2_pct", DEFAULT_WARN2_PCT), DEFAULT_WARN2_PCT)
@@ -220,11 +213,11 @@ def handler(hook_input, context):
     # level so a later re-crossing re-emits.
     if ctx_pct < warn_pct:
         if prev_level != 0:
-            _persist(state_path, {"context.offload_warned_level": 0})
+            _persist(context, {"context.offload_warned_level": 0})
         return HookResult.allow(f"ctx:{ctx_pct}% < warn:{warn_pct}%")
 
     # At/above warn: compute (or reuse cached) otc, decide the level.
-    otc = _get_otc(context, state, state_path, ctx_pct)
+    otc = _get_otc(context, state, ctx_pct)
     level = 2 if ctx_pct >= warn2_pct else 1
 
     # Spam control: only (re)emit when the level increases (mirror 08's
@@ -234,7 +227,7 @@ def handler(hook_input, context):
             f"ctx:{ctx_pct}% level:{level} <= warned:{prev_level} (already warned) | otc:{otc}")
 
     msg = _build_message(level, ctx_pct, otc, otc_min, auto_pct)
-    _persist(state_path, {"context.offload_warned_level": level})
+    _persist(context, {"context.offload_warned_level": level})
     output = json.dumps({"systemMessage": msg})
     return HookResult.output(
         output, f"ctx:{ctx_pct}% level:{level} otc:{otc} otc_min:{otc_min}")

@@ -33,6 +33,7 @@ interface PromptBoxProps {
   sessionId: string;
   sessionName: string;
   cliSessionId?: string | null;
+  active?: boolean;
 }
 
 // Prompt box sizing. LINE_HEIGHT must match the textarea's CSS line-height.
@@ -163,7 +164,7 @@ async function persistReminder(sessionId: string, reminder: PromptReminder | und
   });
 }
 
-export default function PromptBox({ sessionId, sessionName, cliSessionId }: PromptBoxProps): JSX.Element {
+export default function PromptBox({ sessionId, sessionName, cliSessionId, active = true }: PromptBoxProps): JSX.Element {
   const [text, setText] = useState(() => sessionDrafts.get(sessionId) || '');
   const draftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -173,6 +174,12 @@ export default function PromptBox({ sessionId, sessionName, cliSessionId }: Prom
   const [recipients, setRecipients] = useState<string[]>([]);
   const [showRecipientPicker, setShowRecipientPicker] = useState(false);
   const recipientChipRef = useRef<HTMLDivElement>(null);
+  // Send as a PROMPT (injected into the session to act on) or a MESSAGE (inbox,
+  // async) — PianoMan wanted the Prompt Box to do both. Ref mirrors state so the
+  // send callbacks read the latest without re-creating.
+  const [sendMode, setSendMode] = useState<'prompt' | 'message'>('prompt');
+  const sendModeRef = useRef<'prompt' | 'message'>('prompt');
+  sendModeRef.current = sendMode;
 
   // team/project name → member session tracking_ids. In this system a "team" is a
   // project tagged `team`, and membership lives in the project's `assigned_ais`
@@ -269,7 +276,7 @@ export default function PromptBox({ sessionId, sessionName, cliSessionId }: Prom
   );
 
   useViewport('prompt_box', () => ({
-    visible: true,
+    visible: active,
     state: {
       hasText: text.trim().length > 0,
       targetSessionId: sessionId,
@@ -279,7 +286,7 @@ export default function PromptBox({ sessionId, sessionName, cliSessionId }: Prom
       { id: 'send', command: 'prompt.send', label: 'Send prompt to session', payload: { sessionId } },
     ],
     children: [],
-  }));
+  }), active);
   const [showHistory, setShowHistory] = useState(false);
   // Prompt Box config (persisted, global). autoSubmit: Send types + Enter (default);
   // when off, Send stages the text into the CLI prompt area without submitting.
@@ -655,30 +662,54 @@ export default function PromptBox({ sessionId, sessionName, cliSessionId }: Prom
   // Fire a library prompt as-is to the current target(s). Deliberately does NOT touch
   // the draft box (unlike handleSend's optimistic clear) — the box keeps whatever the
   // user was typing. Same fan-out + reminder-wrap rules as a default send.
+  // Header prepended when a single send fans out to MULTIPLE recipients (PianoMan):
+  // one shared send time (now) + the full recipient list, so each person sees who
+  // else got it and when. Empty for a single recipient.
+  const multiHeader = useCallback((targets: string[]): string => {
+    if (targets.length <= 1) return '';
+    const names = targets.map((id) => (id === sessionId ? sessionName : (getSession(id)?.display_name || id)));
+    return `⟦ ${new Date().toLocaleString()} · To: ${names.join(', ')} ⟧\n\n`;
+  }, [sessionId, sessionName, getSession]);
+
+  // Deliver one item to one target as either a prompt (inject) or a message (inbox),
+  // per the current send mode. Returns the command result ({ ok }).
+  const deliverOne = useCallback((target: string, text: string, submit: boolean) => {
+    if (sendModeRef.current === 'message') {
+      const subject = text.replace(/^⟦[^⟧]*⟧\s*/, '').split('\n')[0].slice(0, 60) || 'Message from PianoMan';
+      return executeCommand('comms.send', {
+        from: 'piano_man', to: target, content: text, urgency: 'async', responseType: 'reply', subject,
+      }, { onFailure: 'inline', errorHandler, field: 'prompt', toastFn: showToast });
+    }
+    return executeCommand('prompt.send', { sessionId: target, text, submit }, {
+      onFailure: 'inline', errorHandler, field: 'prompt', toastFn: showToast,
+    });
+  }, [errorHandler, showToast]);
+
   const deliverToTargets = useCallback(async (raw: string) => {
     const trimmed = raw.trim();
     if (!trimmed) return;
     const targets = sendTargets;
     const isDefault = targets.length === 1 && targets[0] === sessionId;
-    const outgoing = isDefault ? wrapOutgoing(raw) : raw;
+    const asMsg = sendModeRef.current === 'message';
+    const outgoing = (isDefault && !asMsg) ? wrapOutgoing(raw) : raw;
+    const body = multiHeader(targets) + outgoing;
     let anyOk = false;
     let firstSend = true;
     for (const target of targets) {
       // Configurable pause between deliveries on a multi-recipient fan-out (0 = none).
       if (!firstSend && multiSendDelayMsRef.current > 0) await new Promise((r) => setTimeout(r, multiSendDelayMsRef.current));
       firstSend = false;
-      const result = await executeCommand('prompt.send', { sessionId: target, text: outgoing, submit: autoSubmit }, {
-        onFailure: 'inline', errorHandler, field: 'prompt', toastFn: showToast,
-      });
-      if (result.ok) { anyOk = true; touchSessionActivity(target); scanSessionPromptArea(target, 700); }
+      const result = await deliverOne(target, body, autoSubmit);
+      if (result.ok) { anyOk = true; if (!asMsg) { touchSessionActivity(target); scanSessionPromptArea(target, 700); } }
     }
     if (anyOk) {
       const names = targets.map((id) => (id === sessionId ? sessionName : (getSession(id)?.display_name || id)));
-      showToast(`${autoSubmit ? 'Sent' : 'Staged'} to ${names.join(', ')}`, 'info');
+      const verb = asMsg ? 'Messaged' : (autoSubmit ? 'Sent' : 'Staged');
+      showToast(`${verb} to ${names.join(', ')}`, 'info');
     } else {
       showToast('Send failed', 'error');
     }
-  }, [sendTargets, sessionId, wrapOutgoing, autoSubmit, errorHandler, showToast, sessionName, getSession]);
+  }, [sendTargets, sessionId, wrapOutgoing, autoSubmit, showToast, sessionName, getSession, multiHeader, deliverOne]);
 
   const handleSend = useCallback(async () => {
     const trimmed = text.trim();
@@ -725,7 +756,9 @@ export default function PromptBox({ sessionId, sessionName, cliSessionId }: Prom
     // reminder only wraps the default single-target send (each recipient has its own).
     const targets = sendTargets;
     const isDefault = targets.length === 1 && targets[0] === sessionId;
-    const outgoing = isDefault ? wrapOutgoing(text) : text;
+    const asMsg = sendModeRef.current === 'message';
+    const outgoing = (isDefault && !asMsg) ? wrapOutgoing(text) : text;
+    const body = multiHeader(targets) + outgoing;
 
     // OPTIMISTIC CLEAR — empty the box the instant Send is pressed so the UI feels
     // immediate, instead of holding the text for the full ~1.5s delivery (3 subprocess
@@ -740,27 +773,38 @@ export default function PromptBox({ sessionId, sessionName, cliSessionId }: Prom
     if (draftTimerRef.current) clearTimeout(draftTimerRef.current);
     persistDraft(sessionId, '');
 
-    let anyOk = false;
+    // Track per-target outcome. A multi-recipient fan-out MUST report which targets
+    // actually received it and which failed — reporting a partial send as "Sent to all"
+    // (the prior bug) hid cross-server / stale-record delivery failures. Now a partial
+    // send is a loud error toast naming the failed recipients.
+    const okTargets: string[] = [];
+    const failTargets: string[] = [];
     let firstSend = true;
     for (const target of targets) {
       // Configurable pause between deliveries on a multi-recipient fan-out (0 = none).
       if (!firstSend && multiSendDelayMsRef.current > 0) await new Promise((r) => setTimeout(r, multiSendDelayMsRef.current));
       firstSend = false;
-      const result = await executeCommand('prompt.send', { sessionId: target, text: outgoing, submit: autoSubmit }, {
-        onFailure: 'inline', errorHandler, field: 'prompt', toastFn: showToast,
-      });
+      const result = await deliverOne(target, body, autoSubmit);
       if (result.ok) {
-        anyOk = true;
-        touchSessionActivity(target);
-        scanSessionPromptArea(target, 700);
+        okTargets.push(target);
+        if (!asMsg) { touchSessionActivity(target); scanSessionPromptArea(target, 700); }
+      } else {
+        failTargets.push(target);
       }
     }
-    if (anyOk) {
-      // Surface the destination whenever the send goes anywhere other than JUST the current
-      // tab — a redirect (picker or a body `@name`) should never be a silent surprise.
-      if (sendsOffTab) {
-        const names = targets.map((id) => (id === sessionId ? sessionName : (getSession(id)?.display_name || id)));
-        showToast(`${autoSubmit ? 'Sent' : 'Staged'} to ${names.join(', ')}`, 'info');
+    const nameOf = (id: string) => (id === sessionId ? sessionName : (getSession(id)?.display_name || id));
+    const verb = asMsg ? 'Messaged' : (autoSubmit ? 'Sent' : 'Staged');
+    if (okTargets.length > 0) {
+      if (failTargets.length > 0) {
+        // Partial delivery — name who got it AND who didn't. Never report a partial as complete.
+        showToast(
+          `${verb} to ${okTargets.map(nameOf).join(', ')} — FAILED: ${failTargets.map(nameOf).join(', ')}`,
+          'error',
+        );
+      } else if (sendsOffTab || asMsg) {
+        // Surface the destination whenever the send goes anywhere other than JUST the current
+        // tab — a redirect (picker or a body `@name`) should never be a silent surprise.
+        showToast(`${verb} to ${okTargets.map(nameOf).join(', ')}`, 'info');
       } else if (!autoSubmit) {
         showToast('Staged to prompt area — press Enter in the terminal to submit', 'info');
       }
@@ -770,9 +814,9 @@ export default function PromptBox({ sessionId, sessionName, cliSessionId }: Prom
       sessionDrafts.set(sessionId, restoreText);
       persistDraft(sessionId, restoreText);
       setHistory(prev => prev.slice(0, -1));
-      showToast('Send failed — text restored to the box', 'error');
+      showToast(`Send failed — text restored to the box (${failTargets.map(nameOf).join(', ')})`, 'error');
     }
-  }, [text, sessionId, sessionName, cliSessionId, errorHandler, showToast, autoSubmit, wrapOutgoing, sendTargets, sendsOffTab, getSession]);
+  }, [text, sessionId, sessionName, cliSessionId, errorHandler, showToast, autoSubmit, wrapOutgoing, sendTargets, sendsOffTab, getSession, multiHeader, deliverOne]);
 
   // Queue (stack) the draft into the target session(s)' incoming prompt queue instead of
   // typing it into the live prompt area. Offered when a target is actively responding, so a
@@ -1183,7 +1227,17 @@ export default function PromptBox({ sessionId, sessionName, cliSessionId }: Prom
             >{'\u21ba'}</span>
           )}
         </div>
-        <span className="promptbox-hint">Cmd+Enter to {autoSubmit ? 'send' : 'stage'} {'\u00b7'} {'\u2191\u2193'} history {'\u00b7'} !h history {'\u00b7'} !shell</span>
+        {/* Send as a prompt (inject to act) or a message (inbox). PianoMan. */}
+        <div className="promptbox-sendmode" title="Send as a prompt (injected to act now) or a message (lands in the inbox)">
+          {(['prompt', 'message'] as const).map((m) => (
+            <button
+              key={m}
+              className={`promptbox-sendmode-opt${sendMode === m ? ' on' : ''}`}
+              onClick={() => setSendMode(m)}
+            >{m}</button>
+          ))}
+        </div>
+        <span className="promptbox-hint">Cmd+Enter to {sendMode === 'message' ? 'message' : (autoSubmit ? 'send' : 'stage')} {'\u00b7'} {'\u2191\u2193'} history {'\u00b7'} !h history {'\u00b7'} !shell</span>
       </div>
       {reminderHasContent(reminder) && reminder && (
         <div

@@ -22,6 +22,7 @@ import TabManagerMenu from './TabManagerMenu';
 import SessionTitleBar from './SessionTitleBar';
 import SessionContextMenu from './SessionContextMenu';
 import { TabNavContext } from './TabNavArrows';
+import { useClampToViewport, useSubmenuAutoFlip } from '../hooks/use-clamp-to-viewport';
 import type { Tab, GridLayout } from '@uai/shared/types';
 
 // ─── Platform colors for tab indicators ─────────────────────────────────
@@ -216,6 +217,12 @@ export default function Workspace(): JSX.Element {
   // Dismiss non-session tab context menu on outside click/right-click.
   // Session tabs use SessionContextMenu which handles its own dismiss.
   const tabMenuRef = useRef<HTMLDivElement>(null);
+  // Keep the (non-session) tab context menu on-screen when a tab is near the
+  // right/bottom edge (note: reported offender).
+  useClampToViewport(tabMenuRef, !!tabContextMenu, [tabContextMenu?.x, tabContextMenu?.y]);
+  // Keep this tab menu's cascading submenu (Tab ▶ → Close All Left/Right/Others)
+  // on-screen for a right-edge tab (todo_0547).
+  useSubmenuAutoFlip(tabMenuRef, !!tabContextMenu, [tabContextMenu?.x, tabContextMenu?.y]);
   const isNonSessionTab = tabContextMenu
     ? !getSession(tabContextMenu.tab.targetId)
     : false;
@@ -556,7 +563,7 @@ export default function Workspace(): JSX.Element {
         const parentObj = parentId ? folderStore.getFolder(parentId) : null;
         const breadcrumbs = folderStore.breadcrumbSegments(folderId);
         return (
-          <div className="session-title-bar">
+          <div className="session-title-bar folder-title-bar">
             <div className="stb-row">
               <div className="stb-left">
                 <div className="stb-nav-arrows">
@@ -610,15 +617,50 @@ export default function Workspace(): JSX.Element {
           ordering is driven only by the user actually typing (terminal
           keystrokes + prompt submit), so navigating/clicking around — and
           especially switching tabs — never re-orders the list. */}
-      <div className="workspace-content">
-        {activeTab ? (
-          <TabContentPane key={activeTab.id} tab={activeTab} memorexEnabled={activeTab.type === 'session' ? memorexStates[activeTab.targetId] !== false : undefined} transcriptOpen={activeTab.type === 'session' ? !!transcriptStates[activeTab.targetId] : undefined} onCloseTranscript={activeTab.type === 'session' ? () => toggleTranscript(activeTab.targetId) : undefined} subtab={activeTab.type === 'session' ? (subtabStates[activeTab.targetId] || 'chat') : undefined} />
-        ) : (
+      <div className="workspace-content" style={{ position: 'relative' }}>
+        {/* Session panes stay mounted so xterm, Memorex's measured card window, and
+            each tab's scrollTop survive tab switches. Hidden panes retain geometry
+            but do not receive pointer events; their Memorex poll runs at the slower
+            background interval. */}
+        {tabs.filter(tab => tab.type === 'session').map(tab => {
+          const isActive = tab.id === activeTabId;
+          return (
+            <div
+              key={tab.id}
+              className="workspace-session-pane"
+              aria-hidden={!isActive}
+              style={{
+                position: 'absolute',
+                inset: 0,
+                display: 'flex',
+                flexDirection: 'column',
+                minWidth: 0,
+                minHeight: 0,
+                overflow: 'hidden',
+                visibility: isActive ? 'visible' : 'hidden',
+                pointerEvents: isActive ? 'auto' : 'none',
+                zIndex: isActive ? 1 : 0,
+              }}
+            >
+              <TabContentPane
+                tab={tab}
+                active={isActive}
+                memorexEnabled={memorexStates[tab.targetId] !== false}
+                transcriptOpen={!!transcriptStates[tab.targetId]}
+                onCloseTranscript={() => toggleTranscript(tab.targetId)}
+                subtab={subtabStates[tab.targetId] || 'chat'}
+              />
+            </div>
+          );
+        })}
+        {activeTab && activeTab.type !== 'session' ? (
+          <TabContentPane key={activeTab.id} tab={activeTab} />
+        ) : !activeTab ? (
           <div className="workspace-placeholder">
             <h2>UAI</h2>
             <p>Select a session to open it here.</p>
           </div>
-        )}
+        ) : null}
         {/* Keep app/tool panes mounted when not active — prevents unmount/remount
             losing state (e.g. scan progress) on tab switch. Hidden via CSS. */}
         {tabs.filter(t => t.type === 'app' && t.id !== activeTabId).map(t => (

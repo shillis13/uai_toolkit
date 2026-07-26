@@ -209,28 +209,31 @@ function normalizeFocusTab(v: unknown): FocusTab {
   return 'info'; // 'info' | 'content' | anything else → info
 }
 type StatusFilter = 'active' | 'all';
-type LoaderFilter = 'mcp' | 'command' | null;
 
 // ---- Constants -------------------------------------------------------------
 
 /** The 8 kinds. */
-const KINDS = ['knowledge', 'instruction', 'brief', 'memory', 'role', 'profile', 'skill', 'global'] as const;
+const KINDS = ['knowledge', 'instruction', 'brief', 'memory', 'role', 'bundle', 'skill', 'global'] as const;
 // Canonical display order — SAME for the catalog list groups and the Kind
-// dropdown (bundles first, then leaf context files). Change here to change both.
-const KIND_DISPLAY_ORDER = ['global', 'profile', 'skill', 'role', 'knowledge', 'instruction', 'memory', 'brief'] as const;
+// dropdown (bundles first, then role/skill, then leaf context files). Change
+// here to change both.
+const KIND_DISPLAY_ORDER = ['global', 'bundle', 'skill', 'role', 'knowledge', 'instruction', 'memory', 'brief'] as const;
 const KIND_ORDER: Record<string, number> = KIND_DISPLAY_ORDER.reduce((acc, k, i) => { acc[k] = i; return acc; }, {} as Record<string, number>);
-const BUNDLE_KINDS = new Set(['role', 'profile', 'skill', 'global']);
+// Composition-node kinds (things that pull other items in): roles + bundles.
+const BUNDLE_KINDS = new Set(['role', 'skill', 'global', 'bundle']);
 
 function isBundle(kind?: string | null): boolean {
   return !!kind && BUNDLE_KINDS.has(kind);
 }
 
 // ---- Link Matrix column taxonomy -------------------------------------------
-//  Profiles col = profile + global; Roles/Sub-roles cols = role + skill bundles
-//  (a bundle is "tier-1/Roles" when a profile|global references it, "tier-2/
-//  Sub-roles" when another role|skill references it; it can be in both).
-//  Context Files col = the four leaf kinds.
-const PROFILE_KINDS = new Set(['profile', 'global']);
+//  Two composition columns + the leaves:
+//   Bundles col = global + bundle (a bundle is a curated content-set; global is
+//     a bundle everyone loads).
+//   Roles col = role + skill (a role/skill shows here regardless of who
+//     references it).
+//   Context Files col = the four leaf kinds.
+const BUNDLE_COL_KINDS = new Set(['global', 'bundle']);
 const ROLE_KINDS = new Set(['role', 'skill']);
 const CONTEXT_FILE_KINDS = new Set(['knowledge', 'instruction', 'brief', 'memory']);
 
@@ -248,7 +251,7 @@ const CHILDLESS_COLOR = 'var(--accent-yellow)'; // no children (no outbound)
 // they read as related-but-distinct. Used for label text in both the Library
 // list and the Link Matrix (the only extra coloring the matrix needs).
 const KIND_HUE: Record<string, number> = {
-  global: 265, profile: 212, role: 190, skill: 158,
+  global: 265, bundle: 212, role: 190, skill: 158,
   knowledge: 45, instruction: 22, memory: 330, brief: 350,
 };
 function _strHash(s: string): number {
@@ -293,7 +296,7 @@ function kindToTrait(kind: string, name: string): { type: string; name: string }
     case 'instruction': return { type: 'traits', name };
     case 'role': return { type: 'roles', name };
     case 'skill': return { type: 'roles', name: `skill:${name}` };
-    case 'profile': return { type: 'profiles', name };
+    case 'bundle': return { type: 'bundles', name };
     case 'global': return { type: 'globals', name };
     case 'brief': return { type: 'briefs', name };
     case 'memory': return { type: 'mslots', name };
@@ -305,9 +308,24 @@ function kindToTrait(kind: string, name: string): { type: string; name: string }
 // control instead of a long pill row.
 const KIND_MENU = KIND_DISPLAY_ORDER;
 const KIND_LABEL: Record<string, string> = {
-  global: 'Global', profile: 'Profiles', skill: 'Skills', role: 'Roles',
+  global: 'Global', bundle: 'Bundles', skill: 'Skills', role: 'Roles',
   knowledge: 'Knowledge', instruction: 'Instructions', memory: 'Memories', brief: 'Briefs',
 };
+
+// Sentinel <option> value for "create a brand-new category" in the create
+// dialog's Category dropdown (see handleCreate / the category <select> below).
+const NEW_CATEGORY_SENTINEL = '__new_category__';
+
+/** Light/subtle accent styling for a toolbar action button (New / Reindex).
+ *  Uses color-mix over a CSS accent token — never a raw hex — so it reads as a
+ *  tinted action button while inheriting the base .sched-mgr-btn shape. */
+function lightBtn(accent: string): CSSProperties {
+  return {
+    background: `color-mix(in srgb, ${accent} 15%, transparent)`,
+    borderColor: `color-mix(in srgb, ${accent} 45%, transparent)`,
+    color: accent,
+  };
+}
 
 /** Multi-select Kind filter with Excel-style "All" behavior:
  *  - check All → all checked; uncheck All → all unchecked
@@ -373,7 +391,6 @@ function KindMultiSelect({ selected, onChange }: { selected: Set<string>; onChan
 const CTXPANE_KEY = 'uai:ctxMgr:pane';
 interface CtxPaneState {
   activeTab: TopTab; search: string; kinds: string[]; // selected kinds (multi); all = every kind
-  loaderFilter: LoaderFilter;
   selectedId: string | null; focusTab: FocusTab; matrixSelected: string[];
   showOut: boolean; showIn: boolean; showOrphans: boolean; showChildless: boolean;
   schemaV?: number;  // migration marker (see loadCtxPane)
@@ -382,7 +399,7 @@ interface CtxPaneState {
 const CTXPANE_SCHEMA_V = 2;
 const CTXPANE_DEFAULT: CtxPaneState = {
   activeTab: 'library', search: '', kinds: [...KIND_DISPLAY_ORDER],
-  loaderFilter: null, selectedId: null, focusTab: 'info', matrixSelected: [],
+  selectedId: null, focusTab: 'info', matrixSelected: [],
   showOut: true, showIn: false, showOrphans: false, showChildless: false,
   schemaV: CTXPANE_SCHEMA_V,
 };
@@ -513,6 +530,24 @@ export default function ContextMgrPane({ tabId, deepLinkId }: ContextMgrPaneProp
   const [sessions, setSessions] = useState<Array<{ id: string; name: string }>>([]);
   const [actionBusy, setActionBusy] = useState(false);
 
+  // "＋ New" — create-item modal state. Kind splits two ways: compositions
+  // (bundle/role/skill/global) take an optional description; leaves
+  // (knowledge/instruction) require a category slug. See handleCreate.
+  const [createOpen, setCreateOpen] = useState(false);
+  const [createKind, setCreateKind] = useState<string>('bundle');
+  const [createTitle, setCreateTitle] = useState('');
+  const [createCategory, setCreateCategory] = useState('');
+  const [createDescription, setCreateDescription] = useState('');
+  const [createBusy, setCreateBusy] = useState(false);
+  // Category dropdown state for leaf kinds. `catCache` holds the known category
+  // list per kind (fetched via the `categories` verb, cached so switching kinds
+  // back and forth doesn't refetch). `createNewCatMode` is the explicit "＋ New
+  // category…" path: only in that mode does handleCreate pass --new-category, so
+  // the backend accepts a brand-new slug (and rejects typos otherwise).
+  const [catCache, setCatCache] = useState<Record<string, string[]>>({});
+  const [catLoading, setCatLoading] = useState(false);
+  const [createNewCatMode, setCreateNewCatMode] = useState(false);
+
   // Links tab: "Is loaded by" scan — which sessions currently have THIS item in
   // context. Switchable to the inverse ("Is not loaded by"). Scanned on demand
   // (one traits.list per session), keyed by item id so we don't rescan on tab
@@ -530,7 +565,6 @@ export default function ContextMgrPane({ tabId, deepLinkId }: ContextMgrPaneProp
   const [search, setSearch] = useState(() => saveCtxPane_cur.search);
   const [searchActive, setSearchActive] = useState(() => !!saveCtxPane_cur.search);
   const [kindSel, setKindSel] = useState<Set<string>>(() => new Set(saveCtxPane_cur.kinds));
-  const [loaderFilter, setLoaderFilter] = useState<LoaderFilter>(() => saveCtxPane_cur.loaderFilter);
   const [collapsedKinds, setCollapsedKinds] = useState<Set<string>>(new Set());
   // Collapsed folders inside the hierarchical catalog (key: `${kind}::${fullName}`).
   const [collapsedDirs, setCollapsedDirs] = useState<Set<string>>(new Set());
@@ -559,8 +593,8 @@ export default function ContextMgrPane({ tabId, deepLinkId }: ContextMgrPaneProp
 
   // Persist the visual state on any change (write-through to localStorage).
   useEffect(() => {
-    saveCtxPane({ activeTab, search, kinds: Array.from(kindSel), loaderFilter, selectedId, focusTab });
-  }, [activeTab, search, kindSel, loaderFilter, selectedId, focusTab]);
+    saveCtxPane({ activeTab, search, kinds: Array.from(kindSel), selectedId, focusTab });
+  }, [activeTab, search, kindSel, selectedId, focusTab]);
 
   // ---- Derived ------------------------------------------------------------
 
@@ -610,7 +644,6 @@ export default function ContextMgrPane({ tabId, deepLinkId }: ContextMgrPaneProp
         const args: string[] = [];
         // Kind filter is applied client-side (multi-select); fetch all kinds.
         // Always active-only (archived hidden); no status filter surfaced.
-        if (loaderFilter) args.push('--loader', loaderFilter);
         data = await run('list', args);
       }
       setItems(Array.isArray(data) ? data : []);
@@ -620,7 +653,7 @@ export default function ContextMgrPane({ tabId, deepLinkId }: ContextMgrPaneProp
     } finally {
       setLoading(false);
     }
-  }, [run, search, searchActive, loaderFilter, showToast]);
+  }, [run, search, searchActive, showToast]);
 
   // Mount: health + first catalog load.
   useEffect(() => { loadHealth(); }, [loadHealth]);
@@ -710,6 +743,76 @@ export default function ContextMgrPane({ tabId, deepLinkId }: ContextMgrPaneProp
     setSelectedId(id);
   }, []);
 
+  // Create a new context item via the `create` verb. Composition kinds pass an
+  // optional --description; leaf kinds (knowledge/instruction) REQUIRE a
+  // --category slug. On success we close, refresh (health + catalog, the same
+  // pair Reindex uses), select the new item, and toast.
+  const handleCreate = useCallback(async () => {
+    const title = createTitle.trim();
+    if (!title) return;
+    const composition = isBundle(createKind);
+    const category = createCategory.trim();
+    const description = createDescription.trim();
+    if (!composition && !category) return; // leaf requires a category
+    const args: string[] = [`--kind=${createKind}`, `--title=${title}`];
+    if (composition) {
+      if (description) args.push(`--description=${description}`);
+    } else {
+      args.push(`--category=${category}`);
+      // Only the explicit "＋ New category…" path authorizes creating a new
+      // category slug; picking an existing one from the dropdown must NOT pass
+      // this flag (the backend rejects unknown categories without it).
+      if (createNewCatMode) args.push('--new-category');
+    }
+    setCreateBusy(true);
+    try {
+      // run() throws when the outer envelope's ok is false; guard the inner
+      // data.ok too (create returns { ok, id, path } | { ok:false, error }).
+      const d = await run('create', args);
+      if (d && d.ok === false) throw new Error(d.error || 'create failed');
+      const newId: string | undefined = d?.id;
+      showToast(`Created ${newId ?? title}`, 'info');
+      setCreateOpen(false);
+      setCreateTitle('');
+      setCreateCategory('');
+      setCreateDescription('');
+      setCreateNewCatMode(false);
+      await Promise.all([loadHealth(), loadCatalog()]);
+      if (newId) setSelectedId(newId);
+    } catch (e: any) {
+      showToast(e?.message || 'Create failed', 'error');
+    } finally {
+      setCreateBusy(false);
+    }
+  }, [createKind, createTitle, createCategory, createDescription, createNewCatMode, run, showToast, loadHealth, loadCatalog]);
+
+  // Esc closes the create modal.
+  useEffect(() => {
+    if (!createOpen) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setCreateOpen(false); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [createOpen]);
+
+  // Fetch the category list for the current leaf kind when the dialog is open
+  // (knowledge/instruction only). Cached per kind so re-opening or toggling
+  // between the two leaf kinds doesn't refetch. Compositions have no categories.
+  useEffect(() => {
+    if (!createOpen || isBundle(createKind)) return;
+    if (catCache[createKind] !== undefined) return;
+    let cancelled = false;
+    setCatLoading(true);
+    run('categories', [`--kind=${createKind}`])
+      .then((d) => {
+        if (cancelled) return;
+        const cats = Array.isArray(d?.categories) ? (d.categories as string[]) : [];
+        setCatCache((c) => ({ ...c, [createKind]: cats }));
+      })
+      .catch(() => { if (!cancelled) setCatCache((c) => ({ ...c, [createKind]: [] })); })
+      .finally(() => { if (!cancelled) setCatLoading(false); });
+    return () => { cancelled = true; };
+  }, [createOpen, createKind, catCache, run]);
+
   const toggleKind = useCallback((kind: string) => {
     setCollapsedKinds((prev) => {
       const next = new Set(prev);
@@ -788,6 +891,10 @@ export default function ContextMgrPane({ tabId, deepLinkId }: ContextMgrPaneProp
   }, [peek]);
 
   // ---- Render -------------------------------------------------------------
+
+  // Create-modal derived: compositions take a description, leaves need a category.
+  const createIsComposition = isBundle(createKind);
+  const createValid = createTitle.trim().length > 0 && (createIsComposition || createCategory.trim().length > 0);
 
   const selectedMetaKind = meta?.kind ?? items.find((it) => it.id === selectedId)?.kind;
   const focusIsBundle = isBundle(selectedMetaKind);
@@ -978,7 +1085,6 @@ export default function ContextMgrPane({ tabId, deepLinkId }: ContextMgrPaneProp
       orphans: validateResult?.orphans.length ?? null,
       search: searchActive ? search : '',
       kinds: Array.from(kindSel),
-      loaderFilter,
       visibleItems: itemsByKind.reduce((n, [, list]) => n + list.length, 0),
       selectedId,
       focusTab,
@@ -1083,12 +1189,24 @@ export default function ContextMgrPane({ tabId, deepLinkId }: ContextMgrPaneProp
         <button className={`sched-mgr-tab${activeTab === 'library' ? ' active' : ''}`} onClick={() => setActiveTab('library')}>Library</button>
         <button className={`sched-mgr-tab${activeTab === 'matrix' ? ' active' : ''}`} onClick={() => setActiveTab('matrix')}>Link Matrix</button>
         <button className={`sched-mgr-tab${activeTab === 'validate' ? ' active' : ''}`} onClick={() => setActiveTab('validate')}>Validate</button>
-        <button
-          className="sched-mgr-btn sched-mgr-btn-sm context-mgr-reindex-btn"
-          onClick={handleReindex}
-          disabled={reindexing}
-          title="Rebuild the SQLite index (items + link edges) from the on-disk files"
-        >{reindexing ? 'Reindexing…' : 'Reindex ⟳'}</button>
+        {/* Pane action buttons — New + Reindex sit inline right after the Validate
+            tab (minimal mouse travel from the tabs, not shoved to the far right),
+            both lightly accent-tinted so they read as the pane's actions. */}
+        <div className="context-mgr-tabbar-actions" style={{ display: 'flex', gap: 8, marginLeft: 8 }}>
+          <button
+            className="sched-mgr-btn sched-mgr-btn-sm"
+            onClick={() => setCreateOpen(true)}
+            title="Create a new context item"
+            style={lightBtn('var(--accent-green)')}
+          >{'＋'} New</button>
+          <button
+            className="sched-mgr-btn sched-mgr-btn-sm context-mgr-reindex-btn"
+            onClick={handleReindex}
+            disabled={reindexing}
+            title="Rebuild the SQLite index (items + link edges) from the on-disk files"
+            style={lightBtn('var(--accent-blue)')}
+          >{reindexing ? 'Reindexing…' : 'Reindex ⟳'}</button>
+        </div>
       </div>
 
       {/* LIBRARY */}
@@ -1116,10 +1234,6 @@ export default function ContextMgrPane({ tabId, deepLinkId }: ContextMgrPaneProp
               <div className="context-mgr-filters">
                 <div className="context-mgr-pill-group">
                   <KindMultiSelect selected={kindSel} onChange={setKindSel} />
-                </div>
-                <div className="context-mgr-pill-group">
-                  <button className={`sched-mgr-pill${loaderFilter === 'mcp' ? ' active' : ''}`} onClick={() => setLoaderFilter(loaderFilter === 'mcp' ? null : 'mcp')} title="Roles & profiles (loaded via MCP knowledge_get_*)">{'⚙'} mcp</button>
-                  <button className={`sched-mgr-pill${loaderFilter === 'command' ? ' active' : ''}`} onClick={() => setLoaderFilter(loaderFilter === 'command' ? null : 'command')} title="Skills (invoked via a /command)">{'⌘'} command</button>
                 </div>
               </div>
 
@@ -1312,6 +1426,137 @@ export default function ContextMgrPane({ tabId, deepLinkId }: ContextMgrPaneProp
           onSelect={(id) => { setActiveTab('library'); setSelectedId(id); }}
         />
       )}
+
+      {/* CREATE ITEM MODAL — reuses the shared resume-dialog styling, tinted with
+          an accent border + accent header bar so it reads as its own (create)
+          surface rather than a plain gray dialog. Accent via CSS tokens only. */}
+      {createOpen && (
+        <div
+          className="resume-dialog-overlay"
+          style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          onMouseDown={(e) => { if (e.target === e.currentTarget && !createBusy) setCreateOpen(false); }}
+        >
+          <div
+            className="resume-dialog"
+            style={{ width: 380, borderColor: 'color-mix(in srgb, var(--accent-green) 55%, var(--border-strong))' }}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <div
+              className="resume-dialog-header"
+              style={{
+                background: 'color-mix(in srgb, var(--accent-green) 16%, var(--bg-card))',
+                borderBottom: '1px solid color-mix(in srgb, var(--accent-green) 40%, transparent)',
+                borderLeft: '3px solid var(--accent-green)',
+              }}
+            >
+              New context item
+              <span className="resume-dialog-subtitle">{createIsComposition ? 'Composition' : 'Context file'}</span>
+            </div>
+            <div className="resume-dialog-body">
+              <div className="resume-dialog-field">
+                <label className="resume-dialog-label">Kind</label>
+                <select
+                  className="resume-dialog-input"
+                  value={createKind}
+                  onChange={(e) => {
+                    // Changing kind invalidates any selected/typed category.
+                    setCreateKind(e.target.value);
+                    setCreateCategory('');
+                    setCreateNewCatMode(false);
+                  }}
+                >
+                  <optgroup label="Composition">
+                    <option value="bundle">Bundle</option>
+                    <option value="role">Role</option>
+                    <option value="skill" disabled title="Skill creation not enabled yet">Skill</option>
+                    <option value="global">Global</option>
+                  </optgroup>
+                  <optgroup label="Context file">
+                    <option value="knowledge">Knowledge</option>
+                    <option value="instruction">Instruction</option>
+                  </optgroup>
+                </select>
+              </div>
+              <div className="resume-dialog-field">
+                <label className="resume-dialog-label">Title</label>
+                <input
+                  className="resume-dialog-input"
+                  type="text"
+                  autoFocus
+                  value={createTitle}
+                  onChange={(e) => setCreateTitle(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter' && createValid && !createBusy) handleCreate(); }}
+                  placeholder="Human-readable title"
+                />
+              </div>
+              {!createIsComposition && (
+                <div className="resume-dialog-field">
+                  <label className="resume-dialog-label">Category <span className="resume-dialog-hint">(pick an existing one, or add a new)</span></label>
+                  <select
+                    className="resume-dialog-input"
+                    value={createNewCatMode ? NEW_CATEGORY_SENTINEL : createCategory}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      if (v === NEW_CATEGORY_SENTINEL) { setCreateNewCatMode(true); setCreateCategory(''); }
+                      else { setCreateNewCatMode(false); setCreateCategory(v); }
+                    }}
+                  >
+                    <option value="" disabled>{catLoading ? 'Loading categories…' : 'Select a category…'}</option>
+                    {(catCache[createKind] ?? []).map((c) => (
+                      <option key={c} value={c}>{c}</option>
+                    ))}
+                    <option value={NEW_CATEGORY_SENTINEL}>{'＋'} New category…</option>
+                  </select>
+                  {createNewCatMode && (
+                    <div className="resume-dialog-field" style={{ marginTop: 8 }}>
+                      <label className="resume-dialog-label">New category name <span className="resume-dialog-hint">(slug, e.g. reference, how_tos)</span></label>
+                      <input
+                        className="resume-dialog-input"
+                        type="text"
+                        autoFocus
+                        value={createCategory}
+                        onChange={(e) => setCreateCategory(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Enter' && createValid && !createBusy) handleCreate(); }}
+                        placeholder="reference"
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
+              {createIsComposition && (
+                <div className="resume-dialog-field">
+                  <label className="resume-dialog-label">Description <span className="resume-dialog-hint">(optional)</span></label>
+                  <input
+                    className="resume-dialog-input"
+                    type="text"
+                    value={createDescription}
+                    onChange={(e) => setCreateDescription(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter' && createValid && !createBusy) handleCreate(); }}
+                    placeholder="Short description"
+                  />
+                </div>
+              )}
+            </div>
+            <div className="resume-dialog-actions">
+              <button
+                className="resume-dialog-btn resume-dialog-btn-cancel"
+                onClick={() => setCreateOpen(false)}
+                disabled={createBusy}
+              >Cancel</button>
+              <button
+                className="resume-dialog-btn resume-dialog-btn-submit"
+                onClick={handleCreate}
+                disabled={!createValid || createBusy}
+                style={{
+                  background: 'var(--accent-green)',
+                  borderColor: 'var(--accent-green)',
+                  ...((!createValid || createBusy) ? { opacity: 0.5, cursor: 'default' } : {}),
+                }}
+              >{createBusy ? 'Creating…' : 'Create'}</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1321,12 +1566,10 @@ export default function ContextMgrPane({ tabId, deepLinkId }: ContextMgrPaneProp
 /**
  * LinkMatrixView — the read/explore link surface (todo_0331 Phase 1).
  *
- * Fetches the WHOLE reference graph once (`graph` verb) and renders four
- * columns left→right: Profiles (profile+global) · Roles (tier-1 bundles a
- * profile/global references) · Sub-roles (tier-2 bundles another role/skill
- * references) · Context Files (the four leaf kinds). A role/skill can appear
- * in both Roles and Sub-roles; one referenced only by another role/skill shows
- * only in Sub-roles; one nothing references shows in Roles (top-level).
+ * Fetches the WHOLE reference graph once (`graph` verb) and renders three
+ * columns left→right: Roles (role+skill) · Bundles (global+bundle) · Context
+ * Files (the four leaf kinds). A role/skill shows under Roles regardless of who
+ * references it; a global/bundle shows under Bundles.
  *
  * Interaction (read-only): click an item to SELECT it; its connected set — all
  * items transitively reachable treating edges as bidirectional (outbound = what
@@ -1405,54 +1648,39 @@ function LinkMatrixView({ run, onPeek }: {
     return s;
   }, [graph, byId]);
 
-  // Bucket every item into its column(s).
+  // Bucket every item into its column: Roles (role+skill), Bundles
+  // (global+bundle), Context Files (the leaf kinds). A role/skill shows under
+  // Roles regardless of who references it.
   const columns = useMemo(() => {
-    const profiles: GraphItem[] = [];
+    const bundles: GraphItem[] = [];
     const context: GraphItem[] = [];
     const roles: GraphItem[] = [];
-    const subroles: GraphItem[] = [];
-
-    // Which role/skill ids are pulled in by a profile/global vs by a role/skill.
-    const hasProfileParent = new Set<string>();
-    const hasRoleParent = new Set<string>();
-    for (const e of graph?.edges ?? []) {
-      const dst = byId.get(e.dst_id);
-      if (!dst || !ROLE_KINDS.has(dst.kind)) continue;
-      const src = byId.get(e.src_id);
-      if (!src) continue;
-      if (PROFILE_KINDS.has(src.kind)) hasProfileParent.add(dst.id);
-      else if (ROLE_KINDS.has(src.kind)) hasRoleParent.add(dst.id);
-    }
 
     for (const it of graph?.items ?? []) {
-      if (PROFILE_KINDS.has(it.kind)) {
-        profiles.push(it);
+      if (BUNDLE_COL_KINDS.has(it.kind)) {
+        bundles.push(it);
       } else if (CONTEXT_FILE_KINDS.has(it.kind)) {
         if (it.kind !== 'brief') context.push(it); // 3.5: briefs are excluded from the link matrix
       } else if (ROLE_KINDS.has(it.kind)) {
-        // Top-level bundle (nothing references it) falls into Roles so it stays visible.
-        const topLevel = !hasProfileParent.has(it.id) && !hasRoleParent.has(it.id);
-        if (hasProfileParent.has(it.id) || topLevel) roles.push(it);
-        if (hasRoleParent.has(it.id)) subroles.push(it);
+        roles.push(it);
       }
     }
     const sort = (a: GraphItem, b: GraphItem) => a.id.localeCompare(b.id);
     return {
-      profiles: profiles.sort(sort),
+      bundles: bundles.sort(sort),
       roles: roles.sort(sort),
-      subroles: subroles.sort(sort),
       context: context.sort(sort),
     };
-  }, [graph, byId]);
+  }, [graph]);
 
   // Transitive (recursive, multi-hop) links of the current selection.
   //   outLinks = every item reachable by following references FORWARD from the
   //     selection (things it includes, and everything those include, …) → cyan.
-  //     e.g. select a Profile → its Roles AND those Roles' context files.
+  //     e.g. select a Bundle → its Roles AND those Roles' context files.
   //   inLinks  = every item that can reach the selection by following references
   //     forward (things that include it, transitively) → orange.
   //   outEdges/inEdges = the individual hops along those paths, so the arrow
-  //     overlay draws the actual chain (Profile→Role, Role→file) rather than a
+  //     overlay draws the actual chain (Bundle→Role, Role→file) rather than a
   //     single long-range line. An item can be in both sets; selected items in
   //     neither. Cycles are safe (visited-guard on traversal).
   const { outLinks, inLinks, outEdges, inEdges } = useMemo(() => {
@@ -1504,7 +1732,7 @@ function LinkMatrixView({ run, onPeek }: {
 
   // Orphan (no parent / no inbound) and childless (no children / no outbound)
   // sets, with the rule exclusions (7.1–7.3):
-  //   orphan   — skip top-level compositions (global/profile = first column) + skills.
+  //   orphan   — skip top-level compositions (global/bundle) + skills.
   //   childless — skip context files (= last column, never have children).
   const { orphanSet, childlessSet } = useMemo(() => {
     const hasIn = new Set<string>();
@@ -1517,7 +1745,7 @@ function LinkMatrixView({ run, onPeek }: {
     const childless = new Set<string>();
     for (const it of graph?.items ?? []) {
       if (it.kind === 'brief') continue; // not in the matrix at all
-      if (!hasIn.has(it.id) && !PROFILE_KINDS.has(it.kind) && it.kind !== 'skill') orphans.add(it.id);
+      if (!hasIn.has(it.id) && !BUNDLE_COL_KINDS.has(it.kind) && it.kind !== 'skill') orphans.add(it.id);
       if (!hasOut.has(it.id) && !CONTEXT_FILE_KINDS.has(it.kind)) childless.add(it.id);
     }
     return { orphanSet: orphans, childlessSet: childless };
@@ -1639,7 +1867,7 @@ function LinkMatrixView({ run, onPeek }: {
   // ── Arrow overlay ─────────────────────────────────────────────────────────
   // An absolutely-positioned SVG over the columns; we draw one curved arrow per
   // HOP along the transitive chain (outEdges/inEdges), anchored on facing edges
-  // so each line travels its inter-column gap. This makes a Profile→Role→file
+  // so each line travels its inter-column gap. This makes a Bundle→Role→file
   // selection render as two connected segments, not one long-range line.
   // Recomputed on selection/graph/scroll/resize.
   const colsRef = useRef<HTMLDivElement | null>(null);
@@ -1786,7 +2014,7 @@ function LinkMatrixView({ run, onPeek }: {
             className={`sched-mgr-pill${showOrphans ? ' active' : ''}`}
             style={showOrphans ? { color: ORPHAN_COLOR, borderColor: ORPHAN_COLOR } : undefined}
             onClick={() => setShowOrphans((v) => !v)}
-            title="Highlight items with no parent (nothing includes them). Excludes top-level global/profile and skills."
+            title="Highlight items with no parent (nothing includes them). Excludes top-level global/bundle and skills."
           >Orphans</button>
           <button
             className={`sched-mgr-pill${showChildless ? ' active' : ''}`}
@@ -1841,9 +2069,8 @@ function LinkMatrixView({ run, onPeek }: {
             />
           ))}
         </svg>
-        {renderColumn('Profiles', columns.profiles)}
         {renderColumn('Roles', columns.roles)}
-        {renderColumn('Sub-roles', columns.subroles)}
+        {renderColumn('Bundles', columns.bundles)}
         {renderColumn('Context Files', columns.context)}
       </div>
       {menu && (() => {
@@ -1883,7 +2110,7 @@ function LinkMatrixView({ run, onPeek }: {
             ) : canBeSrc ? (
               <button className="context-mgr-ctx-item" onClick={act(() => setLinkArm(menu.id))}>Link from here…</button>
             ) : (
-              <div className="context-mgr-ctx-note">Only bundles (profile/role/skill/global) can start a link.</div>
+              <div className="context-mgr-ctx-note">Only bundles (role/skill/global/bundle) can start a link.</div>
             )}
             {(outs.length > 0 || ins.length > 0) && <div className="context-mgr-ctx-sep" />}
             {outs.map((dst) => (

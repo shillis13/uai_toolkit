@@ -5,7 +5,7 @@
 
 ## Purpose
 
-Convert raw chat exports to normalized, chunked format for search/analysis/context loading.
+Convert raw WebUI or Desktop Claude chat exports to normalized, chunked format for search/analysis/context loading.
 
 ## Directory Structure
 

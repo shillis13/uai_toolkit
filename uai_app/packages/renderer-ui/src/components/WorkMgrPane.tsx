@@ -23,26 +23,33 @@ export const TREE_GROUP_COLORS = ['#2ac3de', '#9ece6a', '#e0af68', '#f7768e', '#
 // since the Work Mgr is a singleton. (todo_0407)
 const wmCache: {
   viewMode?: string; sortMode?: string; sortReversed?: boolean; assignedFilter?: string; search?: string;
-  activeStatuses?: string[]; collapsedGroups?: string[]; expandedNodes?: string[];
-  selectedId?: string | null; detailTab?: string;
+  activeStatuses?: string[]; collapsedGroups?: string[]; collapsedNodes?: string[];
+  selectedId?: string | null; detailTab?: string; density?: string;
 } = {};
 import { useViewport } from '../viewport';
 import StatusFilterMenu from './StatusFilterMenu';
+import SortMenu from './SortMenu';
 import { executeCommand } from '../utils/execute-command';
+import ParentPicker from './ParentPicker';
 import { TabNavArrows } from './TabNavArrows';
 import TodoItemView from './TodoItemView';
 import TodoListView from './TodoListView';
+import TodoBulkPanel from './TodoBulkPanel';
+import NewTodoDialog from './NewTodoDialog';
+import { useToast } from './Toast';
 import { useTodoListModel } from './useTodoListModel';
 import { consumePendingTodoFocus } from './RefLink';
 import { usePanelResize } from '../hooks/usePanelResize';
 import { useCardStore, useAppStateStore } from '../stores';
 import { useSessionStore } from '../stores/session-store';
 import { assigneeLabel } from './assigneeLabel';
+import { TODOS_CHANGED, notifyTodosChanged } from '../utils/todo-events';
 
 export interface WorkItem {
   id: string;
   rel_path?: string;
   status: string;
+  priority?: string;   // High | Normal | Low (todo_0652); default Normal
   tags: string[];
   flags: string[];
   assigned: string[];
@@ -58,7 +65,7 @@ interface WorkMgrPaneProps { tabId?: string; }
 
 export type ViewMode = 'flat' | 'tree' | 'kanban' | 'assignee';
 type GroupMode = 'none' | 'status' | 'project' | 'assigned';
-type SortMode = 'updated' | 'number' | 'status' | 'title' | 'assignee';
+type SortMode = 'updated' | 'number' | 'status' | 'priority' | 'title' | 'assignee';
 
 // 2-3 letter status codes for the dense list rows (colored by status).
 const STATUS_ABBR: Record<string, string> = {
@@ -75,9 +82,12 @@ function isSpecFile(rel: string): boolean {
   return SPEC_FILES.has(base) || base.endsWith('.status') || base.endsWith('.tag') || base.endsWith('.flag');
 }
 
+// PianoMan-specified lifecycle order (todo_0607): drives BOTH sort-by-status and the
+// Status filter-dropdown order (ALL_STATUSES derives from this). Needs_Research wasn't
+// in PM's list; placed before Needs_Derivation (research → derive → ready).
 export const STATUS_ORDER: Record<string, number> = {
-  'In_Progress': 0, 'Blocked': 1, 'Reviewing': 2, 'Accepting': 3, 'Ready': 4,
-  'Needs_Derivation': 5, 'Needs_Research': 6, 'Triaging': 7, 'Done': 8, 'Cancelled': 9,
+  'Blocked': 0, 'Triaging': 1, 'Needs_Research': 2, 'Needs_Derivation': 3, 'Ready': 4,
+  'In_Progress': 5, 'Reviewing': 6, 'Accepting': 7, 'Done': 8, 'Cancelled': 9,
 };
 const STATUS_COLORS: Record<string, string> = {
   'In_Progress': 'var(--accent-blue)', 'Blocked': 'var(--accent-red)',
@@ -131,6 +141,26 @@ export function StatusCode({ status }: { status: string }): JSX.Element {
   return <span className="wm-status-code" style={{ color: statusColor(status) }} title={statusLabel(status)}>{statusAbbr(status)}</span>;
 }
 
+// Priority (todo_0652). High/Normal/Low — Normal is the default and shows NO chip
+// (no clutter, per PM). High = red, Low = blue.
+export const PRIORITY_LEVELS = ['High', 'Normal', 'Low'];
+export const PRIORITY_ORDER: Record<string, number> = { High: 0, Normal: 1, Low: 2 };
+const PRIORITY_COLOR: Record<string, string> = { High: 'var(--accent-red)', Low: 'var(--accent-blue)' };
+export function effectivePriority(item: Pick<WorkItem, 'priority' | 'flags'>): string {
+  // Rolling-upgrade/read compatibility for todos created with the retired flag.
+  return item.priority || (item.flags.includes('high_priority') ? 'High' : 'Normal');
+}
+export function PriorityChip({ priority }: { priority?: string }): JSX.Element | null {
+  const p = priority || 'Normal';
+  if (p === 'Normal') return null;
+  return (
+    <span className="wm-prio-chip" title={`Priority: ${p}`}
+      style={{ color: PRIORITY_COLOR[p] || 'var(--text-muted)', borderColor: PRIORITY_COLOR[p] || 'var(--border)' }}>
+      {p === 'High' ? '⬆ High' : '⬇ Low'}
+    </span>
+  );
+}
+
 // Wrap occurrences of `query` (case-insensitive) in <mark> for search highlighting.
 export function highlight(text: string, query: string): ReactNode {
   const q = query.trim();
@@ -181,6 +211,15 @@ function StatusSelect({ status, onChange }: { status: string; onChange: (s: stri
   );
 }
 
+// Priority editor (todo_0652) — small High/Normal/Low dropdown for the detail header.
+function PrioritySelect({ priority, onChange }: { priority: string; onChange: (p: string) => void }): JSX.Element {
+  return (
+    <select className="wm-status-select" value={priority} onChange={e => onChange(e.target.value)} title="Change priority">
+      {PRIORITY_LEVELS.map(p => <option key={p} value={p}>{p === 'Normal' ? 'Normal priority' : `${p} priority`}</option>)}
+    </select>
+  );
+}
+
 interface DetailState {
   raw: string;   // full notes.md — shown as ONE consolidated Notes field (#11)
   preamble: string;
@@ -192,6 +231,7 @@ type DetailTab = 'contents' | 'details';
 
 export default function WorkMgrPane({ tabId }: WorkMgrPaneProps): JSX.Element {
   const listResize = usePanelResize('workMgrListWidth', { def: 300, min: 200, max: () => Math.max(600, Math.round(window.innerWidth * 0.5)) });
+  const { showToast } = useToast();
   const cardStore = useCardStore();
   const { appState } = useAppStateStore();
   const [todos, setTodos] = useState<WorkItem[]>([]);
@@ -200,6 +240,7 @@ export default function WorkMgrPane({ tabId }: WorkMgrPaneProps): JSX.Element {
   const [busy, setBusy] = useState<string | null>(null);
 
   const [viewMode, setViewMode] = useState<ViewMode>((wmCache.viewMode as ViewMode) ?? 'tree');
+  const [density, setDensity] = useState<'compact' | 'expanded'>((wmCache.density as 'compact' | 'expanded') ?? 'compact');
   // groupMode fixed to status (Kanban groups by status); no group dropdown.
   const [groupMode] = useState<GroupMode>('status');
   const [sortMode, setSortMode] = useState<SortMode>((wmCache.sortMode as SortMode) ?? 'updated');
@@ -212,9 +253,15 @@ export default function WorkMgrPane({ tabId }: WorkMgrPaneProps): JSX.Element {
   const [kanbanNest, setKanbanNest] = useState(false); // group kanban items under (dimmed) parent context
 
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => new Set(wmCache.collapsedGroups ?? []));
-  const [expandedNodes, setExpandedNodes] = useState<Set<string>>(() => new Set(wmCache.expandedNodes ?? []));
+  // Tree nodes are EXPANDED by default; this holds the ones the user has collapsed
+  // (persisted). Default-expanded keeps the tree visible, but every parent stays
+  // collapsible — the old expanded-set default made parents un-collapsible.
+  const [collapsedNodes, setCollapsedNodes] = useState<Set<string>>(() => new Set(wmCache.collapsedNodes ?? []));
 
   const [selectedId, setSelectedId] = useState<string | null>(wmCache.selectedId ?? null);
+  // Multi-select set (todo_0558) — drives the bulk-actions detail pane. Lives here
+  // (not in TodoListView) so the detail pane can react to it.
+  const [selIds, setSelIds] = useState<Set<string>>(new Set());
   const [detail, setDetail] = useState<DetailState | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [edited, setEdited] = useState<Record<string, string>>({});
@@ -229,19 +276,35 @@ export default function WorkMgrPane({ tabId }: WorkMgrPaneProps): JSX.Element {
   useEffect(() => {
     wmCache.viewMode = viewMode; wmCache.sortMode = sortMode; wmCache.sortReversed = sortReversed; wmCache.assignedFilter = assignedFilter;
     wmCache.search = search; wmCache.activeStatuses = [...activeStatuses]; wmCache.collapsedGroups = [...collapsedGroups];
-    wmCache.expandedNodes = [...expandedNodes]; wmCache.selectedId = selectedId; wmCache.detailTab = detailTab;
-  }, [viewMode, sortMode, sortReversed, assignedFilter, search, activeStatuses, collapsedGroups, expandedNodes, selectedId, detailTab]);
+    wmCache.collapsedNodes = [...collapsedNodes]; wmCache.selectedId = selectedId; wmCache.detailTab = detailTab; wmCache.density = density;
+  }, [viewMode, sortMode, sortReversed, assignedFilter, search, activeStatuses, collapsedGroups, collapsedNodes, selectedId, detailTab, density]);
 
   // When a finalized status pill (Done/Cancelled) is active, fetch finalized todos too (todo_0404).
-  const wantFinalized = activeStatuses.has('Done') || activeStatuses.has('Cancelled');
-  const load = useCallback(() => {
-    setLoading(true); setError(null);
+  // Also fetch them once a finalized todo is explicitly opened (e.g. a Done todo
+  // from a link), so the requested item is actually present to show (todo_0608).
+  const [forcedFinalized, setForcedFinalized] = useState(false);
+  const wantFinalized = activeStatuses.has('Done') || activeStatuses.has('Cancelled') || forcedFinalized;
+  // soft=true is a SOFT refresh (todo_0555): re-fetch and setTodos WITHOUT flipping
+  // the loading flag (which blanks the list → scroll jump) and WITHOUT clearing on a
+  // transient error. React then reconciles by key and only re-draws the rows that
+  // actually changed, preserving scroll position.
+  const load = useCallback((soft = false) => {
+    if (!soft) setLoading(true);
+    setError(null);
     window.uai.todos.list(wantFinalized)
       .then(items => setTodos((items as WorkItem[]).map(t => ({ ...t, assigned: t.assigned || [], tags: t.tags || [], flags: t.flags || [] }))))
-      .catch(err => { setError(err?.message || 'load failed'); setTodos([]); })
-      .finally(() => setLoading(false));
+      .catch(err => { setError(err?.message || 'load failed'); if (!soft) setTodos([]); })
+      .finally(() => { if (!soft) setLoading(false); });
   }, [wantFinalized]);
   useEffect(() => { load(); }, [load]);
+  // Reload when a todo changes anywhere — incl. edits inside the embedded detail
+  // view (title/notes/status/assignment/move/create) — so the list one-liner stays
+  // current. SOFT so it doesn't blank/scroll-jump the list (todo_0555).
+  useEffect(() => {
+    const onChanged = () => load(true);
+    window.addEventListener(TODOS_CHANGED, onChanged);
+    return () => window.removeEventListener(TODOS_CHANGED, onChanged);
+  }, [load]);
 
   const selected = useMemo(() => todos.find(t => t.id === selectedId) || null, [todos, selectedId]);
 
@@ -264,13 +327,20 @@ export default function WorkMgrPane({ tabId }: WorkMgrPaneProps): JSX.Element {
         setDetail({ raw: notes as string, preamble, sections, provenance: prov as any, files: files as any });
       }).catch(() => setDetail(null)).finally(() => setDetailLoading(false));
   }, []);
-  const handleSelect = useCallback((id: string) => { setSelectedId(id); loadDetail(id); }, [loadDetail]);
+  const handleSelect = useCallback((id: string) => { setSelIds(new Set()); setSelectedId(id); loadDetail(id); }, [loadDetail]);
 
   // Focus a specific todo when a linkified todo_#### ref is clicked elsewhere
   // (RefLink.focusTodoInWorkMgr). Consume a pending focus on mount (the pane may
   // have just been opened by the click) and listen for live focus events. Clear
   // the text search so a filter can't hide the target from the list.
-  const focusTodo = useCallback((id: string) => { setSearch(''); handleSelect(id); }, [handleSelect]);
+  const focusTodo = useCallback((id: string) => {
+    setSearch('');
+    // If the requested todo isn't in the loaded set, it's almost certainly a
+    // finalized (Done/Cancelled) one the default filter didn't fetch — pull them
+    // in so it can render (todo_0608).
+    if (!todos.some(t => t.id === id)) setForcedFinalized(true);
+    handleSelect(id);
+  }, [handleSelect, todos]);
   useEffect(() => {
     const pending = consumePendingTodoFocus();
     if (pending) focusTodo(pending);
@@ -289,19 +359,82 @@ export default function WorkMgrPane({ tabId }: WorkMgrPaneProps): JSX.Element {
     if (!r.ok) setError(r.error?.message || `${type} failed`);
     return r.ok;
   }, []);
+  const setPriority = useCallback(async (id: string, level: string) => {
+    setBusy(id); const ok = await runCmd('todo.priority', { id, level }); setBusy(null); if (ok) load(true);   // todo_0652
+  }, [runCmd, load]);
   const setStatus = useCallback(async (id: string, status: string) => {
-    setBusy(id); const ok = await runCmd('todo.setStatus', { id, status }); setBusy(null); if (ok) load();
+    setBusy(id); const ok = await runCmd('todo.setStatus', { id, status }); setBusy(null); if (ok) load(true);   // soft refresh — no blank/scroll-jump (todo_0555)
   }, [runCmd, load]);
   const moveTo = useCallback(async (id: string, target: string) => {
-    setBusy(id); const ok = await runCmd('todo.move', { id, target }); setBusy(null); if (ok) load();
+    setBusy(id); const ok = await runCmd('todo.move', { id, target }); setBusy(null); if (ok) load(true);   // soft refresh — no blank/scroll-jump (todo_0555)
   }, [runCmd, load]);
   const doAssign = useCallback(async (id: string, uri: string) => {
     if (!uri.trim()) return;
-    setBusy(id); const ok = await runCmd('todo.assign', { id, uri: uri.trim() }); setBusy(null); setNewAssignee(''); if (ok) load();
+    setBusy(id); const ok = await runCmd('todo.assign', { id, uri: uri.trim() }); setBusy(null); setNewAssignee(''); if (ok) load(true);   // soft refresh — no blank/scroll-jump (todo_0555)
   }, [runCmd, load]);
   const doUnassign = useCallback(async (id: string, uri: string) => {
-    setBusy(id); const ok = await runCmd('todo.unassign', { id, uri }); setBusy(null); if (ok) load();
+    setBusy(id); const ok = await runCmd('todo.unassign', { id, uri }); setBusy(null); if (ok) load(true);   // soft refresh — no blank/scroll-jump (todo_0555)
   }, [runCmd, load]);
+
+  // ── Bulk ops for multi-select drag-drop (todo_0411). Apply the same command to
+  //    every dragged id, then reload + notify ONCE. Skip no-op targets (e.g. moving
+  //    a todo onto itself). Returns nothing; errors surface via runCmd's setError.
+  const bulkMove = useCallback(async (ids: string[], target: string) => {
+    const list = ids.filter(id => id && id !== target);
+    if (!list.length) return;
+    setBusy('bulk'); let anyOk = false;
+    for (const id of list) if (await runCmd('todo.move', { id, target })) anyOk = true;
+    // The event listener above performs the one shared soft refresh; don't also
+    // call load(true) here or every bulk mutation issues two list requests.
+    setBusy(null); if (anyOk) notifyTodosChanged();
+  }, [runCmd]);
+  const bulkStatus = useCallback(async (ids: string[], status: string) => {
+    if (!ids.length) return;
+    setBusy('bulk'); let anyOk = false;
+    for (const id of ids) if (await runCmd('todo.setStatus', { id, status })) anyOk = true;
+    setBusy(null); if (anyOk) notifyTodosChanged();
+  }, [runCmd]);
+  const bulkAssign = useCallback(async (ids: string[], uri: string) => {
+    if (!ids.length) return;
+    const nextUri = uri.trim();
+    setBusy('bulk'); let anyOk = false;
+    for (const id of ids) {
+      const current = todos.find(t => t.id === id);
+      for (const oldUri of (current?.assigned || [])) {
+        if (await runCmd('todo.unassign', { id, uri: oldUri })) anyOk = true;
+      }
+      if (nextUri && await runCmd('todo.assign', { id, uri: nextUri })) anyOk = true;
+    }
+    setBusy(null); if (anyOk) notifyTodosChanged();
+  }, [runCmd, todos]);
+  // Bulk actions for the multi-select detail panel (todo_0558).
+  const bulkComment = useCallback(async (ids: string[], text: string) => {
+    if (!ids.length || !text.trim()) return;
+    setBusy('bulk'); let anyOk = false;
+    for (const id of ids) if (await runCmd('todo.comment', { id, text: text.trim() })) anyOk = true;
+    setBusy(null); if (anyOk) notifyTodosChanged();
+  }, [runCmd]);
+  const bulkTrash = useCallback(async (ids: string[]) => {
+    if (!ids.length) return;
+    setBusy('bulk'); let anyOk = false;
+    for (const id of ids) if (await runCmd('todo.trash', { id })) anyOk = true;
+    setBusy(null); if (anyOk) { setSelIds(new Set()); setSelectedId(null); notifyTodosChanged(); }
+  }, [runCmd]);
+  // Create a NEW parent todo, then move the whole group under it. Finds the created
+  // todo by name in a fresh list (create doesn't return its id to the renderer).
+  const createParentAndMove = useCallback(async (name: string, ids: string[]) => {
+    const nm = name.trim(); if (!nm || !ids.length) return;
+    setBusy('bulk');
+    const ok = await runCmd('todo.create', { name: nm });
+    if (ok) {
+      const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+      const fresh = (await window.uai.todos.list(false)) as WorkItem[];
+      const match = fresh.filter(t => norm(formatTitle(t)) === norm(nm))
+        .sort((a, b) => todoNum(b.id).localeCompare(todoNum(a.id), undefined, { numeric: true }))[0];
+      if (match) for (const id of ids) await runCmd('todo.move', { id, target: match.id });
+    }
+    setBusy(null); if (ok) notifyTodosChanged();
+  }, [runCmd]);
   // direct-edit notes: textarea saves on blur if changed (#7)
   const saveSection = useCallback(async (heading: string) => {
     if (!selected || !detail) return;
@@ -312,16 +445,10 @@ export default function WorkMgrPane({ tabId }: WorkMgrPaneProps): JSX.Element {
     const sections = detail.sections.map(s => s.heading === heading ? { ...s, body } : s);
     const md = serializeNotes(detail.preamble, sections);
     setBusy(selected.id); const ok = await runCmd('todo.writeNotes', { id: selected.id, content: md }); setBusy(null);
-    if (ok) setDetail({ ...detail, sections });
+    if (ok) { setDetail({ ...detail, sections }); notifyTodosChanged(); }
   }, [selected, detail, edited, runCmd]);
-  // Electron disables window.prompt(), so New opens an inline input instead.
-  const [newTodoName, setNewTodoName] = useState<string | null>(null);
-  const createTodo = useCallback(async () => {
-    const name = (newTodoName || '').trim();
-    if (!name) { setNewTodoName(null); return; }
-    if (await runCmd('todo.create', { name })) load();
-    setNewTodoName(null);
-  }, [runCmd, load, newTodoName]);
+  // Electron disables window.prompt(), so New opens a full dialog (todo_0557).
+  const [showNewDialog, setShowNewDialog] = useState(false);
 
   const openFile = useCallback((id: string, rel: string) => {
     setSelectedFile(rel); setFileContent(null);
@@ -330,6 +457,11 @@ export default function WorkMgrPane({ tabId }: WorkMgrPaneProps): JSX.Element {
 
   // ── filter predicate (independent multi-select status set) ──────────────────
   const matches = useCallback((t: WorkItem): boolean => {
+    // The explicitly-opened todo always shows, even if the current filter would
+    // hide it (e.g. opening a Done todo from a link, or returning to this tab with
+    // it selected). The filter applies first; the specific request overrides it
+    // (todo_0608).
+    if (selectedId && t.id === selectedId) return true;
     if (!activeStatuses.has(t.status)) return false;
     if (assignedFilter) {
       if (assignedFilter === NO_ASSIGNEE) { if (t.assigned.length) return false; }
@@ -340,17 +472,21 @@ export default function WorkMgrPane({ tabId }: WorkMgrPaneProps): JSX.Element {
       if (!(`${t.id} ${formatTitle(t)}`.toLowerCase().includes(q))) return false;
     }
     return true;
-  }, [activeStatuses, assignedFilter, search]);
+  }, [activeStatuses, assignedFilter, search, selectedId]);
 
   const cmp = useCallback((a: WorkItem, b: WorkItem): number => {
     const base = (() => {
       switch (sortMode) {
         case 'number': return todoNum(a.id).localeCompare(todoNum(b.id), undefined, { numeric: true });
         case 'status': return (STATUS_ORDER[a.status] ?? 99) - (STATUS_ORDER[b.status] ?? 99);
+        case 'priority': return (PRIORITY_ORDER[effectivePriority(a)] ?? 1) - (PRIORITY_ORDER[effectivePriority(b)] ?? 1);
         case 'title': return formatTitle(a).localeCompare(formatTitle(b));
         case 'assignee': return (assigneeLabel(a.assigned[0] || '~') || '~').localeCompare(assigneeLabel(b.assigned[0] || '~') || '~');
         case 'updated':
-        default: return (b.updated || '').localeCompare(a.updated || '');
+        // Newest-touched first. `updated` is now populated from history.log's last
+        // entry (todo_0607 backend fix); fall back to `created` so todos with no
+        // history still sort by a real date instead of being a no-op.
+        default: return (itemDate(b) || '').localeCompare(itemDate(a) || '');
       }
     })();
     return sortReversed ? -base : base;   // reverse-sort toggle (#1)
@@ -362,10 +498,15 @@ export default function WorkMgrPane({ tabId }: WorkMgrPaneProps): JSX.Element {
     const s = new Set<string>(['Done', 'Cancelled']); todos.forEach(t => s.add(t.status));
     return ALL_STATUSES.filter(x => s.has(x));
   }, [todos]);
-  // are we narrowing? (used to auto-expand + dim ancestors in Tree view, #3)
+  // Are we ACTIVELY narrowing? (used to auto-expand + dim ancestors in Tree view.)
+  // The resting default hides only the finalized statuses (Done/Cancelled), so that
+  // alone must NOT count as filtering — otherwise every tree parent is force-expanded
+  // and can never be collapsed. Real narrowing = a search, an assignee filter, or
+  // hiding a NON-finalized status.
   const isFiltering = useMemo(
-    () => presentStatuses.some(s => !activeStatuses.has(s)) || !!assignedFilter,
-    [presentStatuses, activeStatuses, assignedFilter],
+    () => !!search.trim() || !!assignedFilter
+      || presentStatuses.some(s => !FINALIZED.has(s) && !activeStatuses.has(s)),
+    [presentStatuses, activeStatuses, assignedFilter, search],
   );
   const toggleStatus = (s: string) => setActiveStatuses(prev => { const n = new Set(prev); n.has(s) ? n.delete(s) : n.add(s); return n; });
   const allAssignees = useMemo(() => { const s = new Set<string>(); todos.forEach(t => t.assigned.forEach(a => s.add(a))); return Array.from(s).sort(); }, [todos]);
@@ -376,12 +517,12 @@ export default function WorkMgrPane({ tabId }: WorkMgrPaneProps): JSX.Element {
   // consumes model.* where it needs derived collections (viewport count, detail
   // pane parent/child lookups, the move picker).
   const model = useTodoListModel(todos, matches, cmp);
-  const { byKey, childrenOf, rootItems, filtered } = model;
+  const { byKey, childrenOf, filtered } = model;
 
   // Collapse/expand state stays here — it's persisted across tab switches in
   // wmCache — and is passed down to TodoListView.
   const toggleGroup = (k: string) => setCollapsedGroups(p => { const n = new Set(p); n.has(k) ? n.delete(k) : n.add(k); return n; });
-  const toggleNode = (k: string) => setExpandedNodes(p => { const n = new Set(p); n.has(k) ? n.delete(k) : n.add(k); return n; });
+  const toggleNode = (k: string) => setCollapsedNodes(p => { const n = new Set(p); n.has(k) ? n.delete(k) : n.add(k); return n; });
 
   const parentItem = selected?.parent ? byKey.get(selected.parent) : null;
   const childItems = selected ? (childrenOf.get(selected.rel_path || selected.id) || []) : [];
@@ -408,7 +549,7 @@ export default function WorkMgrPane({ tabId }: WorkMgrPaneProps): JSX.Element {
   const saveNotes = async () => {
     if (!selected || notesDraft === null || !detail || notesDraft === detail.raw) return;
     const ok = await runCmd('todo.writeNotes', { id: selected.id, content: notesDraft });
-    if (ok) setDetail({ ...detail, raw: notesDraft });
+    if (ok) { setDetail({ ...detail, raw: notesDraft }); notifyTodosChanged(); }
   };
   // vertical drag for the Notes/Files boundary in the Contents tab (#2)
   const onNotesResize = (e: React.MouseEvent) => {
@@ -454,23 +595,10 @@ export default function WorkMgrPane({ tabId }: WorkMgrPaneProps): JSX.Element {
     setBusy(id);
     for (const a of (selected?.assigned || [])) await executeCommand('todo.unassign', { id, uri: a });
     if (uri) await executeCommand('todo.assign', { id, uri });
-    setBusy(null); load();
+    setBusy(null); load(true);   // soft refresh (todo_0555)
   };
   // Files → Artifacts: drop spec metadata (notes/origin/history/assigned/*.status/.tag) + dirs.
   const artifacts = (detail?.files || []).filter(f => !f.isDir && !isSpecFile(f.rel));
-  // Indented hierarchy options for the move picker (tree-ish; full tree picker is a follow-up).
-  const moveOptions = (): JSX.Element[] => {
-    const out: JSX.Element[] = [];
-    const walk = (items: WorkItem[], depth: number) => {
-      for (const t of items) {
-        if (t.id === selected?.id) continue;
-        out.push(<option key={t.id} value={t.id}>{' '.repeat(depth * 2)}{depth > 0 ? '└ ' : ''}todo_{todoNum(t.id)} · {formatTitle(t).slice(0, 36)}</option>);
-        walk(childrenOf.get(t.rel_path || t.id) || [], depth + 1);
-      }
-    };
-    walk(rootItems, 0);
-    return out;
-  };
 
   // Viewport reporter — exposes this Mgr's data (state) and invocable actions
   // (each maps to a todo.* Command Bus command) to describeViewport() / agents /
@@ -508,16 +636,8 @@ export default function WorkMgrPane({ tabId }: WorkMgrPaneProps): JSX.Element {
       <div className="context-mgr-titlebar">
         <TabNavArrows />
         <span className="context-mgr-titlebar-title">Work Manager</span>
-        {newTodoName === null
-          ? <button className="wm-action-btn" onClick={() => setNewTodoName('')} title="Create a new todo">+ New</button>
-          : <span className="wm-new-inline">
-              <input className="wm-search-input" autoFocus value={newTodoName} placeholder="New todo title…"
-                onChange={e => setNewTodoName(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter') createTodo(); if (e.key === 'Escape') setNewTodoName(null); }} />
-              <button className="wm-action-btn" onClick={createTodo}>Create</button>
-              <button className="wm-action-btn" onClick={() => setNewTodoName(null)}>✕</button>
-            </span>}
-        <button className="wm-action-btn" onClick={load} title="Reload from disk">Refresh</button>
+        <button className="wm-action-btn" onClick={() => setShowNewDialog(true)} title="Create a new todo">+ New</button>
+        <button className="wm-action-btn" onClick={() => load()} title="Reload from disk">Refresh</button>
         <span style={{ flex: 1 }} />
         <div className="wm-search">
           <span className="wm-search-ic">🔍</span>
@@ -542,18 +662,28 @@ export default function WorkMgrPane({ tabId }: WorkMgrPaneProps): JSX.Element {
                   </button>
                 ))}
               </div>
-              <label className="wm-dd">Sort
-                <select value={sortMode} onChange={e => setSortMode(e.target.value as SortMode)}>
-                  <option value="updated">Updated</option><option value="number">Number</option>
-                  <option value="status">Status</option><option value="title">Title</option>
-                  <option value="assignee">Assigned to</option>
-                </select>
-              </label>
-              <button
-                className="wm-sort-dir"
-                onClick={() => setSortReversed(v => !v)}
-                title={sortReversed ? 'Sort direction: reversed — click for normal' : 'Sort direction: normal — click to reverse'}
-              >{sortReversed ? '▲' : '▼'}</button>
+              {/* Row density: compact (1 line) vs expanded (+ summary/assignee/tags) — todo_0556 */}
+              <button className="filter-pill" title="Toggle row density"
+                onClick={() => setDensity(d => (d === 'compact' ? 'expanded' : 'compact'))}>
+                {density === 'compact' ? '☰ Compact' : '≣ Expanded'}
+              </button>
+              <SortMenu
+                fields={[
+                  { value: 'updated', label: 'Updated' },
+                  { value: 'number', label: 'Number' },
+                  { value: 'status', label: 'Status' },
+                  { value: 'priority', label: 'Priority' },
+                  { value: 'title', label: 'Title' },
+                  { value: 'assignee', label: 'Assigned to' },
+                ]}
+                value={sortMode}
+                ascending={sortMode === 'updated' ? sortReversed : !sortReversed}
+                onSelect={(v) => {
+                  // Same field → flip direction; different field → switch to it.
+                  if (v === sortMode) setSortReversed(r => !r);
+                  else setSortMode(v as SortMode);
+                }}
+              />
               <StatusFilterMenu
                 statuses={presentStatuses}
                 active={activeStatuses}
@@ -575,10 +705,13 @@ export default function WorkMgrPane({ tabId }: WorkMgrPaneProps): JSX.Element {
             </div>
             <TodoListView
               model={model} viewMode={viewMode} selectedId={selectedId} onSelect={handleSelect}
-              onMove={moveTo} matches={matches} isFiltering={isFiltering} search={search}
+              selIds={selIds} onSelIdsChange={setSelIds}
+              onReparent={bulkMove} onSetStatus={bulkStatus} onReassign={bulkAssign}
+              matches={matches} isFiltering={isFiltering} search={search}
               kanbanNest={kanbanNest} busy={busy} loading={loading} error={error}
               collapsedGroups={collapsedGroups} toggleGroup={toggleGroup}
-              expandedNodes={expandedNodes} toggleNode={toggleNode}
+              collapsedNodes={collapsedNodes} toggleNode={toggleNode}
+              density={density}
               viewportId="work_mgr_todo_list"
             />
           </div>
@@ -587,7 +720,19 @@ export default function WorkMgrPane({ tabId }: WorkMgrPaneProps): JSX.Element {
 
           {/* Right detail — top: fields; bottom half: files (#13) */}
           <div className="wm-detail">
-            {!selected ? <div className="traits-mgr-empty">Select a work item</div> : (
+            {selIds.size > 1 ? (
+              <TodoBulkPanel
+                ids={[...selIds]} todos={todos} statuses={ALL_STATUSES}
+                assigneeOptions={assigneeOptions} assigneeGroups={ASSIGNEE_GROUPS} busy={busy === 'bulk'}
+                onStatus={s => bulkStatus([...selIds], s)}
+                onAssign={u => bulkAssign([...selIds], u)}
+                onComment={t => bulkComment([...selIds], t)}
+                onMove={p => bulkMove([...selIds], p)}
+                onCreateParent={n => createParentAndMove(n, [...selIds])}
+                onDelete={() => bulkTrash([...selIds])}
+                onClear={() => setSelIds(new Set())}
+              />
+            ) : !selected ? <div className="traits-mgr-empty">Select a work item</div> : (
               <TodoItemView
                 viewportId="work_mgr_todo_view"
                 todo={selected as any}
@@ -595,6 +740,7 @@ export default function WorkMgrPane({ tabId }: WorkMgrPaneProps): JSX.Element {
                 search={search}
                 onSelect={handleSelect}
                 statusEditor={<StatusSelect status={selected.status} onChange={s => setStatus(selected.id, s)} />}
+                priorityEditor={<PrioritySelect priority={effectivePriority(selected)} onChange={p => setPriority(selected.id, p)} />}
                 assigneeEditor={
                   <select className="wm-status-select" value={selected.assigned[0] || ''} onChange={e => setAssignee(selected.id, e.target.value)} title="Assign to a project / team / session" disabled={busy === selected.id}>
                     <option value="">unassigned</option>
@@ -608,17 +754,31 @@ export default function WorkMgrPane({ tabId }: WorkMgrPaneProps): JSX.Element {
                   </select>
                 }
                 moveControl={
-                  <select className="wm-input wm-move-inline" value="" onChange={e => { if (e.target.value) moveTo(selected.id, e.target.value); }} title="Re-parent this todo">
-                    <option value="">choose a parent…</option>
-                    {moveOptions()}
-                    <option value="root">— move to root (top-level) —</option>
-                  </select>
+                  <ParentPicker
+                    todos={todos}
+                    excludeIds={new Set([selected.id])}
+                    onMove={pid => moveTo(selected.id, pid)}
+                    onCreateParent={n => createParentAndMove(n, [selected.id])}
+                  />
                 }
               />
             )}
           </div>
         </div>
       </div>
+      {showNewDialog && (
+        <NewTodoDialog
+          todos={todos}
+          onClose={() => setShowNewDialog(false)}
+          toastFn={showToast}
+          onCreated={(id, createdStatus) => {
+            setSearch('');
+            if (FINALIZED.has(createdStatus)) setForcedFinalized(true);
+            if (id) handleSelect(id);
+            load(true);   // soft refresh (todo_0555)
+          }}
+        />
+      )}
     </div>
   );
 }

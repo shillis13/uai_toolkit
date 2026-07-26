@@ -57,6 +57,16 @@ export function attachTerminal(
   rows: number,
   window: BrowserWindow,
 ): void {
+  // Smoke/E2E safe-boot (todo_0631): under UAI_SMOKE, NEVER attach a real session's
+  // PTY. attachTerminal spawns `session_ops.py attach <name>` against the live tmux
+  // session, so a mount smoke test would otherwise reach into every running session's
+  // terminal. The smoke test only needs the renderer to MOUNT (terminals may stay
+  // blank); this is the single choke point all attaches pass through. Normal runs
+  // (UAI_SMOKE unset) are unaffected.
+  if (process.env.UAI_SMOKE === '1') {
+    console.log(`[terminal] attachTerminal SKIPPED (UAI_SMOKE) sessionId=${sessionId}`);
+    return;
+  }
   const existing = ptyEntries.get(sessionId);
   if (existing) {
     try { process.kill(existing.process.pid, 'SIGKILL'); } catch { /* ignore */ }

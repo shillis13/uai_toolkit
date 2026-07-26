@@ -61,6 +61,9 @@ export interface Session {
   context_percent: number | null;
   exchange_count: number;
   message_count: number | null;
+  // Size in bytes of the session's JSONL transcript (history_file). Read-only,
+  // derived by stat'ing the externally-owned transcript; null if unavailable.
+  transcript_bytes: number | null;
   last_activity: string;
   // Local-time ISO timestamps of session (re)starts, appended by the
   // SessionStart hook. Most-recent-last; empty until the first recorded start.
@@ -347,7 +350,6 @@ export const IPC = {
 
   // Projects
   PROJECT_LIST: 'uai:projects:list',
-  TEAM_LIST: 'uai:teams:list',
 
   // Briefs
   BRIEF_LIST: 'uai:briefs:list',

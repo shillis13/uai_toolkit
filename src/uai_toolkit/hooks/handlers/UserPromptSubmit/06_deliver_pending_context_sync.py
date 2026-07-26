@@ -23,6 +23,42 @@ from uai_toolkit.hooks.common.lib_hook_base import run_hook, HookResult
 from uai_toolkit.hooks.common import lib_context_load
 
 
+def _fmt_size(nbytes):
+    """Human-readable byte size for the terminal marker."""
+    if nbytes < 1024:
+        return "{} B".format(nbytes)
+    kb = nbytes / 1024.0
+    if kb < 1024:
+        return "{:.0f} KB".format(kb) if kb >= 10 else "{:.1f} KB".format(kb)
+    return "{:.1f} MB".format(kb / 1024.0)
+
+
+def _marker_line(stem, content, source):
+    """One visible line per delivered item: what loaded and how big. Briefs
+    (staged from session_briefs/) are labeled 'brief'; everything else 'context'."""
+    src = (source or "").lower()
+    name = str(stem or "")
+    # Durable post-compaction reloads are queued as
+    # 50_reload__<type>__<semantic-name>.ref. Show the semantic name/type rather
+    # than leaking that internal priority prefix into the user's terminal.
+    if name.startswith("50_reload__"):
+        reload_type, sep, reload_name = name[len("50_reload__"):].partition("__")
+        if sep:
+            name = reload_name
+            kind = "brief" if reload_type.rstrip("s") == "brief" else "context"
+        else:
+            kind = "context"
+    else:
+        kind = "brief" if (
+            "session_briefs" in src
+            or "auto_briefs" in src
+            or src.startswith(("brief/", "briefs/"))
+        ) else "context"
+    name = " ".join(name.split()) or "(unnamed)"
+    size = _fmt_size(len((content or "").encode("utf-8")))
+    return "\U0001F4C4 {} loaded: {} ({})".format(kind, name, size)
+
+
 def handler(hook_input, context):
     session_dir = context.session_dir
     tracking_id = context.tracking_id
@@ -42,7 +78,13 @@ def handler(hook_input, context):
         f"into this session. This is reference context — absorb it silently.\n\n"
         + "\n\n".join(sections)
     )
+    # additionalContext feeds the brief into the model silently; systemMessage
+    # prints a one-line-per-item marker to the USER's terminal so a brief reload
+    # after a compaction is visible, not invisible (PianoMan, 2026-07-23).
+    marker = "\n".join(_marker_line(stem, content, source)
+                       for stem, content, source in delivered)
     output = json.dumps({
+        "systemMessage": marker,
         "hookSpecificOutput": {
             "hookEventName": "UserPromptSubmit",
             "additionalContext": instruction,

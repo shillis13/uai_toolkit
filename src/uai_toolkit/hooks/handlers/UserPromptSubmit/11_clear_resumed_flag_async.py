@@ -15,26 +15,19 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "common"))
 from uai_toolkit.hooks.common.lib_hook_base import run_hook, HookResult
+from uai_toolkit.hooks.common.lib_session_state_union import read_union, write_session_state  # session-state bridge (todo_0495)
 
 
 def handler(hook_input, context):
     if not context.tracking_id or not context.session_dir:
         return HookResult.skip("no session identity")
-    sp = Path(context.session_dir) / f"{context.tracking_id}_state.json"
-    if not sp.exists():
-        return HookResult.skip("no state file")
-    try:
-        state = json.loads(sp.read_text())
-    except (json.JSONDecodeError, OSError):
-        return HookResult.skip("state unreadable")
+    state = read_union(context.session_dir, context.tracking_id)
     if not state.get("bounce.resumed_awaiting_prompt"):
         return HookResult.skip("flag not set")
-    state.pop("bounce.resumed_awaiting_prompt", None)
-    state.pop("bounce.resumed_at", None)
-    try:
-        sp.write_text(json.dumps(state, indent=2))
-    except OSError as e:
-        return HookResult.allow(f"could not clear resumed flag: {e}")
+    # Targeted delete through the bridge (enrolled → canonical, else legacy).
+    if not write_session_state(context.session_dir, context.tracking_id,
+                               deletes=["bounce.resumed_awaiting_prompt", "bounce.resumed_at"]):
+        return HookResult.allow("could not clear resumed flag")
     return HookResult.allow("cleared resumed_awaiting_prompt (first prompt after resume)")
 
 

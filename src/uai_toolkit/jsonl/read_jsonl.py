@@ -48,7 +48,9 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-sys.path.insert(0, os.environ.get("AI_SCRIPTS") or str(Path(__file__).resolve().parents[1]))
+_ai_scripts = os.environ.get("AI_SCRIPTS")
+if _ai_scripts:
+    sys.path.insert(0, _ai_scripts)
 from uai_toolkit.paths import AI_SCRIPTS
 
 # Import standard_colors
@@ -217,6 +219,30 @@ def _load_memorex_palette() -> dict:
     return _MEMOREX_PALETTE_DEFAULT
 
 
+def _section_for(type_value: str, content: str) -> str:
+    """Core shared segmentation: raw message type -> Memorex SECTION. Maps the type
+    through the palette's `typeToSection` (the configurable separate/combine rule:
+    tool_use+tool_result -> tool, injected -> inject, skill -> skill, ...), then applies
+    the one content rule: a USER record whose body opens with the inter-session
+    provenance envelope is an inject (COMMS). Edit the palette's typeToSection to change
+    how types are separated or combined for BOTH consumers.
+
+    This is the SINGLE shared definition — the sectioned VIEW (a layer above the raw
+    message serialization; see format_messages_from_schema) and the UAI Memorex overlay
+    both derive sections from it, so their message boundaries line up exactly."""
+    palette = _load_memorex_palette()
+    type_to_section = palette.get("typeToSection", {})
+    sec = type_to_section.get(type_value, "meta")
+    if sec == "user" and _MEMOREX_INJECT_RE.match((content or "").lstrip()):
+        sec = "inject"
+    return sec
+
+
+def memorex_section_of(m: "Message") -> str:
+    """Message-object wrapper of _section_for (used by the memorex render format)."""
+    return _section_for(m.type.value, m.content)
+
+
 def _hex_to_ansi(hex_str: str, *, bg: bool = False) -> str:
     """'#7aa2f7' -> ANSI 24-bit SGR ('\\033[38;2;122;162;247m'). bg=True -> 48;2."""
     h = (hex_str or "").lstrip("#")
@@ -242,7 +268,6 @@ def render_memorex(messages: "list[Message]", *, msg_num_offset: int = 0,
     """
     palette = _load_memorex_palette()
     sections = palette.get("sections", {})
-    type_to_section = palette.get("typeToSection", {})
     expand = expand or set()
     expand_all = "all" in expand
     enabled = Colors.enabled()
@@ -257,13 +282,9 @@ def render_memorex(messages: "list[Message]", *, msg_num_offset: int = 0,
     meta_spec = sections.get("meta", {"color": "#565f89", "label": "META", "collapse": True})
     out: list[str] = []
     for i, m in enumerate(messages):
-        sec = type_to_section.get(m.type.value, "meta")
-        # Inter-session prompt (comms send_prompt): a USER record whose body opens
-        # with the provenance envelope "From <id> (<id>) at YYYY-MM-DD ...". The
-        # JSONL has no meta flag for these, so read_jsonl tags them USER — but the
-        # UAI Memorex overlay shows them as COMMS. Remap here so both render alike.
-        if sec == "user" and _MEMOREX_INJECT_RE.match((m.content or "").lstrip()):
-            sec = "inject"
+        # Shared segmentation (typeToSection + inter-session envelope) — the SAME
+        # function read_jsonl's structured output and the UAI overlay both use.
+        sec = memorex_section_of(m)
         spec = sections.get(sec, meta_spec)
         color = spec.get("color", "#565f89")
         label = spec.get("label", sec.upper())
@@ -529,7 +550,14 @@ def _resolve_via_session_store(query: str) -> Path | None:
         store_path = AI_SCRIPTS / "session_mgmt" / "session_store.py"
         if not store_path.exists():
             return None
-        import importlib.util
+        import importlib.util, sys
+        # session_store.py does `from session_registry import *`; its own directory must
+        # be importable or that import throws ModuleNotFoundError and we silently never
+        # resolve a tracking-id / display-name (the cause of Memorex losing all its
+        # msg#/timestamp labels). Put session_mgmt/ on sys.path first.
+        sm_dir = str(store_path.parent)
+        if sm_dir not in sys.path:
+            sys.path.insert(0, sm_dir)
         spec = importlib.util.spec_from_file_location("session_store", store_path)
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
@@ -593,6 +621,11 @@ def find_jsonl(query: str) -> Path | None:
                 continue
             for f in proj_dir.glob("*.jsonl"):
                 stem = f.stem.lower()
+                # Skip non-transcript sidecars (e.g. <uuid>.offload_tokens.jsonl):
+                # a real session file's stem is a bare id, so a dotted stem is a
+                # sidecar and must not compete with the transcript for a uuid match.
+                if "." in stem:
+                    continue
                 if stem == query or stem.startswith(query) or query in stem:
                     candidates.append(f)
 
@@ -654,7 +687,22 @@ def find_jsonl(query: str) -> Path | None:
         
         if len(unique_candidates) == 1:
             return unique_candidates[0]
-            
+
+        # Prefer the canonical transcript before giving up as ambiguous:
+        #  1. An EXACT full-id stem match beats substring/prefix hits.
+        exact = [c for c in unique_candidates if c.stem.lower() == query]
+        if exact:
+            unique_candidates = exact
+        #  2. If what's left is the SAME session id duplicated across project dirs
+        #     (e.g. an old -Documents- copy + the current one), pick the newest —
+        #     the live session writes the current file; stale copies aren't updated.
+        #     Genuinely different sessions (distinct ids) still report ambiguous.
+        if len(unique_candidates) > 1 and len({c.stem.lower() for c in unique_candidates}) == 1:
+            unique_candidates = [max(unique_candidates, key=lambda c: c.stat().st_mtime)]
+
+        if len(unique_candidates) == 1:
+            return unique_candidates[0]
+
         print(f"Ambiguous match for '{query}' -- {len(unique_candidates)} files found:", file=sys.stderr)
         for c in unique_candidates[:10]:
             print(f"  {c}", file=sys.stderr)
@@ -805,9 +853,11 @@ def _chain_and_prompt_meta(jsonl_path: Path, *,
     DEFAULT (all_intervals=False): the CURRENT-INTERVAL single-walk chain — only the
     tree containing the active conversational leaf. Each /compact writes a fresh
     parentUuid=None root, so this is what the model actually sees NOW; superseded
-    pre-compaction intervals are excluded. Set all_intervals=True for the whole-FILE
-    multi-root union (all intervals' live turns) — wanted only for file reduction /
-    archival accounting (todo_0393)."""
+    pre-compaction intervals are excluded. Set all_intervals=True for the WHOLE-HISTORY
+    chain: one continuous branch threaded across every /compact seam via the CLI's own
+    logicalParentUuid link (with a file-order completeness fallback for intervals a
+    dangling ref severs) — wanted for file reduction / archival accounting (todo_0393)
+    and the `--interval all` transcript view."""
     by_uuid: dict = {}
     order: list = []
     try:
@@ -828,13 +878,16 @@ def _chain_and_prompt_meta(jsonl_path: Path, *,
     except OSError:
         return set(), set(), set()
 
-    # Active chain, multi-root. Each /compact starts a NEW tree (a system root with
-    # parentUuid=None), so a single leaf→root walk only sees the current interval.
-    # Instead: group records into trees by root, and for each tree walk back from its
-    # LIVE tip (latest record in the tree) to the root. Union = all live turns across
-    # all intervals, while dead-retry / rewind siblings (which end before their tree's
-    # tip) drop out.
+    # Active chain, multi-root. Each /compact starts a NEW tree (a compact_boundary root with
+    # parentUuid=None), so a leaf→root walk on parentUuid ALONE only sees the current interval.
+    # But the CLI also stamps `logicalParentUuid` on each compact_boundary — its OWN authoritative
+    # "this continues from" pointer back into the PRIOR interval. For the whole-history
+    # (all_intervals) view we follow that link across each /compact seam, threading every interval
+    # into ONE continuous active branch. That is more principled than a file-order tip heuristic:
+    # a prior interval's dead sibling fork can't be mistaken for the live branch. The default
+    # (current-interval) scope still walks parentUuid only and stops at the seam.
     parent_of = {u: o.get("parentUuid") for u, (i, o) in by_uuid.items()}
+    logical_of = {u: o.get("logicalParentUuid") for u, (i, o) in by_uuid.items()}
 
     def root_of(u):
         seen_r = set()
@@ -846,42 +899,61 @@ def _chain_and_prompt_meta(jsonl_path: Path, *,
             u = p
         return u
 
-    trees: dict = {}
-    for u, (i, o) in by_uuid.items():
-        trees.setdefault(root_of(u), []).append((i, u))
-
-    # DEFAULT: current interval only — the single tree containing the active
-    # conversational leaf (last non-sidechain user/assistant). all_intervals=True
-    # unions every tree's live branch (whole-file, all compaction intervals).
-    if all_intervals:
-        selected = list(trees.items())
-    else:
-        leaf_uuid = None
-        for _i, o in reversed(order):
-            if o.get("isSidechain"):
-                continue
-            if o.get("type") in ("user", "assistant") and o.get("uuid"):
-                leaf_uuid = o["uuid"]
-                break
-        if leaf_uuid is not None:
-            lr = root_of(leaf_uuid)
-            selected = [(lr, trees.get(lr, []))]
-        else:
-            selected = list(trees.items())   # no conversational leaf → fall back to union
-
-    chain_lines: set = set()
-    for _root, members in selected:
-        if not members:
-            continue
-        tip_u = max(members)[1]          # latest record (by file line) = the live branch
-        cur, seen = tip_u, set()
+    def _walk(start, acc, cross):
+        """leaf→root walk from `start`, adding each visited record's line to `acc`; returns the
+        set of uuids visited. cross=True bridges a parentUuid=None /compact seam via
+        logicalParentUuid. A dangling parent/logical ref (target absent — a resume/rewrite gap)
+        ends the walk."""
+        cur, seen = start, set()
         while cur in by_uuid and cur not in seen:
             seen.add(cur)
-            chain_lines.add(by_uuid[cur][0])
-            p = parent_of.get(cur)
-            if p not in by_uuid:
+            acc.add(by_uuid[cur][0])
+            nxt = parent_of.get(cur)
+            if nxt is None and cross:
+                lp = logical_of.get(cur)
+                nxt = lp if lp in by_uuid else None
+            if nxt not in by_uuid:
                 break
-            cur = p
+            cur = nxt
+        return seen
+
+    # the live conversational leaf (last non-sidechain user/assistant record)
+    leaf_uuid = None
+    for _i, o in reversed(order):
+        if o.get("isSidechain"):
+            continue
+        if o.get("type") in ("user", "assistant") and o.get("uuid"):
+            leaf_uuid = o["uuid"]
+            break
+
+    chain_lines: set = set()
+    if all_intervals and leaf_uuid is not None:
+        # 1) principled continuous walk: leaf → root, crossing each seam via logicalParentUuid.
+        visited = _walk(leaf_uuid, chain_lines, True)
+        # 2) completeness fallback: any interval-tree the walk never reached (severed by a
+        #    dangling ref) still contributes its own live branch, so a mid-history data gap
+        #    can't blank older intervals out of the whole-history view.
+        reached_roots = {root_of(u) for u in visited}
+        trees: dict = {}
+        for u, (i, o) in by_uuid.items():
+            trees.setdefault(root_of(u), []).append((i, u))
+        for root, members in trees.items():
+            if root in reached_roots or not members:
+                continue
+            _walk(max(members)[1], chain_lines, False)
+    else:
+        # current-interval (default) OR no conversational leaf: the tree containing the live
+        # leaf (file-order tip → root), parentUuid only — no seam crossing.
+        trees = {}
+        for u, (i, o) in by_uuid.items():
+            trees.setdefault(root_of(u), []).append((i, u))
+        if leaf_uuid is not None:
+            selected = [(root_of(leaf_uuid), trees.get(root_of(leaf_uuid), []))]
+        else:
+            selected = list(trees.items())   # no conversational leaf → fall back to union
+        for _root, members in selected:
+            if members:
+                _walk(max(members)[1], chain_lines, False)
 
     turnstart_lines: set = set()
     compaction_lines: set = set()
@@ -2648,10 +2720,21 @@ def format_messages_from_schema(messages: list[Message], fmt: str = "text",
 
     if fmt == "structured":
         days = structure_session(messages)
-        return json.dumps([d.to_dict() for d in days], indent=2)
+        out = [d.to_dict() for d in days]
+        # Layer-above the raw parse: stamp the shared Memorex section onto each message
+        # VIEW here. Message.to_dict() stays type-only (raw); segmentation lives in this
+        # view + memorex_section_of, both deriving from _section_for (the single rule).
+        for day in out:
+            for turn in day.get("turns", []):
+                for md in turn.get("messages", []):
+                    md["section"] = _section_for(md.get("type", ""), md.get("content", ""))
+        return json.dumps(out, indent=2)
 
     if fmt == "flat":
-        return json.dumps([m.to_dict() for m in messages], indent=2)
+        out = [m.to_dict() for m in messages]
+        for md in out:
+            md["section"] = _section_for(md.get("type", ""), md.get("content", ""))
+        return json.dumps(out, indent=2)
 
     if fmt == "json":
         return json.dumps([
@@ -2735,14 +2818,30 @@ def format_messages_from_schema(messages: list[Message], fmt: str = "text",
 # =============================================================================
 
 
+def _filter_to_live_chain(msgs: list[Message], path) -> list[Message]:
+    """Branch-aware live scope: keep only records on the live segment the
+    branch resolver returns (the post-compaction active chain a --resume reloads), via
+    lib_branch_index. uuid-less records (attachments, client meta) pass through — they're
+    handled by the client-only path, not the resolver's uuid domain."""
+    import lib_branch_index as _bi
+    live = set(_bi.resolve_live_chain(path))
+    return [m for m in msgs if (not m.raw.get("uuid")) or (m.raw.get("uuid") in live)]
+
+
+def _is_live_interval_spec(interval_spec: str | None) -> bool:
+    """Whether an interval selector denotes the live scope rather than history."""
+    return interval_spec is None or str(interval_spec).strip().lower() in ("", "live", "last")
+
+
 def _read_targets(
     targets: list[str], *, platform: str | None, resolve: bool,
     include_client_only: bool, interval_spec: str | None,
-    all_intervals: bool, missing_label: str = "Session not found",
+    all_intervals: bool, branch_aware: bool = False,
+    missing_label: str = "Session not found",
 ) -> tuple[list[Message] | None, str | None]:
     """Load messages for UUID/path targets and apply per-file interval selection."""
     all_msgs: list[Message] = []
-    parse_all_intervals = all_intervals or bool(interval_spec)
+    parse_all_intervals = all_intervals or bool(interval_spec) or branch_aware
     for target in targets:
         path = find_jsonl(target)
         if not path:
@@ -2752,7 +2851,9 @@ def _read_targets(
             m = resolve_archived_stubs(m, path)
         if include_client_only:
             m = sorted(m + client_only_meta_messages(path), key=lambda x: x.source_line)
-        if interval_spec:
+        if branch_aware and _is_live_interval_spec(interval_spec):
+            m = _filter_to_live_chain(m, path)
+        elif interval_spec:
             selected, err = _select_intervals(interval_spec, compaction_intervals(path))
             if err:
                 return None, c(err, Colors.YELLOW)
@@ -2764,11 +2865,11 @@ def _read_targets(
 def _read_file_targets(
     paths: list[str], *, platform: str | None, resolve: bool,
     include_client_only: bool, interval_spec: str | None,
-    all_intervals: bool,
+    all_intervals: bool, branch_aware: bool = False,
 ) -> tuple[list[Message] | None, str | None]:
     """Load messages for explicit file paths and apply per-file interval selection."""
     all_msgs: list[Message] = []
-    parse_all_intervals = all_intervals or bool(interval_spec)
+    parse_all_intervals = all_intervals or bool(interval_spec) or branch_aware
     for p_str in paths:
         p = Path(p_str)
         if not p.exists():
@@ -2778,7 +2879,9 @@ def _read_file_targets(
             m = resolve_archived_stubs(m, p)
         if include_client_only:
             m = sorted(m + client_only_meta_messages(p), key=lambda x: x.source_line)
-        if interval_spec:
+        if branch_aware and _is_live_interval_spec(interval_spec):
+            m = _filter_to_live_chain(m, p)
+        elif interval_spec:
             selected, err = _select_intervals(interval_spec, compaction_intervals(p))
             if err:
                 return None, c(err, Colors.YELLOW)
@@ -2818,7 +2921,7 @@ def _filter_and_format_messages(
 def cmd_read(args: list[str]) -> str:
     """Read messages from a session by UUID."""
     if not args:
-        return "Usage: read <uuid> [--format F] [--platform P] [--type/--types T] [--range R|--turns R] [--interval SPEC]"
+        return "Usage: read <uuid> [--format F] [--platform P] [--type/--types T] [--range R|--turns R] [--interval SPEC] [--legacy-scope]"
     query = args[0]
     fmt = _parse_flag(args, "--format") or "text"
     platform = _parse_flag(args, "--platform")
@@ -2830,11 +2933,13 @@ def cmd_read(args: list[str]) -> str:
     resolve = "--resolve" in args
     include_client_only = "--include-client-only" in args
     all_intervals = "--all-intervals" in args
+    branch_aware = "--legacy-scope" not in args   # default ON since 2026-07-20 cutover
 
     loaded, err = _read_targets([query], platform=platform, resolve=resolve,
                                 include_client_only=include_client_only,
                                 interval_spec=interval_spec,
-                                all_intervals=all_intervals)
+                                all_intervals=all_intervals,
+                                branch_aware=branch_aware)
     if err:
         return err
     return _filter_and_format_messages(loaded or [], fmt=fmt, type_filter=type_filter,
@@ -2854,17 +2959,19 @@ def cmd_read_file(args: list[str]) -> str:
     resolve = "--resolve" in args
     include_client_only = "--include-client-only" in args
     all_intervals = "--all-intervals" in args
+    branch_aware = "--legacy-scope" not in args   # default ON since 2026-07-20 cutover
     expand = _parse_memorex_expand(_parse_flag(args, "--expand"))
     paths = _strip_flags(args, ["--format", "--platform", "--range", "--turns", "--interval", "--expand"], multi_flags=["--type", "--types"])
-    paths = [p for p in paths if p not in ("--include-client-only", "--all-intervals")]
+    paths = [p for p in paths if p not in ("--include-client-only", "--all-intervals", "--branch-aware", "--legacy-scope")]
 
     if not paths:
-        return "Usage: read-file <path> [path2 ...] [--format F] [--platform P] [--type/--types T] [--range R|--turns R] [--interval SPEC] [--resolve] [--expand SECTIONS]"
+        return "Usage: read-file <path> [path2 ...] [--format F] [--platform P] [--type/--types T] [--range R|--turns R] [--interval SPEC] [--legacy-scope] [--resolve] [--expand SECTIONS]"
 
     loaded, err = _read_file_targets(paths, platform=platform, resolve=resolve,
                                      include_client_only=include_client_only,
                                      interval_spec=interval_spec,
-                                     all_intervals=all_intervals)
+                                     all_intervals=all_intervals,
+                                     branch_aware=branch_aware)
     if err:
         return err
     return _filter_and_format_messages(loaded or [], fmt=fmt, type_filter=type_filter,
@@ -2926,7 +3033,12 @@ def cmd_find(args: list[str]) -> str:
     result = find_jsonl(args[0])
     if result:
         return str(result)
-    return c(f"Not found: {args[0]}", Colors.RED)
+    # Not-found is a STATUS, not output: send it to stderr and leave stdout EMPTY, so a
+    # caller that captures stdout as the path (e.g. the app's transcript read) sees ""
+    # and reports "not found" instead of feeding the message back as a filename and
+    # failing later with a confusing "Invalid JSON".
+    print(c(f"Not found: {args[0]}", Colors.RED), file=sys.stderr)
+    return ""
 
 
 def cmd_summary(args: list[str]) -> str:
@@ -3080,6 +3192,49 @@ def _format_context_caveat() -> str:
     return "\n".join(out)
 
 
+def cmd_tail(args: list[str]) -> str:
+    """Incremental tail for the Transcript->Memorex pipeline: emit ONLY the records
+    appended since a cursor, as JSON, so a consumer never rescans the whole file.
+
+    Usage: tail <uuid|path> [--since-cursor '<json>'] [--since-line N]
+      (no cursor)          full read, reset=true; returns a cursor to cache
+      --since-cursor JSON  the cursor from a prior call — round-trip it verbatim
+      --since-line N       resume just after file line N (scans once; then use the cursor)
+
+    Emits {"reset":bool,"cursor":{...},"count":N,"records":[{"line":L,"record":{...}}]}.
+    reset=true => the file was rewritten in place (offload/compaction) OR first read:
+    DROP prior state and take `records` as the full current set. Records are raw and in
+    file order — NOT branch-scoped, NOT Memorex-rendered (a plain stream tail)."""
+    import lib_jsonl_tail as _tail
+    since_cursor = _parse_flag(args, "--since-cursor")
+    since_line = _parse_flag(args, "--since-line")
+    positionals = _strip_flags(args, ["--since-cursor", "--since-line", "--platform"])
+    if not positionals:
+        return "Usage: tail <uuid|path> [--since-cursor '<json>'] [--since-line N]"
+    path = find_jsonl(positionals[0])
+    if not path:
+        return c(f"Session not found: {positionals[0]}", Colors.RED)
+    cursor = None
+    if since_cursor:
+        try:
+            cursor = json.loads(since_cursor)
+        except Exception as e:
+            return c(f"bad --since-cursor JSON: {e}", Colors.RED)
+    elif since_line is not None:
+        try:
+            cursor = _tail.cursor_at_line(str(path), int(since_line))
+        except Exception as e:
+            return c(f"bad --since-line: {e}", Colors.RED)
+    out = _tail.tail_records(str(path), cursor)
+    payload = {
+        "reset": out["reset"],
+        "cursor": out["cursor"],
+        "count": len(out["records"]),
+        "records": [{"line": ln, "record": rec} for ln, rec in out["records"]],
+    }
+    return json.dumps(payload, separators=(",", ":"))
+
+
 def cmd_branches(args: list[str]) -> str:
     """Branch-aware TOPOLOGY (lib_branch_index) — the branch-aware counterpart to `compactions`
     (which is line-based). Segment starts, VALID forks (genuine rewind/resume branches, with
@@ -3221,15 +3376,16 @@ def _command_help_entries() -> dict[str, dict]:
                 ("--type/--types TYPE[,TYPE]", f"Filter by message type: {types_list}; aliases: assistant, tools, conversation"),
                 ("--range RANGE", "Message range: 1-10, -20, 5-, t1-5, t-4"),
                 ("--turns RANGE", "Absolute Tn turn range: 10-20, 10-, -5, 12"),
-                ("--interval SPEC", "Keep only messages in compaction interval(s): 0=prologue, 1..N, last|live, -1, '1,3', '2-4'"),
+                ("--interval SPEC", "Keep only messages in compaction interval(s): 0=prologue, 1..N, last|live, all (whole history, continuous turns), -1, '1,3', '2-4'"),
                 ("--all-intervals", "Parse all compaction intervals for whole-history turn numbering (default: off — only the selected interval(s))"),
+                ("--legacy-scope", "Revert to the OLD line-based live-scope resolver; branch-aware (lib_branch_index.resolve_live_chain) is the DEFAULT since 2026-07-20 for the default and --interval live|last scopes; historical intervals keep the line-based resolver"),
                 ("--include-client-only", "Merge client-only raw lines (attachment, file-history-snapshot, system, ...) inline as META (default: off)"),
                 ("--sort newest|oldest", "Flatten multiple targets and sort all messages by timestamp (default: group by file, source order)"),
                 ("--show-private", "Include private thinking blocks marked [/PRIVATE] (default: hidden)"),
                 ("--resolve", "Rehydrate Offload/Engram stubs from their archive so you read the ORIGINAL content in place (default: off; disk is not modified — a Restore-for-reading)"),
                 ("--no-color", "Disable ANSI color (default: color on a TTY) — use when piping to tools that choke on escape codes"),
             ],
-            "examples": ["read 7edf", "read 7edf a1b2 --sort newest", "read 7edf --type user,response", "read 7edf --range t1-5 --format markdown", "read 7edf --interval last", "read 7edf --interval 0 --include-client-only", "read 7edf --resolve   # rehydrate offloaded tool_results for reading"],
+            "examples": ["read 7edf", "read 7edf a1b2 --sort newest", "read 7edf --type user,response", "read 7edf --range t1-5 --format markdown", "read 7edf --interval last", "read 7edf --legacy-scope", "read 7edf --interval 0 --include-client-only", "read 7edf --resolve   # rehydrate offloaded tool_results for reading"],
             "aliases": ["r"],
             "repl_only": False,
         },
@@ -3251,7 +3407,7 @@ def _command_help_entries() -> dict[str, dict]:
             "options": [
                 ("--format markdown|text|json|flat|structured|raw|memorex", "Output format (default: markdown, for direct briefing input)"),
                 ("--types TYPE[,TYPE] / --type TYPE[,TYPE]", f"Filter by message type: {types_list}; aliases: assistant=response, tools=tool_use+tool_result, conversation=user+response (default: all types)"),
-                ("--interval SPEC", "Compaction intervals: 0=prologue, 1..N, last|live, -1, '1,3', '2-4' (default: all intervals — extract mines whole history)"),
+                ("--interval SPEC", "Compaction intervals: 0=prologue, 1..N, last|live, all (whole history, continuous turns), -1, '1,3', '2-4' (default: all intervals — extract mines whole history)"),
                 ("--turns RANGE", "Absolute turn-number range using Tn values from headers: 10-20, 10-, -5, 12"),
                 ("--range RANGE", "Legacy message range or t-range; prefer --turns for briefing extraction"),
                 ("--resolve", "Rehydrate Offload/Engram stubs to their original content before extracting (default: off)"),
@@ -3282,13 +3438,14 @@ def _command_help_entries() -> dict[str, dict]:
                 ("--type/--types TYPE[,TYPE]", f"Filter by message type: {types_list}; aliases: assistant, tools, conversation"),
                 ("--range RANGE", "Message range: 1-10, -20, 5-, t1-5, t-4"),
                 ("--turns RANGE", "Absolute Tn turn range: 10-20, 10-, -5, 12"),
-                ("--interval SPEC", "Keep only messages in compaction interval(s): 0=prologue, 1..N, last|live, -1, '1,3', '2-4'"),
+                ("--interval SPEC", "Keep only messages in compaction interval(s): 0=prologue, 1..N, last|live, all (whole history, continuous turns), -1, '1,3', '2-4'"),
                 ("--all-intervals", "Parse all compaction intervals for whole-history turn numbering"),
+                ("--legacy-scope", "Revert to the OLD line-based live-scope resolver; branch-aware (lib_branch_index.resolve_live_chain) is the DEFAULT since 2026-07-20 for the default and --interval live|last scopes; historical intervals keep the line-based resolver"),
                 ("--include-client-only", "Merge client-only raw lines (attachment, file-history-snapshot, system, ...) inline as META"),
                 ("--sort newest|oldest", "Sort all messages by timestamp across files"),
                 ("--show-private", "Include private thinking blocks"),
             ],
-            "examples": ["read-file session.jsonl", "read-file f1.jsonl f2.jsonl --sort newest --type user,response", "read-file session.jsonl --interval last --include-client-only"],
+            "examples": ["read-file session.jsonl", "read-file f1.jsonl f2.jsonl --sort newest --type user,response", "read-file session.jsonl --legacy-scope", "read-file session.jsonl --interval last --include-client-only"],
             "aliases": ["rf"],
             "repl_only": False,
         },
@@ -3357,6 +3514,26 @@ def _command_help_entries() -> dict[str, dict]:
             ],
             "examples": ["compactions 7edf", "cx 004c1360"],
             "aliases": ["cx"],
+            "repl_only": False,
+        },
+        "tail": {
+            "usage": "tail <uuid|path> [--since-cursor '<json>'] [--since-line N]",
+            "summary": "Incremental tail: emit only records appended since a cursor (JSON)",
+            "detail": [
+                "For the Transcript->Memorex pipeline — read only NEW records each tick",
+                "instead of rescanning the whole file. Round-trip the returned `cursor`.",
+                "The transcript is not pure append-only: offload writes atomically",
+                "(inode change) and in-place rewrites shrink it. Either is DETECTED and",
+                "reported as reset=true — DROP prior state and take `records` as the full",
+                "current set. Raw records in file order (not branch-scoped, not rendered).",
+                "Emits: {reset, cursor, count, records:[{line, record}]}.",
+            ],
+            "options": [
+                ("--since-cursor '<json>'", "Cursor from a prior call (round-trip it verbatim)"),
+                ("--since-line N", "Resume just after file line N (scans once; prefer the cursor after)"),
+            ],
+            "examples": ["tail 7edf", "tail 7edf --since-cursor '{\"inode\":123,\"byte\":4096,\"line\":42,\"size\":4096}'"],
+            "aliases": [],
             "repl_only": False,
         },
         "branches": {
@@ -3562,7 +3739,7 @@ def cmd_help(args: list[str]) -> str:
     lines.append(f"  {F('--limit')} {D('N')}                  {D('Limit number of sessions shown (default: 20)')}")
     lines.append(f"  {F('--no-color')}                    {D('Disable color output (for piping to tools that choke on ANSI)')}")
     lines.append(f"  {F('--resolve')}                     {D('Rehydrate offload stubs from their archive (read/read-file; off by default)')}")
-    lines.append(f"  {F('--interval')} {D('SPEC')}               {D('Filter to compaction interval(s): 0=prologue, 1..N, last|live, -1, 1,3, 2-4')}")
+    lines.append(f"  {F('--interval')} {D('SPEC')}               {D('Filter to compaction interval(s): 0=prologue, 1..N, last|live, all, -1, 1,3, 2-4')}")
     lines.append(f"  {F('--all-intervals')}              {D('Whole-history parse for compacted sessions (extract uses this by default)')}")
     lines.append(f"  {F('--include-client-only')}         {D('Merge client-only raw lines inline as META (read/read-file/extract). See: compactions')}")
 
@@ -3773,6 +3950,7 @@ def run_command(line: str, interactive: bool = True) -> str | None:
         "msg": lambda: cmd_msg(args),
         "compactions": lambda: cmd_compactions(args),
         "branches": lambda: cmd_branches(args),
+        "tail": lambda: cmd_tail(args),
         "list": lambda: cmd_list_sessions(args),
         "help": lambda: cmd_help(args),
     }
@@ -3951,7 +4129,7 @@ def main():
     # and prepend "read" — so `read_jsonl.py Cortex` means `read Cortex`
     _KNOWN_CMDS = set(COMMAND_ALIASES.keys()) | set(COMMAND_ALIASES.values()) | {
         "read", "extract", "read-file", "find", "summary", "msg", "compactions", "list", "help",
-        "toggle", "set", "grep",
+        "toggle", "set", "grep", "tail", "branches",
     }
     if args and args[0].lower().lstrip("-") not in _KNOWN_CMDS:
         args = ["read"] + args

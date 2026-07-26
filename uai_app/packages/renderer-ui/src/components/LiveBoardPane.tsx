@@ -20,6 +20,8 @@ import { useViewport } from '../viewport';
 import { useSessionStore } from '../stores/session-store';
 import { getSessionStateVisual } from '../stores/session-state';
 import { onActivityChange } from '../stores/session-activity';
+import { TodoLink } from './RefLink';
+import SessionLink, { isTrackingId } from './SessionLink';
 
 interface LandTodo {
   id?: string;
@@ -56,10 +58,25 @@ interface LandTotals {
   todos_no_assignee: number;
   active_sessions: number;
   active_no_todo: number;
+  needs_pm?: number;
+}
+
+// An escalated decision that genuinely needs PianoMan (todo_0578), filed by
+// Hamilton via escalations_mgr; rendered in the "Needs You" panel.
+interface PmDecision {
+  id: string;
+  decision: string;
+  options?: string;
+  recommendation?: string;
+  source_todo?: string;
+  source_session?: string;
+  note?: string;
+  created_at?: string;
 }
 
 interface LandscapeModel {
   rows: LandRow[];
+  needs_pm?: PmDecision[];
   totals: LandTotals;
 }
 
@@ -138,6 +155,42 @@ function needsReason(r: LandRow): string {
   return '(see session)';
 }
 
+// Live Board subviews (todo_0579). Tab-like, expandable — add a row here to add a
+// tab. `board` = the cross-session table; `needs_me` = the PianoMan decisions.
+type BoardTab = 'board' | 'needs_me';
+const BOARD_TABS: { id: BoardTab; label: string }[] = [
+  { id: 'board', label: 'Session Board' },
+  { id: 'needs_me', label: 'Needs Me' },
+];
+
+// The "Needs Me" badge tracks which decisions PianoMan has already seen so it can
+// show a new/updated count alongside the still-open count. The seen set persists
+// across reloads so "new since I last looked" survives a refresh.
+const SEEN_KEY = 'liveBoard.needsMe.seenIds';
+function loadSeen(): Set<string> {
+  try {
+    return new Set(JSON.parse(localStorage.getItem(SEEN_KEY) || '[]'));
+  } catch {
+    return new Set();
+  }
+}
+function saveSeen(ids: Set<string>): void {
+  try {
+    localStorage.setItem(SEEN_KEY, JSON.stringify([...ids]));
+  } catch {
+    /* localStorage unavailable — badge just won't persist across reloads */
+  }
+}
+
+// A decision's filed-at timestamp, formatted in local time (workspace convention:
+// display local, never UTC), e.g. "Jul 18, 8:52 PM".
+function formatWhen(iso?: string): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+}
+
 export default function LiveBoardPane() {
   const [model, setModel] = useState<LandscapeModel | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -146,9 +199,21 @@ export default function LiveBoardPane() {
   // Live session store — the State column reads from here so it behaves exactly
   // like Recent Sessions. Subscribing re-renders the board on any store change,
   // and onActivityChange catches the ephemeral in-app activity signals too.
-  const { getSession } = useSessionStore();
+  const { getSession, sessions } = useSessionStore();
   const [, forceUpdate] = useState(0);
   useEffect(() => onActivityChange(() => forceUpdate((n) => n + 1)), []);
+
+  // A decision's source_session may be a display name ("Hardy") or a tracking id.
+  // Resolve a name to its tracking id (case-insensitive over display_name/name) so
+  // it can render as a clickable SessionLink; return null if we can't place it.
+  const resolveSessionId = useCallback((ref?: string): string | null => {
+    const v = (ref || '').trim();
+    if (!v) return null;
+    if (isTrackingId(v)) return v;
+    const lc = v.toLowerCase();
+    const hit = sessions.find((s) => (s.display_name || '').toLowerCase() === lc);
+    return hit?.tracking_id || null;
+  }, [sessions]);
 
   // Resolve a row's visual state the Recent-Sessions way: prefer the live
   // session (activity_state × process_status); fall back to the landscape row.
@@ -158,6 +223,24 @@ export default function LiveBoardPane() {
       ? getSessionStateVisual(live.activity_state, live.process_status)
       : getSessionStateVisual(r.activity_state, backendProcess(r.status));
   }, [getSession]);
+
+  // Answer-in-place for the "Needs Me" decisions panel (todo_0578).
+  const [answerFor, setAnswerFor] = useState<string | null>(null);
+  const [answerText, setAnswerText] = useState('');
+  // Which decision cards have their Details (note) section expanded (todo_0579).
+  const [expandedNotes, setExpandedNotes] = useState<Set<string>>(new Set());
+  const toggleNote = useCallback((id: string) => {
+    setExpandedNotes((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }, []);
+
+  // Which subview is showing, and the seen-decisions set behind the Needs Me
+  // badge (todo_0579).
+  const [activeTab, setActiveTab] = useState<BoardTab>('board');
+  const [seen, setSeen] = useState<Set<string>>(() => loadSeen());
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -175,6 +258,25 @@ export default function LiveBoardPane() {
     load();
   }, [load]);
 
+  // Answer an escalated decision: marks it answered + routes the answer to
+  // Hamilton, then reloads so it clears from the board (todo_0578).
+  const submitAnswer = useCallback(async (id: string) => {
+    const text = answerText.trim();
+    if (!text) return;
+    await executeCommand('work.decision.answer', { id, answer: text }, { onFailure: 'log' });
+    setAnswerFor(null);
+    setAnswerText('');
+    load();
+  }, [answerText, load]);
+
+  // Dismiss/archive a decision as already-addressed (no routed answer, just a
+  // light heads-up to Hamilton); then reload so it clears from the board (todo_0579).
+  const dismissDecision = useCallback(async (id: string) => {
+    await executeCommand('work.decision.dismiss', { id }, { onFailure: 'log' });
+    setAnswerFor((cur) => (cur === id ? null : cur));
+    load();
+  }, [load]);
+
   // Default sort: most-recent activity first (raw last_activity ISO desc; rows
   // without a timestamp sink to the bottom).
   const rows = [...(model?.rows || [])].sort(
@@ -182,6 +284,29 @@ export default function LiveBoardPane() {
   );
   const totals = model?.totals;
   const needs = rows.filter(needsPianoman);
+  const decisions = model?.needs_pm ?? [];
+
+  // Needs Me badge counts: every open decision counts toward `open`; those PM
+  // hasn't seen since last viewing the tab count toward `newCount`.
+  const openCount = decisions.length;
+  const newCount = decisions.filter((d) => !seen.has(d.id)).length;
+  const decisionIdsKey = decisions.map((d) => d.id).join(',');
+
+  // Viewing the Needs Me tab marks the currently-open decisions as seen (and
+  // prunes ones that have since been answered), which resets the new count.
+  useEffect(() => {
+    if (activeTab !== 'needs_me') return;
+    const current = new Set(decisions.map((d) => d.id));
+    setSeen((prev) => {
+      if (prev.size === current.size && [...current].every((id) => prev.has(id))) {
+        return prev;
+      }
+      saveSeen(current);
+      return current;
+    });
+    // decisionIdsKey stands in for the decisions array identity.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, decisionIdsKey]);
 
   // Viewport reporter — exposes the live board's rows/totals so the "Capture
   // Content" feature (describeViewport) shows the real landscape instead of an
@@ -192,8 +317,11 @@ export default function LiveBoardPane() {
     visible: true,
     label: 'Work — Live Board',
     state: {
+      activeTab,
       rows: rows.length,
       needsPianoman: needs.length,
+      needsMeOpen: openCount,
+      needsMeNew: newCount,
       loading,
       error,
       activeSessions: totals?.active_sessions ?? null,
@@ -247,10 +375,127 @@ export default function LiveBoardPane() {
         )}
       </div>
 
+      <div style={{ display: 'flex', gap: 2, padding: '0 12px', borderBottom: '1px solid var(--border)', background: 'var(--bg-panel, var(--bg-deep))' }}>
+        {BOARD_TABS.map((t) => {
+          const active = t.id === activeTab;
+          return (
+            <button
+              key={t.id}
+              onClick={() => setActiveTab(t.id)}
+              style={{
+                background: 'transparent',
+                border: 'none',
+                borderBottom: active ? '2px solid var(--accent-blue)' : '2px solid transparent',
+                color: active ? 'var(--text)' : 'var(--text-muted)',
+                fontWeight: active ? 700 : 500,
+                fontSize: 13,
+                padding: '9px 12px',
+                cursor: 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+              }}
+            >
+              {t.label}
+              {t.id === 'needs_me' && (newCount > 0 || openCount > 0) && (
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                  {newCount > 0 && (
+                    <span
+                      title={`${newCount} new since you last looked`}
+                      style={{ fontSize: 10.5, fontWeight: 800, color: '#fff', background: 'var(--accent-purple)', borderRadius: 9, padding: '1px 6px', lineHeight: '15px' }}
+                    >{newCount} new</span>
+                  )}
+                  {openCount > 0 && (
+                    <span
+                      title={`${openCount} open (unaddressed) decision${openCount === 1 ? '' : 's'}`}
+                      style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--text-sec)', background: 'var(--bg-hover)', border: '1px solid var(--border)', borderRadius: 9, padding: '1px 6px', lineHeight: '15px' }}
+                    >{openCount} open</span>
+                  )}
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+
       {error && (
         <div style={{ padding: '10px 16px', color: 'var(--accent-orange)', fontSize: 12 }}>⚠ {error}</div>
       )}
 
+      {activeTab === 'needs_me' && (
+        decisions.length > 0 ? (
+        <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', background: 'var(--attention-bg, #160f0c)' }}>
+          <div style={{ fontSize: 11, letterSpacing: '.05em', textTransform: 'uppercase', color: 'var(--accent-purple)', fontWeight: 700, marginBottom: 8 }}>
+            ✋ Needs Me — Decisions ({decisions.length})
+          </div>
+          {decisions.map((d) => {
+            const srcId = resolveSessionId(d.source_session);
+            const noteOpen = expandedNotes.has(d.id);
+            return (
+            <div key={d.id} style={{ marginBottom: 10, padding: '10px 12px', border: '1px solid var(--accent-purple)', borderRadius: 8, background: 'var(--bg-card)' }}>
+              <div style={{ color: 'var(--text)', fontWeight: 700, fontSize: 13, marginBottom: 4 }}>{d.decision}</div>
+              {d.options && <div style={{ fontSize: 12, marginBottom: 2 }}><span style={{ color: 'var(--text-muted)' }}>Options: </span><span style={{ color: 'var(--text)' }}>{d.options}</span></div>}
+              {d.recommendation && <div style={{ fontSize: 12, marginBottom: 2 }}><span style={{ color: 'var(--text-muted)' }}>Hamilton's rec: </span><span style={{ color: 'var(--accent-green)', fontWeight: 600 }}>{d.recommendation}</span></div>}
+              {/* Source references (clickable) + filed-at timestamp. */}
+              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6 }}>
+                {(d.source_todo || d.source_session) && (
+                  <span>
+                    source:{' '}
+                    {d.source_todo && <TodoLink id={d.source_todo} />}
+                    {d.source_todo && d.source_session && <span style={{ color: 'var(--text-muted)' }}> · </span>}
+                    {d.source_session && (srcId
+                      ? <SessionLink id={srcId} label={d.source_session} />
+                      : <span style={{ color: 'var(--text-sec)' }}>{d.source_session}</span>)}
+                  </span>
+                )}
+                {d.created_at && (
+                  <span title={d.created_at} style={{ marginLeft: (d.source_todo || d.source_session) ? 'auto' : 0 }}>
+                    filed {formatWhen(d.created_at)}
+                  </span>
+                )}
+              </div>
+              {/* Details (the note): richer background, collapsed by default (todo_0579). */}
+              {d.note && (
+                <div style={{ marginTop: 6 }}>
+                  <button
+                    onClick={() => toggleNote(d.id)}
+                    style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', fontSize: 11.5, cursor: 'pointer', padding: 0, display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                  >
+                    <span style={{ fontSize: 9 }}>{noteOpen ? '▼' : '▶'}</span> Details
+                  </button>
+                  {noteOpen && (
+                    <div style={{ fontSize: 11.5, color: 'var(--text-sec)', marginTop: 4, whiteSpace: 'pre-wrap', lineHeight: 1.45 }}>{d.note}</div>
+                  )}
+                </div>
+              )}
+              {answerFor === d.id ? (
+                <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+                  <input autoFocus value={answerText} onChange={(e) => setAnswerText(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') submitAnswer(d.id); if (e.key === 'Escape') { setAnswerFor(null); setAnswerText(''); } }}
+                    placeholder="Your decision… (Enter to send to Hamilton)"
+                    style={{ flex: 1, background: 'var(--bg-deep)', border: '1px solid var(--border)', borderRadius: 6, color: 'var(--text)', fontSize: 12, padding: '5px 9px', outline: 'none' }} />
+                  <button onClick={() => submitAnswer(d.id)} disabled={!answerText.trim()} style={{ background: 'var(--accent-purple-bg, var(--bg-hover))', border: '1px solid var(--accent-purple)', color: 'var(--text)', borderRadius: 6, padding: '5px 12px', fontSize: 12, cursor: 'pointer', fontWeight: 600 }}>Send</button>
+                  <button onClick={() => { setAnswerFor(null); setAnswerText(''); }} style={{ background: 'transparent', border: '1px solid var(--border)', color: 'var(--text-muted)', borderRadius: 6, padding: '5px 10px', fontSize: 12, cursor: 'pointer' }}>Cancel</button>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', gap: 8, marginTop: 8, alignItems: 'center' }}>
+                  <button onClick={() => { setAnswerFor(d.id); setAnswerText(''); }} style={{ background: 'var(--accent-purple-bg, var(--bg-hover))', border: '1px solid var(--accent-purple)', color: 'var(--text)', borderRadius: 6, padding: '4px 12px', fontSize: 12, cursor: 'pointer', fontWeight: 600 }}>Answer →</button>
+                  <button onClick={() => dismissDecision(d.id)} title="Already addressed — archive without answering" style={{ background: 'transparent', border: '1px solid var(--border)', color: 'var(--text-muted)', borderRadius: 6, padding: '4px 10px', fontSize: 12, cursor: 'pointer' }}>Already addressed</button>
+                </div>
+              )}
+            </div>
+            );
+          })}
+        </div>
+        ) : (
+          <div style={{ padding: '28px 16px', color: 'var(--text-muted)', fontSize: 13, textAlign: 'center' }}>
+            Nothing needs you right now — no open decisions.
+          </div>
+        )
+      )}
+
+      {activeTab === 'board' && (
+      <>
       {needs.length > 0 && (
         <div style={{ padding: '10px 16px', borderBottom: '1px solid var(--border)', background: 'var(--attention-bg, #160f0c)' }}>
           <div style={{ fontSize: 11, letterSpacing: '.05em', textTransform: 'uppercase', color: 'var(--accent-orange)', fontWeight: 700, marginBottom: 6 }}>
@@ -357,6 +602,8 @@ export default function LiveBoardPane() {
           })}
         </tbody>
       </table>
+      </>
+      )}
 
     </div>
   );

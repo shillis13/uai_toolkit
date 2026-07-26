@@ -1,0 +1,24 @@
+name: Dev Lifecycle Templates
+description: >
+  Dev Lifecycle Templates — bundle assembled from the todo_0319 grouping pass.
+_registry:
+  id: dev_lifecycle_templates
+  name: Dev Lifecycle Templates
+  status: active
+  version: 1.0.0
+
+context_files:
+  templates:
+    - ai_context_files/instructions/templates/acceptance_template
+    - ai_context_files/instructions/templates/design_template
+    - ai_context_files/instructions/templates/execution_log_template
+    - ai_context_files/instructions/templates/implementation_template
+    - ai_context_files/instructions/templates/integration_template
+    - ai_context_files/instructions/templates/peer_review_template
+    - ai_context_files/instructions/templates/planning_mid_dev_template
+    - ai_context_files/instructions/templates/planning_template
+    - ai_context_files/instructions/templates/report_final_template
+    - ai_context_files/instructions/templates/testing_template
+
+roles:
+  - ai_profiles/roles/dev

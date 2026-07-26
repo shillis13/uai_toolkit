@@ -159,6 +159,18 @@ def tools():
              inputSchema={"type": "object", "properties": {
                  "dry_run": {"type": "boolean", "default": False,
                              "description": "If true, report what would be added/removed without changing anything."}}}),
+        Tool(name=f"{PREFIX}reinstall",
+             description="Force-reload exactly ONE group's launchd agents, leaving every other group "
+                         "untouched. Unlike sched_task_install (which reconciles the whole set and skips "
+                         "unchanged agents), this boots out and re-bootstraps every job in the named group "
+                         "even if unchanged, and removes any of its agents whose job was deleted/disabled. "
+                         "Use it to kick a single group after editing its YAML directly, or to recover one "
+                         "wedged group without churning the fleet.",
+             inputSchema={"type": "object", "properties": {
+                 "group": {"type": "string", "description": _GROUP},
+                 "dry_run": {"type": "boolean", "default": False,
+                             "description": "If true, report which agents would be reloaded/removed without changing anything."}},
+                 "required": ["group"]}),
         Tool(name=f"{PREFIX}import",
              description="Adopt a hand-installed launchd agent into a managed YAML task by "
                          "reverse-engineering the YAML from its installed plist (label→group/job, "
@@ -235,6 +247,8 @@ async def call_tool(name, arguments):
         res = _run("disable", [a["group"]] + ([a["id"]] if a.get("id") else []))
     elif short == "install":
         res = _run("install", ["--dry-run"] if a.get("dry_run") else [])
+    elif short == "reinstall":
+        res = _run("reinstall", [a["group"]] + (["--dry-run"] if a.get("dry_run") else []))
     elif short == "import":
         args = [a["label"]]
         if a.get("dry_run"):

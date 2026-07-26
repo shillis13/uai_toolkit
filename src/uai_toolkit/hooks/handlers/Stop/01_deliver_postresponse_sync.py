@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Stop hook — deliver postResponse queued prompts after AI finishes responding."""
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -13,14 +14,34 @@ from uai_toolkit.hooks.common.lib_hook_scripts import (
     drop_blocked_sources,
 )
 
+# send_prompt.py's --target per platform. The target was hardcoded "claude-cli",
+# so queued prompts to codex/gemini/… sessions were typed to the wrong CLI adapter
+# (todo_0603). This hook fires for the CURRENT session, so its platform comes from
+# the session's own env.
+_PLATFORM_TARGET = {
+    "claude_cli": "claude-cli", "codex_cli": "codex-cli", "gemini_cli": "gemini-cli",
+    "grok_cli": "grok-cli", "antigravity_cli": "antigravity-cli",
+}
 
-def send_prompt_to_session(session, message):
-    """Send a prompt to the session via send_prompt.sh."""
+
+def _target_for_platform():
+    """The send_prompt target for THIS session's platform (default claude-cli)."""
+    return _PLATFORM_TARGET.get(os.environ.get("AI_SESSION_PLATFORM") or "", "claude-cli")
+
+
+def send_prompt_to_session(session, message, target):
+    """Send (type + submit) a prompt to the session via send_prompt.py.
+
+    Invoked through the Python interpreter so it does not depend on the script's
+    executable bit or shebang. `target` is the platform-specific send_prompt adapter
+    (claude-cli / codex-cli / …). Returns False on any failure (missing sender,
+    non-zero exit, timeout) so the caller keeps the entries queued for retry.
+    """
     if not SEND_PROMPT.exists():
         return False
     try:
         result = subprocess.run(
-            [str(SEND_PROMPT), "--target", "claude-cli",
+            [sys.executable, str(SEND_PROMPT), "--target", target,
              "--session", session, "--message", message,
              "--submit", "--force"],
             capture_output=True, text=True, timeout=90
@@ -51,7 +72,7 @@ def handler(hook_input, context):
     if not included:
         return HookResult.skip("no entries composed")
 
-    if send_prompt_to_session(tracking_id, prompt):
+    if send_prompt_to_session(tracking_id, prompt, _target_for_platform()):
         mark_all_delivered(included)
         return HookResult.allow(f"delivered {len(included)} entries, {len(overflow)} overflow")
 

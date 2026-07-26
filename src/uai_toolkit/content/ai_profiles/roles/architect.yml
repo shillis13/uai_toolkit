@@ -38,3 +38,8 @@ context_files:
 skills:
   - peer-review        # design review variant
   - research-orchestration  # historical context for design decisions
+
+roles:
+  - ai_profiles/bundles/design_decision_methods
+  - ai_profiles/bundles/core_identity_principles_quality
+  - ai_profiles/bundles/ontology_glossary_workspace_map

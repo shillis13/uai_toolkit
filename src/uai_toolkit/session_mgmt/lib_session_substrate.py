@@ -36,7 +36,9 @@ _FALLBACK_BINARY_DIRS = (
 )
 
 _AUTO_TMUX_SERVER = object()
-sys.path.insert(0, os.environ.get("AI_SCRIPTS") or str(Path(__file__).resolve().parents[1]))
+_ai_scripts = os.environ.get("AI_SCRIPTS")
+if _ai_scripts:
+    sys.path.insert(0, _ai_scripts)
 from uai_toolkit.paths import AI_ROOT  # noqa: E402
 _DEFAULT_AI_ROOT = AI_ROOT
 
@@ -748,7 +750,7 @@ class TmuxSubstrate(SessionSubstrate):
             )
 
     def dump_screen(self, name: str, path: Path | None = None, plain_text: bool = True,
-                     full: bool = False) -> str:
+                     full: bool = False, lines: int | None = None) -> str:
         if not self.session_exists(name):
             raise SubstrateError(
                 f"Session '{name}' does not exist",
@@ -757,7 +759,10 @@ class TmuxSubstrate(SessionSubstrate):
         cmd = self._tmux_cmd("capture-pane")
         if not plain_text:
             cmd.append("-e")  # preserve escape sequences
-        scroll_lines = "-50000" if full else "-1000"
+        if lines is not None:
+            scroll_lines = f"-{max(1, min(int(lines), 50000))}"
+        else:
+            scroll_lines = "-50000" if full else "-1000"
         cmd.extend(["-p", "-t", name, "-S", scroll_lines])
         result = _run_cmd(cmd)
         content = result.stdout

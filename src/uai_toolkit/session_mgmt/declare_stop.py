@@ -21,6 +21,7 @@ status — how the board consumes it is wired in P2.
 
 Keys written:
   - stop.declared_at   : ISO timestamp of this declaration
+  - stop.checklist     : checklist JSON when the preferred checklist path is used
   - stop.payload       : {reasons:[...], params:{...}, note:"..."}
   - stop.block_streak  : reset to 0 (a valid declaration clears the anti-deadlock
                          counter the Stop handler increments on undeclared turns)
@@ -97,7 +98,133 @@ def _pending_effects(selected, reasons_by_id):
     return effects
 
 
-def declare_stop(reasons=None, params=None, note=None):
+# ── Checklist (todo_0520) — the yes/no turn-review a session hands in at stop.
+# Phased in ALONGSIDE the legacy reason list; both paths write the same stop.* state.
+CHECKLIST_KEYS = [
+    "addressed_prompt", "logical", "claims_verified", "did_what_i_said",
+    "work_finished", "errors_handled",              # quality (yes = healthy)
+    "asking_needless_question", "want_to_revisit",   # reflection
+    "more_work_now", "waiting_on", "told_to_stop",   # end / continue
+    "want_break", "want_switch",                     # preference
+    "start_next_now", "schedule_next_min",           # what's next
+    "note_to_user", "note_to_hamilton",              # notify
+]
+_CHECKLIST_BOOL_KEYS = {
+    "addressed_prompt", "logical", "claims_verified", "did_what_i_said",
+    "work_finished", "errors_handled", "asking_needless_question",
+    "want_to_revisit", "more_work_now", "told_to_stop",
+    "want_break", "want_switch", "start_next_now",
+}
+_CHECKLIST_TEXT_KEYS = {"waiting_on", "note_to_user", "note_to_hamilton"}
+
+
+def _validate_checklist(cl):
+    """Validate the complete checklist contract and return a shallow copy."""
+    if not isinstance(cl, dict):
+        raise ValueError("declare_stop: checklist must be an object")
+    missing = [key for key in CHECKLIST_KEYS if key not in cl]
+    if missing:
+        raise ValueError(
+            "declare_stop: checklist is missing required field(s): %s"
+            % ", ".join(missing)
+        )
+    extra = sorted(set(cl) - set(CHECKLIST_KEYS))
+    if extra:
+        raise ValueError(
+            "declare_stop: checklist has unknown field(s): %s" % ", ".join(extra)
+        )
+    wrong_bools = sorted(
+        key for key in _CHECKLIST_BOOL_KEYS if type(cl[key]) is not bool
+    )
+    if wrong_bools:
+        raise ValueError(
+            "declare_stop: checklist field(s) must be boolean: %s"
+            % ", ".join(wrong_bools)
+        )
+    wrong_text = sorted(
+        key for key in _CHECKLIST_TEXT_KEYS if not isinstance(cl[key], str)
+    )
+    if wrong_text:
+        raise ValueError(
+            "declare_stop: checklist field(s) must be strings: %s"
+            % ", ".join(wrong_text)
+        )
+    sched = cl["schedule_next_min"]
+    if type(sched) is not int or sched < 0:
+        raise ValueError(
+            "declare_stop: checklist schedule_next_min must be an integer >= 0"
+        )
+    return dict(cl)
+
+
+def _checklist_decide(cl):
+    """Derive (decision, next, board_status, effects) from the checklist answers."""
+    waiting = bool(cl["waiting_on"].strip())
+    # want_to_revisit → continue, so the session can re-think/revise instead of ending.
+    cont = ((cl["more_work_now"] or cl["want_to_revisit"]) and not cl["told_to_stop"]
+            and not cl["want_break"] and not waiting)
+    sched = cl["schedule_next_min"]
+    decision = "continue" if cont else "end"
+    if cont or cl["start_next_now"]:
+        nxt = "now"
+    elif sched > 0:
+        nxt = "in %dm" % sched
+    else:
+        nxt = "await_user"
+    if waiting:
+        board = "waiting"
+    elif cl["want_break"]:
+        board = "paused"
+    elif cl["told_to_stop"]:
+        board = "parked"
+    elif cl["note_to_user"].strip():
+        board = "wants_discussion"
+    elif cont or cl["want_switch"]:
+        board = "active"
+    else:
+        board = "idle"
+    effects = []
+    if sched > 0:
+        effects.append({"effect": "schedule_wake", "after_min": sched})
+    if cl["note_to_user"].strip():
+        effects.append({"effect": "note_user"})
+    if cl["note_to_hamilton"].strip():
+        effects.append({"effect": "note_hamilton"})
+    if cl["want_switch"]:
+        effects.append({"effect": "flag_human", "reason": "want_switch"})
+    if cl["asking_needless_question"]:
+        effects.append({"effect": "flag_human", "reason": "asking_needless_question"})
+    return decision, nxt, board, effects
+
+
+def _declare_via_checklist(cl, note, session_dir, tracking_id):
+    """Record a checklist declaration + return a terse result. Shares the write
+    bridge with the legacy path; increments the same stop.declare_count so the
+    Stop gate sees it as a declaration."""
+    now = datetime.now().isoformat()
+    decision, nxt, board, effects = _checklist_decide(cl)
+    payload = {"checklist": cl, "note": (note or "").strip()}
+    _hook_common = Path(__file__).resolve().parents[2] / "data" / "hooks" / "common"
+    if str(_hook_common) not in sys.path:
+        sys.path.insert(0, str(_hook_common))
+    from uai_toolkit.hooks.common.lib_session_state_union import read_union, write_session_state
+    state = read_union(session_dir, tracking_id)
+    updates = {
+        "stop.declared_at": now,
+        "stop.checklist": json.dumps(cl),
+        "stop.payload": json.dumps(payload),
+        "stop.block_streak": 0,
+        "stop.board_status": board,
+        "stop.pending_effects": json.dumps(effects),
+        "stop.declare_count": int(state.get("stop.declare_count") or 0) + 1,
+        "updated_at": now,
+    }
+    if not write_session_state(session_dir, tracking_id, updates):
+        raise RuntimeError("declare_stop: could not write session state for %s" % tracking_id)
+    return {"ok": True, "decision": decision, "next": nxt, "board_status": board}
+
+
+def declare_stop(reasons=None, params=None, note=None, checklist=None):
     """Record a stop declaration into session state. Returns a result dict.
 
     reasons: list of taxonomy reason IDs (may be empty for a note-only custom stop)
@@ -116,6 +243,13 @@ def declare_stop(reasons=None, params=None, note=None):
         raise RuntimeError(
             "declare_stop: AI_SESSION_DIR and AI_TRACKING_ID must be set "
             "(they identify the session state file to update)."
+        )
+
+    # Checklist path (todo_0520, phased in): if the session handed in the yes/no
+    # turn-review, record it and return a terse decision. Legacy reason path below.
+    if checklist is not None:
+        return _declare_via_checklist(
+            _validate_checklist(checklist), note, session_dir, tracking_id
         )
 
     _cfg, reasons_by_id = _load_config()
@@ -140,34 +274,33 @@ def declare_stop(reasons=None, params=None, note=None):
     board_status = _board_status(reasons, reasons_by_id)
     pending = _pending_effects(reasons, reasons_by_id)
 
-    state_path = Path(session_dir) / f"{tracking_id}_state.json"
-    state = {}
-    if state_path.exists():
-        try:
-            state = json.loads(state_path.read_text())
-        except (json.JSONDecodeError, OSError) as e:
-            raise RuntimeError(f"declare_stop: could not read state {state_path}: {e}")
+    # Read current state (for the declare_count increment) + write through the
+    # shared bridge (todo_0495): enrolled sessions use the locked canonical
+    # accessor, everyone else the legacy file. declare_stop is single-caller per
+    # stop, so the read-then-write is not a concurrency concern.
+    _hook_common = Path(__file__).resolve().parents[2] / "data" / "hooks" / "common"
+    if str(_hook_common) not in sys.path:
+        sys.path.insert(0, str(_hook_common))
+    from uai_toolkit.hooks.common.lib_session_state_union import read_union, write_session_state
 
-    state["stop.declared_at"] = now
-    state["stop.payload"] = json.dumps(payload)
-    state["stop.block_streak"] = 0            # valid declaration clears the valve
-    state["stop.board_status"] = board_status
-    state["stop.pending_effects"] = json.dumps(pending)
-    # Monotonic declaration counter (consume-on-stop, counter NOT a flag). The Stop
-    # gate acks UP TO the count it observes; "declared this turn" == declare_count >
-    # ack_count. A counter beats a boolean here because the gate's consume only acks
-    # the count it saw — a declaration that races in during the consume stays
-    # unacked (not lost), whereas a blind flag-clear would clobber it. No turn-start
-    # stamp or clock comparison needed.
-    state["stop.declare_count"] = int(state.get("stop.declare_count") or 0) + 1
-    state["updated_at"] = now
-
-    try:
-        tmp = state_path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(state, indent=2))
-        tmp.rename(state_path)
-    except OSError as e:
-        raise RuntimeError(f"declare_stop: could not write state {state_path}: {e}")
+    state = read_union(session_dir, tracking_id)
+    updates = {
+        "stop.declared_at": now,
+        "stop.payload": json.dumps(payload),
+        "stop.block_streak": 0,            # valid declaration clears the valve
+        "stop.board_status": board_status,
+        "stop.pending_effects": json.dumps(pending),
+        # Monotonic declaration counter (consume-on-stop, counter NOT a flag). The
+        # Stop gate acks UP TO the count it observes; "declared this turn" ==
+        # declare_count > ack_count. A counter beats a boolean because the gate's
+        # consume only acks the count it saw — a declaration that races in during
+        # the consume stays unacked (not lost), whereas a blind flag-clear would
+        # clobber it. No turn-start stamp or clock comparison needed.
+        "stop.declare_count": int(state.get("stop.declare_count") or 0) + 1,
+        "updated_at": now,
+    }
+    if not write_session_state(session_dir, tracking_id, updates):
+        raise RuntimeError(f"declare_stop: could not write session state for {tracking_id}")
 
     # Whether this declaration wants the turn to continue (self-continuation):
     # the Stop handler enforces it, but we surface it in the result for clarity.
@@ -212,11 +345,13 @@ def main():
             reasons = payload.get("reasons") or []
             params = payload.get("params") or {}
             note = payload.get("note") or ""
+            checklist = payload.get("checklist")   # None unless the caller sent one
         else:
             reasons = [r.strip() for r in args.reasons.split(",") if r.strip()]
             params = _parse_params(args.param)
             note = args.note
-        result = declare_stop(reasons=reasons, params=params, note=note)
+            checklist = None
+        result = declare_stop(reasons=reasons, params=params, note=note, checklist=checklist)
     except (RuntimeError, ValueError, json.JSONDecodeError) as e:
         sys.stderr.write(str(e) + "\n")
         return 1

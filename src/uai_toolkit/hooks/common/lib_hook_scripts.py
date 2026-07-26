@@ -16,7 +16,9 @@ from typing import Dict, List, Optional
 AI_ROOT = Path(os.environ.get("AI_ROOT", os.path.expanduser("~/AI/ai_root")))
 PROMPTS_INBOX = AI_ROOT / "ai_comms" / "prompts_inbox"
 DELIVERED_DIR = AI_ROOT / "ai_general" / "data" / "hooks" / "data" / "prompt_queue" / "delivered"
-SEND_PROMPT = AI_ROOT / "ai_general" / "scripts" / "prompting" / "send_prompt.sh"
+# send_prompt was ported .sh → .py; the old .sh no longer exists. Pointing at the
+# deleted .sh silently disabled post-response queued-prompt delivery (todo_0602).
+SEND_PROMPT = AI_ROOT / "ai_general" / "scripts" / "prompting" / "send_prompt.py"
 
 
 def is_locked(session_id: str) -> bool:

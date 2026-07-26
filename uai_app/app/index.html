@@ -4,6 +4,73 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>UAI</title>
+    <!--
+      Bootstrap error surfacer (todo_0630). Registered BEFORE the module bundle so
+      it catches even module-EVALUATION errors (the class of bug that black-windowed
+      the app in v1.3.403: a circular-import TDZ threw during `import App`, before
+      React mounted, so App's own ErrorBoundary never ran). If the app never mounts
+      (#root stays empty), we render the actual error + stack + a Reload button
+      instead of a black screen. Once React has rendered (#root has children), these
+      become no-ops so live in-app errors are left to the React ErrorBoundary.
+    -->
+    <script>
+      (function () {
+        var shown = false;
+        function mounted() {
+          var r = document.getElementById('root');
+          return r && r.childElementCount > 0;
+        }
+        // Build the panel with DOM methods + textContent (no innerHTML) so an error
+        // message/stack can never inject markup — the values are raw error text.
+        function el(tag, style, text) {
+          var n = document.createElement(tag);
+          if (style) n.setAttribute('style', style);
+          if (text != null) n.textContent = text;
+          return n;
+        }
+        function showBootError(title, detail) {
+          if (shown || mounted()) return;   // never clobber a rendered app
+          var root = document.getElementById('root');
+          if (!root) {
+            // The current module script sits after #root, but keep the handler
+            // correct if a future bootstrap script moves into <head>.
+            document.addEventListener('DOMContentLoaded', function () {
+              showBootError(title, detail);
+            }, { once: true });
+            return;
+          }
+          shown = true;
+          root.setAttribute('style', 'position:fixed;inset:0;overflow:auto;'
+            + 'background:#1a1b26;color:#c0caf5;font:13px/1.5 ui-monospace,Menlo,monospace;padding:28px;');
+          root.textContent = '';
+          var box = el('div', 'max-width:820px;margin:0 auto');
+          box.appendChild(el('div', 'font-size:18px;font-weight:700;color:#f7768e;margin-bottom:6px',
+            'UnifiedAI failed to start'));
+          box.appendChild(el('div', 'color:#a9b1d6;margin-bottom:16px',
+            'The renderer crashed before it could mount. Details below — open DevTools '
+            + '(View → Toggle Developer Tools, or ⌥⌘I) for the full console.'));
+          box.appendChild(el('div', 'font-weight:700;color:#e0af68;margin-bottom:4px', title));
+          box.appendChild(el('pre', 'white-space:pre-wrap;background:#16161e;border:1px solid #2a2e3f;'
+            + 'border-radius:6px;padding:12px;color:#7dcfff;overflow:auto', detail));
+          var btn = el('button', 'margin-top:16px;background:#3d59a1;color:#fff;border:none;'
+            + 'border-radius:6px;padding:8px 18px;font-size:13px;cursor:pointer', 'Reload');
+          btn.addEventListener('click', function () { location.reload(); });
+          box.appendChild(btn);
+          root.appendChild(box);
+        }
+        window.addEventListener('error', function (e) {
+          var err = e && e.error;
+          var detail = (err && err.stack) || ((e && e.filename ? e.filename : '')
+            + (e && e.lineno ? ':' + e.lineno : ''));
+          showBootError((e && e.message) || 'Script error', detail || '(no stack available)');
+        });
+        window.addEventListener('unhandledrejection', function (e) {
+          var r = e && e.reason;
+          showBootError('Unhandled promise rejection during startup',
+            (r && r.stack) || String(r));
+        });
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

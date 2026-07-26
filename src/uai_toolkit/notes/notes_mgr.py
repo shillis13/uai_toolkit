@@ -62,7 +62,9 @@ from pathlib import Path
 # mirroring todo_mgr. NOTES_ROOT stays an optional override for non-standard
 # layouts; when unset (MCP servers don't inherit it) fall back to the
 # AI_ROOT-derived location.
-sys.path.insert(0, os.environ.get("AI_SCRIPTS") or str(Path(__file__).resolve().parents[1]))
+_ai_scripts = os.environ.get("AI_SCRIPTS")
+if _ai_scripts:
+    sys.path.insert(0, _ai_scripts)
 from uai_toolkit.paths import AI_ROOT as _AI_ROOT
 _FALLBACK_ROOT = _AI_ROOT / "ai_general" / "work" / "notes"
 DEFAULT_ROOT = Path(os.environ.get("NOTES_ROOT") or _FALLBACK_ROOT)

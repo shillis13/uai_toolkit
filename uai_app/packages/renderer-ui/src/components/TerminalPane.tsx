@@ -24,19 +24,20 @@ interface TerminalPaneProps {
   cliSessionId?: string | null;
   displayName: string;
   memorexEnabled?: boolean;
+  active?: boolean;
 }
 
-export default function TerminalPane({ sessionId, terminalSession, cliSessionId, displayName, memorexEnabled: externalMemorex }: TerminalPaneProps): JSX.Element {
+export default function TerminalPane({ sessionId, terminalSession, cliSessionId, displayName, memorexEnabled: externalMemorex, active = true }: TerminalPaneProps): JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
   const memorexEnabled = externalMemorex ?? false;
 
   useViewport('terminal_pane', () => ({
-    visible: true,
+    visible: active,
     children: memorexEnabled ? ['memorex_view'] : [],
     state: { attached: true },
-  }));
+  }), active);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -226,7 +227,7 @@ export default function TerminalPane({ sessionId, terminalSession, cliSessionId,
       }, 150);
     });
 
-    term.focus();
+    if (active) term.focus();
 
     return () => {
       inputDisposable.dispose();
@@ -241,6 +242,10 @@ export default function TerminalPane({ sessionId, terminalSession, cliSessionId,
       fitRef.current = null;
     };
   }, [sessionId, terminalSession]);
+
+  useEffect(() => {
+    if (active) termRef.current?.focus();
+  }, [active]);
 
   return (
     <div className="terminal-pane">
@@ -257,6 +262,7 @@ export default function TerminalPane({ sessionId, terminalSession, cliSessionId,
             sessionName={terminalSession}
             sessionId={sessionId}
             enabled={memorexEnabled}
+            active={active}
           />
         </div>
       </div>

@@ -44,7 +44,9 @@ MAX_DIMENSION = 2000
 # ---------------------------------------------------------------------------
 # Colors
 # ---------------------------------------------------------------------------
-sys.path.insert(0, os.environ.get("AI_SCRIPTS") or str(Path(__file__).resolve().parents[1]))
+_ai_scripts = os.environ.get("AI_SCRIPTS")
+if _ai_scripts:
+    sys.path.insert(0, _ai_scripts)
 from uai_toolkit.paths import AI_SCRIPTS  # noqa: E402
 sys.path.insert(0, str(AI_SCRIPTS / "utils"))
 from uai_toolkit.common_utils.standard_colors import c, format_help, bold, dim, heading  # noqa: E402

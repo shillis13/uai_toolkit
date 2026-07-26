@@ -126,6 +126,17 @@ export function callSessionMgr(args: string[]): Promise<unknown> {
 
 let _appStateCache: { data: Record<string, unknown>; mtime: number } | null = null;
 
+/** Size in bytes of a session's JSONL transcript, or null if not stat-able.
+    Read-only display of externally-owned data (the transcript file). */
+function transcriptBytes(historyFile: unknown): number | null {
+  if (typeof historyFile !== 'string' || !historyFile) return null;
+  try {
+    return fs.statSync(historyFile).size;
+  } catch {
+    return null;
+  }
+}
+
 function loadAppState(): Record<string, unknown> {
   const statePath = getAppStatePath();
   try {
@@ -149,14 +160,85 @@ function getSessionPref(trackingId: string): SessionPref {
 
 // ─── Session State Loader (telemetry from Stop hook) ─────────────────────
 
+/** uuid8 segment of a tracking_id (YYYYMMDD_HHMMSS_<id8>_<plat>); falls back to
+ *  the first 8 chars. Mirrors lib_session_state_union._uuid8_from_tracking_id. */
+function uuid8FromTrackingId(trackingId: string): string {
+  const parts = (trackingId || '').split('_');
+  if (parts.length >= 4 && parts[2]?.length === 8) return parts[2];
+  return (trackingId || '').slice(0, 8);
+}
+
+/** Parse a state JSON object, recovering a valid leading object when a legacy
+ * lost-update race appended a second write's tail. Mirrors `_loads_recover` in
+ * lib_session_state_union rather than dropping every fallback key on torn JSON. */
+function parseStateObject(text: string): Record<string, unknown> {
+  const asObject = (value: unknown): Record<string, unknown> | null =>
+    value !== null && typeof value === 'object' && !Array.isArray(value)
+      ? value as Record<string, unknown>
+      : null;
+  try {
+    return asObject(JSON.parse(text)) ?? {};
+  } catch { /* try the recoverable leading-object shape below */ }
+
+  const start = text.search(/\S/);
+  if (start < 0 || text[start] !== '{') return {};
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === '\\') escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') { inString = true; continue; }
+    if (ch === '{') depth++;
+    else if (ch === '}') {
+      depth--;
+      if (depth === 0) {
+        try {
+          return asObject(JSON.parse(text.slice(start, i + 1))) ?? {};
+        } catch {
+          return {};
+        }
+      }
+    }
+  }
+  return {};
+}
+
+/**
+ * Union read of a session's live state — canonical OVER legacy, matching
+ * lib_session_state_union.read_union (todo_0495). Since the phase-2 cutover, hooks
+ * write the canonical `state.<uuid8>.json` (keys under `.state`); the legacy
+ * `{tid}_state.json` (flat keys) is only a read fallback and is now frozen for
+ * migrated sessions. Reading the legacy file alone gives STALE activity_state /
+ * last_activity / context% — which froze the Recent Sessions breathing indicator.
+ */
 function getSessionState(sessionDir: string, trackingId: string): Record<string, unknown> {
   if (!sessionDir || !trackingId) return {};
-  const statePath = path.join(sessionDir, `${trackingId}_state.json`);
+  let legacy: Record<string, unknown> = {};
   try {
-    return JSON.parse(fs.readFileSync(statePath, 'utf-8'));
-  } catch {
-    return {};
-  }
+    legacy = parseStateObject(
+      fs.readFileSync(path.join(sessionDir, `${trackingId}_state.json`), 'utf-8'),
+    );
+  } catch { /* no/unreadable legacy file */ }
+  let canonical: Record<string, unknown> = {};
+  try {
+    const parsed = parseStateObject(
+      fs.readFileSync(
+        path.join(sessionDir, `state.${uuid8FromTrackingId(trackingId)}.json`),
+        'utf-8',
+      ),
+    );
+    const state = parsed.state;
+    if (state !== null && typeof state === 'object' && !Array.isArray(state)) {
+      canonical = state as Record<string, unknown>;
+    }
+  } catch { /* no/unreadable canonical file */ }
+  return { ...legacy, ...canonical };  // canonical wins on key conflict
 }
 
 // ─── Tags Loader (for session tag merge) ─────────────────────────────────
@@ -246,6 +328,7 @@ function mapSession(raw: Record<string, unknown>, pref?: SessionPref, tags?: str
     context_percent: state['context.used_pct'] as number ?? null,
     exchange_count: (state['transcript.turns'] as number) || 0,
     message_count: (state['transcript.messages'] as number) ?? null,
+    transcript_bytes: transcriptBytes(raw.history_file),
     last_activity: (state['session.last_activity'] as string) || (raw.last_activity as string) || (raw.created_at as string) || '',
     start_history: Array.isArray(state['session.start_history'])
       ? (state['session.start_history'] as string[])

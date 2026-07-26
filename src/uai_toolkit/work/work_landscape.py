@@ -16,7 +16,9 @@ Targets Python 3.9 (no 3.10+ syntax).
 """
 
 import argparse
+import glob
 import json
+import os
 import subprocess
 import sys
 from datetime import datetime
@@ -98,8 +100,126 @@ def _age_secs(iso_ts):
 STALE_IF_BUSY = frozenset({"responding", "working"})
 STALE_BUSY_SECS = 600  # 10 minutes
 
+# A transcript/activity source touched within this window means the session did
+# REAL work just now — the truthful "is it alive" signal, independent of the
+# Stop-hook last_activity column (stale for a resumed/mid-turn session). (todo_0575)
+LIVE_ACTIVE_SECS = 180  # 3 minutes
+
+
+def _resolve_transcript(sess):
+    """Newest session transcript/activity-source path, or None (todo_0575).
+
+    Considers every registry-stored path plus platform-specific fallbacks by
+    cli_session_id, then chooses the newest existing candidate. This matters for
+    resumed sessions whose registry can retain more than one transcript path."""
+    candidates = []
+    tp = sess.get("transcript_path")
+    if isinstance(tp, list):
+        candidates.extend(p for p in tp if p)
+    elif tp:
+        candidates.append(tp)
+    hf = sess.get("history_file")
+    if hf:
+        candidates.append(hf)
+    cli = sess.get("cli_session_id")
+    plat = sess.get("platform") or ""
+    pats = []
+    unknown_plat = plat in ("", "?")
+    if cli and (plat.startswith("claude") or unknown_plat):
+        pats.append(os.path.expanduser("~/.claude/projects/*/%s.jsonl" % cli))
+    if cli and (plat.startswith("codex") or unknown_plat):
+        pats.append(os.path.expanduser("~/.codex/sessions/**/rollout-*%s.jsonl" % cli))
+    if cli and (plat.startswith("gemini") or unknown_plat):
+        # Gemini transcript filenames contain the first eight UUID characters,
+        # not the full cli_session_id, and installations can use either suffix.
+        uuid8 = cli[:8]
+        pats.extend([
+            os.path.expanduser("~/.gemini/**/*%s*.jsonl" % uuid8),
+            os.path.expanduser("~/.gemini/**/*%s*.json" % uuid8),
+        ])
+    if cli and (plat.startswith("grok") or unknown_plat):
+        pats.extend([
+            os.path.expanduser("~/.grok/sessions/**/%s/chat_history.jsonl" % cli),
+            os.path.expanduser("~/.grok/sessions/**/%s/events.jsonl" % cli),
+        ])
+    if cli and (plat.startswith("antigravity") or unknown_plat):
+        # Antigravity's conversation DB is the authoritative per-turn activity
+        # source; the JSONL cache may exist too.
+        candidates.extend([
+            os.path.expanduser(
+                "~/.gemini/antigravity-cli/conversations/%s.db" % cli
+            ),
+            os.path.expanduser(
+                "~/.gemini/antigravity-cli/cache/transcripts/%s.jsonl" % cli
+            ),
+        ])
+    newest = None
+    for pat in pats:
+        candidates.extend(glob.glob(pat, recursive=True))
+    for p in dict.fromkeys(candidates):
+        try:
+            m = os.stat(p).st_mtime
+        except (OSError, TypeError):
+            continue
+        if newest is None or m > newest[0]:
+            newest = (m, p)
+    return newest[1] if newest else None
+
+
+def _transcript_activity(sess):
+    """(iso, age_secs) of the transcript/activity source mtime, or (None, None).
+
+    The source is written on every turn, so its mtime is a truthful last-touch
+    signal — unlike the last_activity column, which only the Stop hook writes and
+    therefore reads stale for a resumed, still-responding session (todo_0575)."""
+    path = _resolve_transcript(sess)
+    if not path:
+        return None, None
+    try:
+        m = os.stat(path).st_mtime
+    except OSError:
+        return None, None
+    iso = datetime.fromtimestamp(m).astimezone().isoformat()
+    return iso, _age_secs(iso)
+
+
+def _derive_liveness(status, raw_state, age):
+    """Coarse liveness axis, DISTINCT from the lifecycle `status` (todo_0575).
+
+    The bug this fixes: `status == "active"` means only "the terminal process
+    still exists", so sessions idle for days read "active". Liveness instead
+    answers "did it do work recently?":
+      - dead: terminal/process is gone (lifecycle status not active)
+      - blocked / permission_prompt: really waiting on the user (surfaced as-is)
+      - active: real activity within LIVE_ACTIVE_SECS
+      - idle: alive but quiet
+    (errored/rate-limited detection is a documented follow-up — see DESIGN.md.)"""
+    if status != "active":
+        return "dead"
+    if raw_state in NEEDS_USER_STATES:
+        return raw_state
+    if age is not None and age <= LIVE_ACTIVE_SECS:
+        return "active"
+    return "idle"
+
 
 ASSESSMENTS_FILE = "$AI_ROOT/ai_general/data/work/assessments.json"
+
+
+def _normalize_directives(value):
+    """Return the cached directive field in its public list-of-strings shape."""
+    if not isinstance(value, list):
+        return []
+    clean = []
+    for item in value:
+        if not isinstance(item, str):
+            continue
+        item = " ".join(item.split())
+        if item and item not in clean:
+            clean.append(item)
+        if len(clean) == 3:
+            break
+    return clean
 
 
 def _load_assessments():
@@ -109,10 +229,38 @@ def _load_assessments():
         with open(ASSESSMENTS_FILE, "r") as fh:
             loaded = json.load(fh)
         if isinstance(loaded, dict):
-            data = loaded
+            for name, assessment in loaded.items():
+                if not isinstance(assessment, dict):
+                    continue
+                assessment = dict(assessment)
+                assessment["recent_directives"] = _normalize_directives(
+                    assessment.get("recent_directives")
+                )
+                data[name] = assessment
     except (OSError, json.JSONDecodeError):
         data = {}
     return data
+
+
+PM_DECISIONS_FILE = "$AI_ROOT/ai_general/data/work/pm_decisions.json"
+
+
+def _load_pm_decisions():
+    """Open 'Needs Me' decisions (needs_user_mgr.py store), oldest first.
+
+    The board's "Needs Me" tab renders these; longest-waiting on top (todo_0578/0579).
+    A decision drops off once it's resolved — either answered or dismissed as
+    already-addressed. Empty list if the store is absent — the rest of the
+    landscape is unaffected.
+    """
+    try:
+        with open(PM_DECISIONS_FILE, "r") as fh:
+            loaded = json.load(fh)
+        decisions = loaded.get("decisions", []) if isinstance(loaded, dict) else []
+    except (OSError, json.JSONDecodeError):
+        return []
+    open_ = [d for d in decisions if d.get("status", "open") not in ("answered", "addressed")]
+    return sorted(open_, key=lambda d: d.get("created_at") or "")
 
 
 def load_landscape(include_stopped, enrich=False):
@@ -170,7 +318,19 @@ def load_landscape(include_stopped, enrich=False):
         name = sess.get("display_name") or sess.get("tracking_id") or "?"
         raw_state = sess.get("activity_state") or "unknown"
         state_display = raw_state if raw_state != "unknown" else status
-        age = _age_secs(sess.get("last_activity"))
+        # todo_0575: the last_activity COLUMN is Stop-hook-only, so a resumed/
+        # mid-turn session reads stale. Fold in the transcript file mtime (touched
+        # every turn) and take the MORE RECENT of the two as the true activity.
+        # Only for ACTIVE sessions — a stopped one is `dead` liveness regardless, so
+        # resolving its transcript would just be a wasted glob (matters under --all).
+        col_iso = sess.get("last_activity")
+        col_age = _age_secs(col_iso)
+        tx_iso, tx_age = _transcript_activity(sess) if status == "active" else (None, None)
+        cand = [(a, i) for a, i in ((col_age, col_iso), (tx_age, tx_iso)) if a is not None]
+        if cand:
+            age, eff_iso = min(cand, key=lambda x: x[0])   # smallest age = most recent
+        else:
+            age, eff_iso = None, col_iso
         if raw_state in STALE_IF_BUSY and age is not None and age > STALE_BUSY_SECS:
             state_display = "idle"
         rows.append({
@@ -181,8 +341,10 @@ def load_landscape(include_stopped, enrich=False):
             "status": status,
             "activity_state": raw_state,
             "state_display": state_display,
-            "ago": _ago(sess.get("last_activity")),
-            "last_activity": sess.get("last_activity"),   # raw ISO — for UI sort
+            "liveness": _derive_liveness(status, raw_state, age),   # todo_0575
+            "activity_age_secs": age,                               # todo_0575 (for UI)
+            "ago": _ago(eff_iso),
+            "last_activity": eff_iso,   # truthful ISO (col vs transcript, newest) — for UI sort
             "roles": sess.get("roles") or [],
             "todos": assigned.get(("session", name), []),
             "assessment": assessments.get(name),
@@ -231,13 +393,16 @@ def load_landscape(include_stopped, enrich=False):
 
     rows.sort(key=lambda r: (r["status"] != "active", r["name"].lower()))
 
+    needs_pm = _load_pm_decisions()
     model = {
         "rows": rows,
+        "needs_pm": needs_pm,   # open escalated decisions for the board's "Needs You" panel (todo_0578)
         "totals": {
             "todos": len(todos),
             "todos_no_assignee": sum(1 for t in todos if not t.get("assigned")),
             "active_sessions": sum(1 for r in rows if r["kind"] == "session" and r["status"] == "active"),
             "active_no_todo": sum(1 for r in rows if r["kind"] == "session" and r["status"] == "active" and not r["todos"]),
+            "needs_pm": len(needs_pm),
         },
     }
     return model
@@ -271,6 +436,12 @@ def _needs_reason(row):
     return reason
 
 
+def _recent_directives(row):
+    """Defensively normalize one cached assessment's directive list."""
+    raw = (row.get("assessment") or {}).get("recent_directives")
+    return _normalize_directives(raw)
+
+
 def render(model):
     """Render the landscape as a text table with a gaps footer. Single return."""
     lines = []
@@ -298,6 +469,24 @@ def render(model):
         lines.append("NEEDS PIANOMAN (⚑)")
         for row in needs:
             lines.append("  %-14s %s" % (row["name"][:14], _needs_reason(row)))
+
+    # What PianoMan told each session to do (todo_0431) — the assessor's
+    # recent_directives, extracted from each transcript. Hamilton's core duty of
+    # tracking directly-issued (non-todo) assignments. Only shows under --enrich.
+    directives = [(r, _recent_directives(r)) for r in model["rows"]]
+    directives = [(r, ds) for r, ds in directives if ds]
+    if directives:
+        lines.append("")
+        lines.append("PM DIRECTIVES  (per session; age = assessment age)")
+        for row, ds in directives:
+            name = row["name"]
+            assessed_at = (row.get("assessment") or {}).get("assessed_at")
+            age = _ago(assessed_at)
+            age_label = "[%s] " % age if age != "?" else ""
+            for i, d in enumerate(ds[:3]):
+                label = name[:14] if i == 0 else ""
+                prefix = age_label if i == 0 else (" " * len(age_label))
+                lines.append("  %-14s %s%s" % (label, prefix, ("• " + d)[:90]))
 
     t = model["totals"]
     lines.append("")
@@ -341,8 +530,9 @@ THE TABLE  (default output)
   Joins in data/work/assessments.json (written by work_assess_sessions.py) by
   session name, adding: (a) a non-productive state tag on the WORK cell, e.g.
   [waiting_on_user]; (b) a NEEDS PIANOMAN section listing each session flagged
-  needs_pianoman with its open question. blocked / permission_prompt STATEs are
-  folded in here too as real-time "needs the user" signals.
+  needs_pianoman with its open question; (c) a PM DIRECTIVES section of recent
+  human-issued tasks, labeled with assessment age. blocked / permission_prompt
+  STATEs are folded in here too as real-time "needs the user" signals.
 
 --json     Emit the raw joined model instead of the table -- the shape the UAI
            coordinator cockpit consumes.
@@ -351,7 +541,7 @@ EXAMPLES
   work_landscape.py                    # active sessions, structural table
   work_landscape.py --all              # include stopped sessions
   work_landscape.py --assignees-only   # only sessions that have a todo
-  work_landscape.py --enrich           # + LLLM states + NEEDS PIANOMAN section
+  work_landscape.py --enrich           # + LLLM states / needs / PM directives
   work_landscape.py --json --enrich    # full model as JSON (for tooling)
 
 SEE ALSO
@@ -376,8 +566,8 @@ def main():
                         action="store_true",
                         help="show only sessions that have at least one assigned todo")
     parser.add_argument("--enrich", action="store_true",
-                        help="join in the LLLM assessment layer (states + NEEDS PIANOMAN) "
-                             "from data/work/assessments.json, if present")
+                        help="join the LLLM assessment layer (states, NEEDS PIANOMAN, "
+                             "PM DIRECTIVES) from data/work/assessments.json, if present")
     args = parser.parse_args()
 
     model = load_landscape(include_stopped=args.all, enrich=args.enrich)

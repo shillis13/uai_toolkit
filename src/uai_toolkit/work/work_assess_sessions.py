@@ -41,7 +41,15 @@ ASSESS_PROMPT = (
     '{"state": one of "productive"|"blocked"|"waiting_on_user"|"idle", '
     '"project_guess": short scope string or null, '
     '"open_question": the unresolved question the session is waiting on, or null, '
-    '"needs_pianoman": true or false}. '
+    '"needs_pianoman": true or false, '
+    '"recent_directives": array (0-3) of short strings — each a concrete task '
+    "PianoMan (the human operator) told THIS session to do, most recent first}. "
+    "For recent_directives: PianoMan is the human user. Include ONLY direct work "
+    "instructions from the human — NOT messages relayed from other named agents "
+    "(e.g. 'Queued Message from <Agent>', 'You have unread mail', another session "
+    "speaking), NOT system reminders/notifications/tool output. Each entry is a "
+    "terse imperative (e.g. 'Fix the Work Mgr sort order'). Empty array if the "
+    "excerpt shows no human directive. "
     "Base it only on the excerpt."
 )
 
@@ -128,6 +136,26 @@ def _parse_assessment(raw):
     return parsed
 
 
+def _normalize_recent_directives(value):
+    """Return at most three non-empty, single-line directive strings.
+
+    Local models can omit the new key or return the wrong JSON type despite the
+    requested schema. Keep that malformed output from leaking into the cache/UI.
+    """
+    if not isinstance(value, list):
+        return []
+    clean = []
+    for item in value:
+        if not isinstance(item, str):
+            continue
+        item = " ".join(item.split())
+        if item and item not in clean:
+            clean.append(item)
+        if len(clean) == 3:
+            break
+    return clean
+
+
 def assess_one(name, excerpt):
     """Run the LLLM assessment for one session's excerpt. None on failure."""
     result = None
@@ -141,6 +169,12 @@ def assess_one(name, excerpt):
         )
         if proc.returncode == 0:
             result = _parse_assessment(proc.stdout)
+            if isinstance(result, dict):
+                result["recent_directives"] = _normalize_recent_directives(
+                    result.get("recent_directives")
+                )
+            else:
+                result = None
     except (subprocess.SubprocessError, OSError):
         result = None
     return result
@@ -188,7 +222,11 @@ PIPELINE  (per run)
   2. Read the tail of the session's newest transcript: ~the last 60 JSONL
      lines -> the last 6000 chars of human-readable user/assistant text.
   3. Run lllm_prompt.py with the assess prompt. The model must return ONE JSON
-     object: {state, project_guess, open_question, needs_pianoman}.
+     object: {state, project_guess, open_question, needs_pianoman,
+     recent_directives}. recent_directives (todo_0431) = 0-3 terse tasks
+     PianoMan (the human) told this session to do, extracted from the excerpt
+     while ignoring agent relays / system notifications -> the PM DIRECTIVES
+     feed on the board.
      NB: lllm_prompt.py is invoked via its OWN shebang/venv (which has httpx) --
      using the caller's python silently zeroed every assessment under launchd.
   4. Defensively parse the first {...} block (local models wrap JSON in prose).
@@ -198,7 +236,8 @@ OUTPUT -- data/work/assessments.json   (MERGE, never overwrite)
   Keyed by session display_name:
     { "Mullion": { "state": "productive|blocked|waiting_on_user|idle",
                    "project_guess": <str|null>, "open_question": <str|null>,
-                   "needs_pianoman": true, "assessed_at": "2026-..." }, ... }
+                   "needs_pianoman": true, "recent_directives": [<str>, ...],
+                   "assessed_at": "2026-..." }, ... }
   New verdicts are merged OVER the existing file. A run that produces nothing
   (LLLM down/busy, or no fresh sessions) is a no-op -- it never clobbers
   last-good data; un-reassessed sessions keep their prior verdict (an older
@@ -225,8 +264,9 @@ SEE ALSO
 def main():
     parser = argparse.ArgumentParser(
         description="LLLM per-session assessor: reads fresh sessions' transcripts and caches a "
-                    "structured verdict (state / open_question / needs_pianoman) that feeds "
-                    "`work_landscape.py --enrich`. Read-only except for its own output file.",
+                    "structured verdict (state / open_question / needs_pianoman / "
+                    "recent_directives) that feeds `work_landscape.py --enrich`. "
+                    "Read-only except for its own output file.",
         epilog=ASSESS_EPILOG,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )

@@ -268,6 +268,17 @@ def _chain_records(records: list, *, leaf_uuid: str | None = None,
     if leaf_uuid is not None:
         leaf = by_uuid.get(leaf_uuid)
         if leaf is None:
+            # Accept a uuid PREFIX. context_stats/CLI DISPLAY the 8-char prefix and the
+            # context MCP tools invite "prefix OK", so exact-only matching silently
+            # no-ops the summarize lever (a prefix -> leaf_not_found -> empty chain ->
+            # reclaim 0, exactly when a pressured session reaches for it — todo_0632).
+            # Resolve a UNIQUE prefix; flag an ambiguous one rather than guessing.
+            pref = [u for u in by_uuid if u.startswith(leaf_uuid)]
+            if len(pref) == 1:
+                leaf = by_uuid[pref[0]]
+            elif len(pref) > 1:
+                return [], None, None, "leaf_ambiguous_prefix"
+        if leaf is None:
             return [], None, None, "leaf_not_found"
         leaf_type, reason = leaf.get("type"), "explicit_leaf"
     else:
@@ -944,6 +955,13 @@ def plan_eviction(jsonl_path, *, need_tokens: int, keep_recent_turns: int = 3,
     _s0, _s1, _raw, records = _load(jsonl_path)
     chain, _lu, _lt, _br = _chain_records(
         records, leaf_uuid=leaf_uuid, leaf_policy=leaf_policy)
+    # A bad explicit leaf must NOT silently yield an empty plan (reclaim 0) — that is
+    # the summarize lever failing exactly when a pressured session reaches for it
+    # (todo_0632). Prefix resolution above handles the common case; surface the rest.
+    if leaf_uuid is not None and _br in ("leaf_not_found", "leaf_ambiguous_prefix"):
+        raise ValueError(
+            f"leaf_uuid {leaf_uuid!r}: {_br} — cannot plan eviction. Pass a valid full "
+            f"uuid or a UNIQUE prefix, or omit leaf_uuid to auto-select the active leaf.")
 
     # Chain-native human-turn positions: classify the chain records directly
     # (mirrors consolidate's range logic). human_turn_indices() returns

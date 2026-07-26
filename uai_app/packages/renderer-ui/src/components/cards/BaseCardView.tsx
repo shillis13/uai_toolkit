@@ -21,6 +21,7 @@ interface BaseCardViewProps {
   onContextMenu?: (e: React.MouseEvent) => void;
   platformColor?: string;
   statusColor?: string;
+  vendorBadge?: { label: string; title: string; color: string };
   extraClass?: string;
   tooltipPosition?: TooltipPosition;
   children?: React.ReactNode;
@@ -28,7 +29,7 @@ interface BaseCardViewProps {
 
 export default function BaseCardView({
   card, active, selected, hasTab, onClick, onDoubleClick, onContextMenu,
-  platformColor, statusColor, extraClass, tooltipPosition, children,
+  platformColor, statusColor, vendorBadge, extraClass, tooltipPosition, children,
 }: BaseCardViewProps): JSX.Element {
   const pinned = isSessionCard(card) && card.pinned;
   const [hovered, setHovered] = useState(false);
@@ -68,6 +69,13 @@ export default function BaseCardView({
       {hasTab && <div className="card-tab-indicator" />}
       <div className="card-content">
         <div className="card-header">
+          {vendorBadge && (
+            <span
+              className="card-vendor-badge"
+              style={{ color: vendorBadge.color, borderColor: vendorBadge.color }}
+              title={vendorBadge.title}
+            >{vendorBadge.label}</span>
+          )}
           <span className="card-name">{card.display_name}</span>
           {pinned && <span className="card-pin-icon" title="Pinned">{'\uD83D\uDCCC'}</span>}
           {statusColor && <span className="card-status-dot" style={{ backgroundColor: statusColor }} />}

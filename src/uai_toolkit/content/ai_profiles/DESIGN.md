@@ -15,10 +15,14 @@ context from `ai_context_files/`:
 
 | Directory | Kind | File | References |
 |---|---|---|---|
-| `ai_profiles/` (root) | profile | `<name>.yml` | roles (+ context files) |
-| `roles/` | role | `<name>.yml` | context files (+ sub-roles) |
-| `skills/` | skill | `<name>.yml` | context files |
-| `globals/` | global | `<name>.yml` | context files (loaded for everyone) |
+| `bundles/` | bundle | `<name>.yml` | context files (a curated content-set) |
+| `roles/` | role | `<name>.yml` | context files, bundles (+ sub-roles) |
+| `skills/` | skill | `<name>.yml` | context files, bundles |
+| `globals/` | global | `<name>.yml` | context files, bundles (loaded for everyone) |
+
+The `profile` kind is **retired** — a session carries roles and bundles directly, so a
+profile added nothing. The old root-level `ai_profiles/*.yml` profiles are archived under
+`ai_profiles/_archive/`.
 
 ## Naming
 

@@ -280,9 +280,10 @@ const STATUS_LABELS: Record<string, string> = {
 
 interface ContextPanelProps {
   activeSessionId: string | null;
+  active?: boolean;
 }
 
-export default function ContextPanel({ activeSessionId }: ContextPanelProps): JSX.Element {
+export default function ContextPanel({ activeSessionId, active = true }: ContextPanelProps): JSX.Element {
   const { appState, updateAppState } = useAppStateStore();
   const { getSession } = useSessionStore();
   const draggingRef = useRef(false);
@@ -310,7 +311,7 @@ export default function ContextPanel({ activeSessionId }: ContextPanelProps): JS
   const session = effectiveSessionId ? getSession(effectiveSessionId) : undefined;
 
   useViewport('context_panel', () => ({
-    visible: isOpen,
+    visible: active && isOpen,
     state: { activeTab: activeRightTab, open: isOpen, width },
     actions: [
       {
@@ -321,7 +322,7 @@ export default function ContextPanel({ activeSessionId }: ContextPanelProps): JS
       },
     ],
     children: [],
-  }));
+  }), active);
 
   // Load badge counts when session changes, then poll so the Comms-unread and
   // Prompts-queued badges reflect data-store changes within a few seconds —

@@ -1,7 +1,6 @@
 /**
- * TranscriptViewer: Slide-in panel reading from Claude Code JSONL session files.
- * Source: ~/.claude/projects/.../{uuid}.jsonl — structured, not terminal output.
- * Opens via Cmd+Shift+C or toolbar button. Snapshot on open.
+ * TranscriptViewer: Slide-in panel reading structured Claude Code or Codex JSONL.
+ * Opens via Cmd+Shift+C or the toolbar and follows the shared transcript cache.
  *
  * Overlay mode: side panel (right ~50%) — terminal remains accessible on left.
  * Features: search with navigation, multi-select with copy, resizable width,
@@ -71,6 +70,7 @@ interface Message {
   role: string;           // user, assistant, system
   timestamp: string;      // ISO string or empty
   content: string;        // text content (markdown for user/assistant)
+  html: string;           // sanitized markdown, reused across incremental refreshes
   toolName?: string;      // for tool messages: the tool name
   toolInput?: string;     // for tool messages: input JSON
 }
@@ -89,7 +89,10 @@ interface DayGroup {
 
 // ── Map structured backend response to component model ─────────────────────
 
-function mapStructuredResponse(days: any[]): { dayGroups: DayGroup[]; allMessages: Message[] } {
+function mapStructuredResponse(
+  days: any[],
+  previous: ReadonlyMap<number, Message> = new Map(),
+): { dayGroups: DayGroup[]; allMessages: Message[] } {
   const allMessages: Message[] = [];
   let msgId = 1;
 
@@ -98,15 +101,29 @@ function mapStructuredResponse(days: any[]): { dayGroups: DayGroup[]; allMessage
     dateKey: day.date ?? 'Unknown',
     turns: (day.turns ?? []).map((turn: any) => {
       const turnMessages: Message[] = (turn.messages ?? []).map((m: any) => {
-        const msg: Message = {
-          id: msgId++,
+        const id = msgId++;
+        const type = m.type ?? 'response';
+        const content = typeof m.content === 'string' ? m.content : (Array.isArray(m.content) ? m.content.filter((b: any) => b?.type === 'text').map((b: any) => b.text ?? '').join('\n') || `(${m.content.map((b: any) => b?.type).join(', ')})` : String(m.content ?? ''));
+        const toolInput = m.tool_input ? (typeof m.tool_input === 'string' ? m.tool_input : JSON.stringify(m.tool_input, null, 2)) : undefined;
+        const prior = previous.get(id);
+        const unchanged = prior
+          && prior.lineStart === (m.line_number ?? 0)
+          && prior.type === type
+          && prior.role === (m.role ?? 'assistant')
+          && prior.timestamp === (m.timestamp ?? '')
+          && prior.content === content
+          && prior.toolName === m.tool_name
+          && prior.toolInput === toolInput;
+        const msg: Message = unchanged ? prior : {
+          id,
           lineStart: m.line_number ?? 0,
-          type: m.type ?? 'response',
+          type,
           role: m.role ?? 'assistant',
           timestamp: m.timestamp ?? '',
-          content: typeof m.content === 'string' ? m.content : (Array.isArray(m.content) ? m.content.filter((b: any) => b?.type === 'text').map((b: any) => b.text ?? '').join('\n') || `(${m.content.map((b: any) => b?.type).join(', ')})` : String(m.content ?? '')),
+          content,
+          html: type === 'tool_use' || type === 'tool_result' ? '' : safeParse(content),
           toolName: m.tool_name,
-          toolInput: m.tool_input ? (typeof m.tool_input === 'string' ? m.tool_input : JSON.stringify(m.tool_input, null, 2)) : undefined,
+          toolInput,
         };
         allMessages.push(msg);
         return msg;
@@ -200,6 +217,9 @@ export function TranscriptViewer({ open, zellijSession, cliSessionId, sessionNam
   const searchInputRef = useRef<HTMLInputElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
+  const messagesRef = useRef<Message[]>([]);
+  const lastRevisionRef = useRef('');
+  const loadGenerationRef = useRef(0);
 
   // Resolve platform — prefer prop, fall back to session lookup
   const [resolvedPlatform, setResolvedPlatform] = useState<AiPlatform | null>(platformProp ?? null);
@@ -222,6 +242,12 @@ export function TranscriptViewer({ open, zellijSession, cliSessionId, sessionNam
   // Persisted view state key (survives a pinned transcript's remount on tab switch).
   const sessKey = cliSessionId || zellijSession || '';
   const savedView = useMemo(() => loadTvView(sessKey), [sessKey]);
+
+  useEffect(() => {
+    loadGenerationRef.current++;
+    lastRevisionRef.current = '';
+    messagesRef.current = [];
+  }, [sessKey]);
 
   // Type visibility filters (Tools, Thinking, Injected default to off) — restored
   // from the persisted view so switching tabs doesn't reset them.
@@ -250,31 +276,63 @@ export function TranscriptViewer({ open, zellijSession, cliSessionId, sessionNam
       setUuid(null);
       return;
     }
-    setLoading(true);
+    const generation = ++loadGenerationRef.current;
+    if (messagesRef.current.length === 0) setLoading(true);
     setError(null);
     // NOTE: don't blank uuid/content here — keeping the prior transcript visible
     // during a reload avoids the "clear" flash when a pinned transcript refreshes.
     try {
-      const result = await window.uai.transcript.read(zellijSession, cliSessionId, 'structured');
+      const ref = cliSessionId || zellijSession;
+      let result: {
+        ok: boolean;
+        days?: unknown[];
+        error?: string;
+        uuid?: string;
+        path?: string;
+        revision?: string;
+      } = await window.uai.transcript.getCached(ref);
+      if (!result.ok || !result.days) {
+        result = await window.uai.transcript.read(zellijSession, cliSessionId, 'structured');
+      }
+      if (generation !== loadGenerationRef.current) return;
       if (!result.ok) {
         setError(result.error ?? 'Unknown error');
         setDayGroups([]);
         setMessages([]);
+        messagesRef.current = [];
       } else {
-        setUuid(result.uuid ?? null);
+        const days = (result.days ?? []) as any[];
+        // The normal cached path always supplies a stable file revision. If the
+        // cache failed and direct read was needed, favor correctness over skipping.
+        const revision = result.revision || `direct:${Date.now()}`;
+        if (revision === lastRevisionRef.current) return;
+        lastRevisionRef.current = revision;
+
+        setUuid(result.uuid ?? cliSessionId ?? null);
         setJsonlPath(result.path ?? null);
-        const { dayGroups: dg, allMessages } = mapStructuredResponse(result.days ?? []);
+        const prior = new Map(messagesRef.current.map((message) => [message.id, message]));
+        const { dayGroups: dg, allMessages } = mapStructuredResponse(days, prior);
+        messagesRef.current = allMessages;
         setDayGroups(dg);
         setMessages(allMessages);
       }
     } catch (e: any) {
-      setError(e.message);
+      if (generation === loadGenerationRef.current) setError(e.message);
     } finally {
-      setLoading(false);
+      if (generation === loadGenerationRef.current) setLoading(false);
     }
   }, [zellijSession, cliSessionId]);
 
   useEffect(() => { if (open || inline) loadTranscript(); }, [open, inline, loadTranscript]);
+
+  useEffect(() => {
+    if (!open && !inline) return;
+    const ref = cliSessionId || zellijSession;
+    if (!ref || !window.uai.transcript.onUpdated) return;
+    return window.uai.transcript.onUpdated((updatedRef) => {
+      if (updatedRef === ref) void loadTranscript();
+    });
+  }, [open, inline, cliSessionId, zellijSession, loadTranscript]);
 
   useEffect(() => {
     if (inline && !resumable) setStatus('stopped');
@@ -458,10 +516,10 @@ export function TranscriptViewer({ open, zellijSession, cliSessionId, sessionNam
   /** Highlight search matches — runs AFTER markdown parsing to avoid marker corruption.
    *  Tracks global match index to mark the current match with a special class. */
   const highlightCounterRef = useRef(0);
-  function highlightText(text: string, resetCounter?: boolean): string {
+  function highlightText(msg: Message, resetCounter?: boolean): string {
     if (resetCounter) highlightCounterRef.current = 0;
-    if (!text) return '';
-    let html = safeParse(text);
+    if (!msg.content) return '';
+    let html = msg.html;
     if (!query) return html;
     const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const re = new RegExp(escaped, 'gi');
@@ -571,7 +629,7 @@ export function TranscriptViewer({ open, zellijSession, cliSessionId, sessionNam
               <pre className="tv-tool-content">{msg.content || '(empty result)'}</pre>
             ) : (
               /* All markdown content is sanitized via DOMPurify in safeParse, called by highlightText */
-              <div className="tv-msg-text" dangerouslySetInnerHTML={{ __html: highlightText(msg.content) }} />
+              <div className="tv-msg-text" dangerouslySetInnerHTML={{ __html: highlightText(msg) }} />
             )}
           </div>
         )}

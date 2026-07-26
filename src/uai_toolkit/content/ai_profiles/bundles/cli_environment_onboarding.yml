@@ -1,0 +1,16 @@
+name: CLI Environment & Onboarding
+description: >
+  CLI Environment & Onboarding — bundle assembled from the todo_0319 grouping pass.
+_registry:
+  id: cli_environment_onboarding
+  name: CLI Environment & Onboarding
+  status: active
+  version: 1.0.0
+
+context_files:
+  how_tos:
+    - ai_context_files/instructions/how_tos/instr_cli_agents
+    - ai_context_files/instructions/how_tos/instr_cli_context_and_tools
+    - ai_context_files/instructions/how_tos/instr_cli_environment_overview
+  perspectives:
+    - ai_context_files/instructions/perspectives/perspective_user_profile_for_cli_agents

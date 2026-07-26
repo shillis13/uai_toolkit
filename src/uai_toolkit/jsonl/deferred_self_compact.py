@@ -26,7 +26,9 @@ import subprocess
 import sys
 from pathlib import Path
 
-sys.path.insert(0, os.environ.get("AI_SCRIPTS") or str(Path(__file__).resolve().parents[1]))
+_ai_scripts = os.environ.get("AI_SCRIPTS")
+if _ai_scripts:
+    sys.path.insert(0, _ai_scripts)
 from uai_toolkit.paths import AI_ROOT
 
 _AI_ROOT = AI_ROOT
@@ -54,34 +56,43 @@ def _log(msg: str) -> None:
     print(f"[deferred_self_compact] {msg}", file=sys.stderr)
 
 
+def _bridge():
+    """(read_union, write_session_state) from the shared state bridge (todo_0495)."""
+    hc = Path(__file__).resolve().parents[2] / "data" / "hooks" / "common"
+    if str(hc) not in sys.path:
+        sys.path.insert(0, str(hc))
+    from uai_toolkit.hooks.common.lib_session_state_union import read_union, write_session_state
+    return read_union, write_session_state
+
+
 def _read_state(session_dir: str, tid: str) -> dict:
-    p = Path(session_dir) / f"{tid}_state.json"
+    """UNION read (canonical accessor over legacy) so enrolled sessions read their
+    canonical state (todo_0495). Legacy-only fallback on import failure; never raises."""
     try:
-        return json.loads(p.read_text()) if p.exists() else {}
-    except (OSError, ValueError):
-        return {}
-
-
-def _write_state(session_dir: str, tid: str, state: dict) -> None:
-    p = Path(session_dir) / f"{tid}_state.json"
-    try:
-        tmp = p.with_suffix(".tmp")
-        tmp.write_text(json.dumps(state, indent=2))
-        tmp.rename(p)
-    except OSError:
-        pass
+        read_union, _ = _bridge()
+        return read_union(session_dir, tid)
+    except Exception:
+        p = Path(session_dir) / f"{tid}_state.json"
+        try:
+            return json.loads(p.read_text()) if p.exists() else {}
+        except (OSError, ValueError):
+            return {}
 
 
 def _set_deferred(session_dir: str, tid: str, **kw) -> None:
-    """Merge fields into compact.deferred and persist."""
-    state = _read_state(session_dir, tid)
-    d = state.get("compact.deferred") or {}
+    """Merge fields into compact.deferred and persist (targeted write via the bridge)."""
+    d = _read_state(session_dir, tid).get("compact.deferred") or {}
     if not isinstance(d, dict):
         d = {}
     d.update(kw)
-    state["compact.deferred"] = d
-    state["updated_at"] = _dt.datetime.now().isoformat()
-    _write_state(session_dir, tid, state)
+    try:
+        _, write_session_state = _bridge()
+        write_session_state(session_dir, tid, {
+            "compact.deferred": d,
+            "updated_at": _dt.datetime.now().isoformat(),
+        })
+    except Exception:
+        pass
 
 
 def _activity_idle_secs(session_dir: str):

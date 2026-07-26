@@ -11,10 +11,13 @@
  * hues match the rest of the UAI app rather than introducing new ones.
  */
 
-// The app's accent palette, in a fixed order so the hash is stable.
+// Folder identity palette — COOL hues only, in a fixed order so the hash is stable.
+// The warm hues (red / yellow / orange) are deliberately EXCLUDED: those are reserved
+// for semantic session STATUS (attention/context-pressure). Keeping folder identity
+// colors cool and status colors warm stops a folder's color from being mistaken for a
+// session's status. (The old list also referenced a nonexistent `--accent-amber`.)
 const FOLDER_ACCENTS = [
   '--accent-cyan', '--accent-green', '--accent-purple', '--accent-blue',
-  '--accent-orange', '--accent-amber', '--accent-red', '--accent-yellow',
 ];
 
 interface ColorableFolder { id?: string | null; name?: string | null; color?: string | null }

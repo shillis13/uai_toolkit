@@ -19,9 +19,8 @@ import { registerCommandHandlers, normalizePersistedAppState } from './command-h
 import { listSessions, getSession, callStore as callSessionStore, callSessionMgr } from './session-store';
 import { loadFolders } from './folder-manager';
 import { loadContainers } from './container-manager';
-import { listProjects } from './project-indexer';
+import { listProjects, listHiddenRegistryEntities } from './project-indexer';
 import { indexBriefs } from './brief-indexer';
-import { listTeams } from './team-indexer';
 import {
   attachTerminal, writeTerminal, resizeTerminal, detachTerminal, detachAll,
   createStandaloneTerminal, writeStandaloneTerminal, resizeStandaloneTerminal, closeStandaloneTerminal,
@@ -326,8 +325,15 @@ function createWindow(): void {
     // shows (so the renderer lays out for CDP verification) WITHOUT activating.
     try { app.dock?.hide(); } catch { /* non-macOS */ }
     mainWindow.setIgnoreMouseEvents(true);
-    mainWindow.showInactive();
+    // Make the hidden window transparent BEFORE its first shown frame. Setting
+    // opacity after showInactive() can flash one visible frame on the active display.
     mainWindow.setOpacity(0);
+    mainWindow.showInactive();
+    // showInactive() can pull the window back onto the active display (observed
+    // landing at x:0 despite the -8000 constructor bounds). Force it truly off-screen
+    // AFTER showing so a test instance never appears over PM's screen — not merely
+    // transparent (todo_0631, per Hamilton: default to truly off-screen, safest).
+    mainWindow.setPosition(-8000, -8000);
     const b = mainWindow.getBounds();
     console.log(`[UAI][offscreen] showInactive bounds=${JSON.stringify(b)} visible=${mainWindow.isVisible()} opacity=${mainWindow.getOpacity()}`);
   }
@@ -542,9 +548,10 @@ ipcMain.handle(IPC.PROJECT_LIST, async () => {
   }
 });
 
-ipcMain.handle(IPC.TEAM_LIST, async () => {
+// Hidden registry entities (projects + teams) for the Restore-hidden UI.
+ipcMain.handle('uai:entities:listHidden', async () => {
   try {
-    return await listTeams();
+    return listHiddenRegistryEntities();
   } catch {
     return [];
   }
@@ -1220,14 +1227,23 @@ ipcMain.handle('uai:traitMgr:run', async (_event, command: string, args: string[
 // add/remove-link actions. Other writes (delete/move/create) stay withheld.
 // Args are validated against a tight charset (anti-injection), mirroring the
 // isValidSchedName guard on scheduled-task names.
-const CONTEXT_READ_VERBS = new Set(['list', 'get', 'search', 'refs', 'tree', 'resolve', 'preview', 'validate', 'graph', 'history', 'reindex', 'content']);
+const CONTEXT_READ_VERBS = new Set(['list', 'get', 'search', 'refs', 'tree', 'resolve', 'preview', 'validate', 'graph', 'history', 'reindex', 'content', 'categories']);
 // link/unlink edit reference edges; archive/delete is a SOFT delete (moves the
-// file into the kind's _archive/ subtree — reversible by moving it back). Hard
-// removal, move, and create stay withheld from the UI.
-const CONTEXT_WRITE_VERBS = new Set(['link', 'unlink', 'archive', 'delete']);
+// file into the kind's _archive/ subtree — reversible by moving it back).
+// create authors a new stub (a leaf .md or a composition .yml skeleton) — it is
+// collision-safe (never overwrites) and slug-validated in context_mgr. Hard
+// removal and move stay withheld from the UI.
+const CONTEXT_WRITE_VERBS = new Set(['link', 'unlink', 'archive', 'delete', 'create']);
 function isValidContextArg(arg: string): boolean {
   // Plain values/ids (incl. flag values via `--flag=value`) or bare `--flag`.
   return /^[A-Za-z0-9_:./@%-]+$/.test(arg) || /^--[A-Za-z0-9-]+(=[A-Za-z0-9_:./@%-]+)?$/.test(arg);
+}
+// `create` carries free-text --title / --description; execFile passes args as an
+// array (no shell), so there is no injection vector — only control chars are
+// rejected. Bare flags and `--flag=value` (value free-text) both pass.
+function isValidCreateArg(arg: string): boolean {
+  if (/[\n\r\x00]/.test(arg)) return false;
+  return /^--[A-Za-z0-9-]+(=.*)?$/.test(arg) || arg.length > 0;
 }
 
 ipcMain.handle('uai:context:run', async (_event, verb: string, args?: string[]) => {
@@ -1235,8 +1251,9 @@ ipcMain.handle('uai:context:run', async (_event, verb: string, args?: string[]) 
     return { ok: false, error: 'unknown verb' };
   }
   const safeArgs = Array.isArray(args) ? args : [];
+  const argOk = verb === 'create' ? isValidCreateArg : isValidContextArg;
   for (const a of safeArgs) {
-    if (typeof a !== 'string' || !isValidContextArg(a)) {
+    if (typeof a !== 'string' || !argOk(a)) {
       return { ok: false, error: `invalid arg: ${String(a)}` };
     }
   }
@@ -1262,6 +1279,49 @@ ipcMain.handle('uai:context:run', async (_event, verb: string, args?: string[]) 
     return { ok: true, data };
   } catch (err: any) {
     return { ok: false, error: err.stderr || err.message || String(err) };
+  }
+});
+
+// ─── IPC: apply a role's context to its assigned member (load-on-assume) ────
+// Resolves a role's context reference (a composition/bundle id, or a file/context
+// ref) to its leaf context files via context_mgr, then stages them into the
+// member's session inbox (stage_context.py). They load on that session's NEXT
+// prompt — non-intrusive; if the member has no running session, stage_context
+// errors and we surface that. This is the explicit "make the recorded role
+// context actually load" action.
+ipcMain.handle('uai:roleContext:apply', async (_event, member: string, context: string) => {
+  if (typeof member !== 'string' || !member.trim() || typeof context !== 'string' || !context.trim()) {
+    return { ok: false, error: 'member and context are required' };
+  }
+  const root = getAiRootMain();
+  const { execFile } = require('node:child_process');
+  const { promisify } = require('node:util');
+  const execFileAsync = promisify(execFile);
+  const env = { ...process.env, AI_ROOT: root, PATH: shellPath() };
+  try {
+    // 1. Resolve the context ref → leaf file paths.
+    const ctxMgr = path.join(root, 'ai_general/scripts/context_files/context_mgr.py');
+    let files: string[] = [];
+    try {
+      const { stdout } = await execFileAsync('python3', [ctxMgr, 'resolve', context, '--json'], { timeout: 30000, cwd: root, env });
+      const parsed = JSON.parse((stdout || '').trim() || '{}');
+      const resolved = Array.isArray(parsed?.resolved) ? parsed.resolved : [];
+      files = resolved.map((r: { path?: string }) => r.path).filter(Boolean)
+        .map((p: string) => (path.isAbsolute(p) ? p : path.join(root, p)));
+    } catch { files = []; }
+    // Fallback: a bare file/free-text ref — treat context as a path.
+    if (files.length === 0) {
+      const asPath = path.isAbsolute(context) ? context : path.join(root, context);
+      if (fs.existsSync(asPath)) files = [asPath];
+    }
+    if (files.length === 0) return { ok: false, error: `Could not resolve "${context}" to any files` };
+    // 2. Stage the files into the member's session inbox.
+    const stage = path.join(root, 'ai_general/scripts/cli/stage_context.py');
+    await execFileAsync('python3', [stage, member, ...files], { timeout: 30000, cwd: root, env });
+    return { ok: true, member, context, count: files.length, staged: files.map(f => path.basename(f)) };
+  } catch (err: unknown) {
+    const e = err as { stderr?: string; message?: string };
+    return { ok: false, error: (e.stderr || e.message || String(err)).trim() };
   }
 });
 
@@ -1746,6 +1806,7 @@ ipcMain.handle('uai:tasks:list', async (_event, opts?: { platform?: string; stat
 import { loadStore as loadAssignedStore, saveStore as saveAssignedStore, runFullScan, updateTask as updateAssignedTask } from './assigned-tasks';
 import type { ScanEngine } from './assigned-tasks';
 import { aiRootMain as getAiRootMain, shellPath, buildChildEnv } from './paths';
+import { transcriptCache } from './transcript-cache-service';
 
 let assignedTasksScanAbort: AbortController | null = null;
 
@@ -2018,7 +2079,12 @@ ipcMain.handle('transcript:read', async (_event, zellijSession: string, cliSessi
   const outputFormat = format || 'structured';
   return new Promise((resolve) => {
     ef('python3', [readJsonlPath, 'read-file', findResult, '--format', outputFormat], {
-      maxBuffer: 20 * 1024 * 1024,
+      // Long-lived sessions build huge transcripts — e.g. Git-Guardian's Codex
+      // rollout is ~59MB raw / ~35MB structured, well over the old 20MB cap
+      // ("stdout maxBuffer length exceeded"). 256MB clears the largest real
+      // transcripts (~109MB raw). If a transcript ever exceeds this, the viewer
+      // should switch to interval/turn-ranged loading rather than the whole file.
+      maxBuffer: 256 * 1024 * 1024,
       timeout: 30000,
       env: { ...process.env, PATH: envPath, AI_ROOT: aiRootMain },
     }, (error: any, stdout: string, stderr: string) => {
@@ -2036,6 +2102,49 @@ ipcMain.handle('transcript:read', async (_event, zellijSession: string, cliSessi
   });
 });
 
+// Cheap transcript change-check: find the session file and return size + mtime.
+// The overlay stats before reading and skips the full parse when unchanged, so a
+// quiet 10s tick costs a find + stat instead of re-parsing the whole JSONL.
+ipcMain.handle('transcript:stat', async (_event, cliSessionId: string | undefined) => {
+  const { execFile: ef } = require('node:child_process');
+  const aiRootMain = getAiRootMain();
+  const readJsonlPath = path.join(aiRootMain, 'ai_general/scripts/jsonl/read_jsonl.py');
+  const envPath = shellPath();
+  const uuid = cliSessionId;
+  if (!uuid) return { ok: false, error: 'No CLI UUID available for transcript' };
+
+  const findResult: string = await new Promise<string>((resolve, reject) => {
+    ef('python3', [readJsonlPath, 'find', uuid], {
+      maxBuffer: 1024 * 1024, timeout: 10000,
+      env: { ...process.env, PATH: envPath, AI_ROOT: aiRootMain },
+    }, (error: any, stdout: string) => {
+      if (error) { reject(new Error(`find failed: ${error.message}`)); return; }
+      resolve(stdout.trim());
+    });
+  }).catch(() => '');
+  if (!findResult) return { ok: false, error: `Session file not found for UUID ${uuid}` };
+
+  try {
+    const st = fs.statSync(findResult);
+    return { ok: true, size: st.size, mtimeMs: st.mtimeMs, path: findResult };
+  } catch (err: unknown) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+});
+
+// ─── IPC: Cached transcript (main-process pool + file-watcher; DESIGN.md #4) ──
+// Persistent, cross-tab transcript cache: get() serves a warm pooled copy or cold-
+// loads, keeping the last N viewed sessions warm; each pooled session's watcher pushes
+// 'transcript:updated' on a real file change, so the overlay can drop its 10s poll.
+transcriptCache.onUpdate = (ref: string) => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('transcript:updated', ref);
+  }
+};
+ipcMain.handle('transcript:getCached', async (_event, ref: string | undefined) => {
+  return transcriptCache.get(ref || '');
+});
+
 // ─── IPC: Scrollback Capture ────────────────────────────────────────────────
 
 ipcMain.handle('terminal:captureScrollback', async (_event, params: { sessionName: string; lines?: number }) => {
@@ -2051,7 +2160,15 @@ ipcMain.handle('terminal:captureScrollback', async (_event, params: { sessionNam
 
   try {
     const text: string = await new Promise((resolve, reject) => {
-      ef('python3', [sessionOpsPath, 'read-terminal', sessionName, '--full', '--styled'], {
+      const captureLines = Math.max(1, Math.min(Number(lines) || 50000, 50000));
+      ef('python3', [
+        sessionOpsPath,
+        'read-terminal',
+        sessionName,
+        '--lines',
+        String(captureLines),
+        '--styled',
+      ], {
         maxBuffer: 20 * 1024 * 1024,
         timeout: 10000,
         env: { ...process.env, PATH: envPath, AI_ROOT: aiRootMain, AI_TMUX_SERVER: '' },
@@ -2307,11 +2424,16 @@ ipcMain.handle('uai:prompts:getPromptAreas', async () => {
   const { homedir } = require('node:os') as typeof import('node:os');
   const script = path.join(homedir(), 'bin', 'ai', 'prompting', 'get_prompt_area_texts.py');
   const envPath = shellPath();
+  const timeoutMs = 45_000;
   try {
     const stdout: string = await new Promise((resolve, reject) => {
       ef('python3', [script, '--all-active'], {
-        timeout: 15000,
-        maxBuffer: 2 * 1024 * 1024,
+        // --all-active serially captures tmux for every active session (~1s each),
+        // so runtime scales with session count/load. 15s was too tight and the
+        // process got SIGTERM'd under load, surfacing as a bogus "Command failed"
+        // (todo_0674). 45s gives ample headroom for a large fleet.
+        timeout: timeoutMs,
+        maxBuffer: 4 * 1024 * 1024,
         env: { ...process.env, PATH: envPath, AI_ROOT: getAiRootMain() },
       }, (error: any, out: string) => {
         if (error) reject(error);
@@ -2320,7 +2442,13 @@ ipcMain.handle('uai:prompts:getPromptAreas', async () => {
     });
     return JSON.parse(stdout.trim());
   } catch (err: any) {
-    console.warn('[uai:prompts:getPromptAreas] failed:', err.message);
+    // Distinguish a timeout kill (killed + SIGTERM) from a real non-zero exit so
+    // the log says WHY — a plain err.message just reads "Command failed" (0674).
+    const timedOut = err?.killed && err?.signal === 'SIGTERM';
+    const why = timedOut
+      ? `timed out after ${timeoutMs / 1000}s (${err.signal}) — likely too many active sessions to capture in time`
+      : (err?.code != null ? `failed (${err.code}): ${err.message || 'no detail'}` : err?.message);
+    console.warn('[uai:prompts:getPromptAreas] failed:', why);
     return [];
   }
 });
@@ -2523,6 +2651,14 @@ ipcMain.handle('uai:scheduledTasks:install', async () => {
 ipcMain.handle('uai:scheduledTasks:dryRun', async () => {
   const result = await runSchedTaskMgr(['install', '--dry-run']);
   return { ok: result.ok, preview: result.stdout, error: result.ok ? undefined : result.stderr };
+});
+
+// Drop-and-reinstall ONE group's launchd agents (todo_0440 #8) — Noctis's
+// backend `reinstall` verb force-reloads only this group, not the whole fleet.
+ipcMain.handle('uai:scheduledTasks:reinstall', async (_event, group: string) => {
+  if (!isValidSchedName(group)) return { ok: false, error: 'Invalid group name' };
+  const result = await runSchedTaskMgr(['reinstall', group]);
+  return { ok: result.ok, error: result.ok ? undefined : result.stderr };
 });
 
 ipcMain.handle('uai:scheduledTasks:runJob', async (_event, group: string, jobId: string) => {
@@ -2913,6 +3049,7 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   detachAll();
+  transcriptCache.dispose();
   // Release the primary marker so the next instance can claim primary.
   if (uaiIsPrimaryInstance) {
     try {

@@ -642,6 +642,21 @@ export default function ScheduledTasksPane({ tabId }: ScheduledTasksPaneProps): 
     else setGroupLogs(null);
   }, [groupDetail, loadGroupLogs]);
 
+  // Drop-and-reinstall just THIS group's agents (todo_0440 #8 / todo_0458 #5) —
+  // force-reloads the group so on-disk YAML changes take effect without a fleet install.
+  const handleReinstall = useCallback(async (group: string) => {
+    setMutating(true);
+    try {
+      const result = await window.uai.scheduledTasks.reinstallGroup(group);
+      if (result.ok) { showToast(`Group '${group}' reinstalled`, 'info'); await loadStatus(); }
+      else showToast(result.error || 'Reinstall failed', 'error');
+    } catch (err: any) {
+      showToast(err.message || 'Reinstall failed', 'error');
+    } finally {
+      setMutating(false);
+    }
+  }, [loadStatus, showToast]);
+
   const handleInstall = useCallback(async () => {
     setMutating(true);
     try {
@@ -920,7 +935,10 @@ export default function ScheduledTasksPane({ tabId }: ScheduledTasksPaneProps): 
                           <button className="sched-mgr-btn sched-mgr-btn-sm" onClick={() => setConfirmDelete(null)}>Cancel</button>
                         </span>
                       ) : (
-                        <button className="sched-mgr-btn sched-mgr-btn-sm sched-mgr-btn-danger" onClick={() => setConfirmDelete({ type: 'group', group: groupDetail.name })}>Delete Group</button>
+                        <>
+                          <button className="sched-mgr-btn sched-mgr-btn-sm" onClick={() => handleReinstall(groupDetail.name)} disabled={mutating} title="Drop and reinstall this group's launchd agents (apply on-disk changes)">↻ Reinstall</button>
+                          <button className="sched-mgr-btn sched-mgr-btn-sm sched-mgr-btn-danger" onClick={() => setConfirmDelete({ type: 'group', group: groupDetail.name })}>Delete Group</button>
+                        </>
                       )}
                     </div>
                   </div>

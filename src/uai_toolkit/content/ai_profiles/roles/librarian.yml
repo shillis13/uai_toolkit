@@ -27,3 +27,6 @@ _registry:
   version: 1.0.0
   created: '2026-04-15'
   updated: '2026-04-15'
+
+roles:
+  - ai_profiles/bundles/condensation_digest_schemas_handoff

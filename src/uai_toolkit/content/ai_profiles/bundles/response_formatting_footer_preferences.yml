@@ -1,0 +1,20 @@
+name: Response Formatting, Footer & Preferences
+description: >
+  Response Formatting, Footer & Preferences — bundle assembled from the todo_0319 grouping pass.
+_registry:
+  id: response_formatting_footer_preferences
+  name: Response Formatting, Footer & Preferences
+  status: active
+  version: 1.0.0
+
+context_files:
+  how_tos:
+    - ai_context_files/instructions/how_tos/protocols/protocol_response_footer
+  perspectives:
+    - ai_context_files/instructions/perspectives/perspective_user_settings_personal_preferences_field
+  reminders:
+    - ai_context_files/instructions/reminders/reminder_current_datetime
+    - ai_context_files/instructions/reminders/reminder_response_format
+  rules:
+    - ai_context_files/instructions/rules/rules_response_formatting
+    - ai_context_files/instructions/rules/rules_to_you_markers

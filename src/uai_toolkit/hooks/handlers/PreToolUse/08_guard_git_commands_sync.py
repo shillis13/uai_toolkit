@@ -193,9 +193,22 @@ BLOCK_MSG = """\
 BLOCKED: Restricted Git command: {cmd}
 
 Git write/destructive operations are handled by Git Guardian.
-Send what you need done to: uai://service/git-guardian/prompt
 
-Describe your intent — e.g.:
+To commit/push your own work, route it through the CLI — NOT a raw prompt to the
+Guardian. The CLI checks the Guardian is live, tracks an ack, and leaves a durable
+record, so your work can't be silently dropped if the committer goes dark (todo_0626):
+
+  python3 "${{AI_ROOT:-$HOME/AI/ai_root}}/ai_general/scripts/git_guardian/git_guardian.py" request \\
+    --kind commit_request --repo <repo> --message "<commit msg>" \\
+    --summary "<why>" --file <path> [--file ...] --todo todo_#### \\
+    --test "<what you verified>"
+
+  (git_guardian.py status = active Guardian; check-acks = surface un-acked requests;
+   a change request must cite --todo.)
+
+For a higher-level need — sync, merge, refresh, PR, or a plain-language request from
+PianoMan — use the same CLI with the appropriate --kind and preserve the intent in
+--message, e.g.:
 - "Commit and push my changes to the hook framework"
 - "Merge main into my branch"
 - "I need a refresh from main"
@@ -208,9 +221,17 @@ BLOCKED: Restricted Git command in devTree: {cmd}
 DevTrees use sparse checkout + symlinks. Raw git mutation is dangerous.
 Git Guardian uses lifecycle tools (commit, push, merge, refresh, destroy).
 
-Send what you need done to: uai://service/git-guardian/prompt
+Route the request through the CLI rather than a raw prompt to the Guardian: it checks
+Guardian liveness, tracks the ack, and leaves a durable record (todo_0626):
 
-Describe your intent — the Guardian will use the appropriate lifecycle tool.
+  python3 "${{AI_ROOT:-$HOME/AI/ai_root}}/ai_general/scripts/git_guardian/git_guardian.py" request \\
+    --kind commit_request --repo <devtree_repo> --message "<intent>" \\
+    --summary "<why>" --todo todo_#### --test "<what you verified>"
+
+Describe your intent in the request — the Guardian will use the appropriate lifecycle
+tool. For a plain-language need (sync, PR, refresh, or PianoMan asking directly), choose
+the appropriate --kind, preserve the request in --message, and let the Guardian
+translate it.
 
 Do not retry or use raw git commands in devTrees."""
 

@@ -120,18 +120,19 @@ def _mark_resumed_awaiting_prompt(session_dir, tracking_id):
     """
     if not session_dir or not tracking_id:
         return
-    import json
     from datetime import datetime
-    sp = Path(session_dir) / f"{tracking_id}_state.json"
+    # targeted write through the shared bridge (enrolled → canonical, else legacy; todo_0495)
+    hc = Path(__file__).resolve().parents[2] / "data" / "hooks" / "common"
+    if str(hc) not in sys.path:
+        sys.path.insert(0, str(hc))
     try:
-        state = json.loads(sp.read_text()) if sp.exists() else {}
-    except (json.JSONDecodeError, OSError):
-        state = {}
-    state["bounce.resumed_awaiting_prompt"] = True
-    state["bounce.resumed_at"] = datetime.now().isoformat()
-    try:
-        sp.write_text(json.dumps(state, indent=2))
-    except OSError as e:
+        from uai_toolkit.hooks.common.lib_session_state_union import write_session_state
+        if not write_session_state(session_dir, tracking_id, {
+            "bounce.resumed_awaiting_prompt": True,
+            "bounce.resumed_at": datetime.now().isoformat(),
+        }):
+            log.warning("could not set resumed_awaiting_prompt flag: state write failed")
+    except Exception as e:
         log.warning("could not set resumed_awaiting_prompt flag: %s", e)
 
 

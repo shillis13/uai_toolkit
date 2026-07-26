@@ -1,8 +1,9 @@
 /**
  * TerminalFormatOverlay — Formatted view of tmux scrollback.
  *
- * Opaque panel covers the terminal. Captures tmux scrollback every second,
- * formats lines by Unicode markers, writes into the panel.
+ * Opaque panel covers message content. It is full-height while idle and yields
+ * the real terminal rows from an active verb downward. Transcript records own
+ * settled cards; the terminal scrape supplies formatted provisional cards.
  *
  * Mouse: overlay captures all mouse events (scroll, selection).
  * Keyboard: all keys pass through to terminal except Cmd+C (copies from overlay).
@@ -13,6 +14,17 @@ import { useEffect, useCallback, useRef, useState } from 'react';
 import { useViewport } from '../viewport';
 import type { Terminal } from 'xterm';
 import { dedupConsecutiveBlocks } from './memorex-dedup';
+import {
+  appendUniqueProvisionalCards,
+  applyTerminalToolViews,
+  buildSettledTranscriptBlocks,
+  calculateVirtualWindow,
+  collectTerminalToolViews,
+  flattenStructuredTranscript,
+  settleProvisionalCards,
+  terminalCardDelta,
+  type SettledTranscriptBlock,
+} from './memorex-transcript';
 import { focusTodoInWorkMgr, focusNoteInNotesMgr, todoTooltip, noteTooltip, ensureRefIndexLoaded } from './RefLink';
 
 // Claude CLI markers
@@ -288,16 +300,6 @@ function renderAnsiLine(raw: string, parent: HTMLDivElement, defaultColor: strin
   }
 }
 
-/** Lightweight message metadata from JSONL for section annotation */
-interface TranscriptMeta {
-  msgId: number;        // sequential message number from JSONL
-  turnNum: number;      // turn number (user prompt = new turn)
-  type: string;         // user, response, tool_use, tool_result, thinking
-  timestamp: string;    // ISO timestamp
-  toolName?: string;
-  contentPreview: string; // first ~80 chars for matching
-}
-
 interface Props {
   termRef: React.RefObject<Terminal | null>;
   containerRef: React.RefObject<HTMLDivElement | null>;
@@ -340,6 +342,42 @@ const SECTION_BG: Record<Section, string> = {
   statusbar: '#0a0c10',
   cont: '#181a20',       // neutral
 };
+
+const TRANSCRIPT_INSERT_HIGHLIGHT_MS = 1200;
+
+/** Briefly identify a card that just replaced streamed terminal text. This is
+ *  deliberately visual-only: Transcript authority is immediate and the raw live
+ *  tail is never delayed merely to make the handoff look smoother. */
+function highlightTranscriptChange(
+  element: HTMLElement,
+  section: Section,
+  change: 'inserted' | 'updated',
+): void {
+  const color = SECTION_COLORS[section] || '#c0caf5';
+  const background = SECTION_BG[section] || SECTION_BG.cont;
+  element.dataset.transcriptChange = change;
+
+  const animation = element.animate([
+    {
+      backgroundColor: `${color}66`,
+      borderLeftColor: '#ffffff',
+      boxShadow: `inset 0 0 0 1px ${color}, 0 0 14px ${color}`,
+      filter: 'brightness(1.45)',
+    },
+    {
+      backgroundColor: background,
+      borderLeftColor: color,
+      boxShadow: 'none',
+      filter: 'brightness(1)',
+    },
+  ], {
+    duration: TRANSCRIPT_INSERT_HIGHLIGHT_MS,
+    easing: 'ease-out',
+  });
+  animation.addEventListener('finish', () => {
+    delete element.dataset.transcriptChange;
+  }, { once: true });
+}
 
 /** Derive platform name from session tracking ID suffix */
 function platformFromSessionName(sessionName: string): string {
@@ -545,6 +583,141 @@ function isVerbLine(line: string): boolean {
       && /^\S\s+\S[^\n]*\u2026(?:\s*\(|\s*$)/u.test(plain)) return true;
   return false;
 }
+
+function isCompletedVerbLine(line: string): boolean {
+  return /^\S\s+\S+\s+for\s+\d+\s*[hms]/u.test(stripAnsi(line));
+}
+
+function isActiveVerbLine(line: string): boolean {
+  return isVerbLine(line) && !isCompletedVerbLine(line);
+}
+
+/** Bound terminal-derived message creation to the unfinished turn. A completed
+ * verb line closes the preceding terminal turn; when that marker is absent, the
+ * newest submitted user marker is the safe fallback. Transcript settlement,
+ * not this boundary, still owns every completed card. */
+function currentTerminalRegionStart(
+  lines: string[],
+  promptStart: number,
+  hasSettledTranscript: boolean,
+): number {
+  for (let i = promptStart - 1; i >= 0; i--) {
+    if (isCompletedVerbLine(lines[i])) return i + 1;
+  }
+  for (let i = promptStart - 1; i >= 0; i--) {
+    if (classifyLine(lines[i]) === 'user') return i;
+  }
+  return hasSettledTranscript ? promptStart : 0;
+}
+
+/** Convert a line boundary in a scrollback capture to the number of visible
+ * terminal rows below it. captureScrollback may include blank padding beyond the
+ * actual xterm viewport, so preserve only the trailing blanks visible in xterm. */
+function visibleTerminalGapLineCount(
+  lines: string[],
+  gapStart: number | null,
+  visibleRows: number,
+  visibleTrailingBlankRows: number,
+): number {
+  if (gapStart === null || gapStart < 0 || gapStart >= lines.length) return 0;
+  let capturedTrailingBlankRows = 0;
+  for (let i = lines.length - 1; i >= 0 && lines[i] === ''; i--) {
+    capturedTrailingBlankRows++;
+  }
+  const offscreenPaddingRows = Math.max(
+    0,
+    capturedTrailingBlankRows - Math.max(0, visibleTrailingBlankRows),
+  );
+  return Math.min(
+    Math.max(0, Math.floor(visibleRows)),
+    Math.max(0, (lines.length - offscreenPaddingRows) - gapStart),
+  );
+}
+
+function visibleActiveVerbLineIndex(
+  lines: string[],
+  currentRegionStart: number,
+  terminalMessageEnd: number,
+  visibleRows: number,
+  visibleTrailingBlankRows: number,
+): number | null {
+  let capturedTrailingBlankRows = 0;
+  for (let i = lines.length - 1; i >= 0 && lines[i] === ''; i--) {
+    capturedTrailingBlankRows++;
+  }
+  const visibleCaptureEnd = lines.length - Math.max(
+    0,
+    capturedTrailingBlankRows - Math.max(0, visibleTrailingBlankRows),
+  );
+  const visibleCaptureStart = Math.max(0, visibleCaptureEnd - Math.max(0, visibleRows));
+  for (
+    let i = Math.min(terminalMessageEnd - 1, visibleCaptureEnd - 1);
+    i >= Math.max(currentRegionStart, visibleCaptureStart);
+    i--
+  ) {
+    if (isActiveVerbLine(lines[i])) return i;
+  }
+  return null;
+}
+
+/** A tail that was already present when Transcript advanced belongs to the
+ * settled message. Terminal repaint/reflow may still change its rendered rows,
+ * but that must update neither the settled chain nor create a new provisional. */
+function shouldSeedUpdatedTerminalTail(
+  fingerprint: string | undefined,
+  previousSnapshotTranscriptRevision: string,
+  currentTranscriptRevision: string,
+  settledFingerprints: ReadonlySet<string>,
+): boolean {
+  return Boolean(
+    fingerprint
+    && previousSnapshotTranscriptRevision === currentTranscriptRevision
+    && !settledFingerprints.has(fingerprint),
+  );
+}
+
+/** Once the terminal has emitted an explicit completed-turn marker and no
+ * unfinished terminal cards remain, provisionals may only survive briefly while
+ * JSONL catches up. Previously consumed fingerprints are removed individually;
+ * the grace bound prevents any missed watcher/race remainder from persisting
+ * forever. */
+function shouldDrainClosedTerminalProvisionals(
+  terminalRegionClosed: boolean,
+  closedForMs: number,
+): boolean {
+  return terminalRegionClosed
+    && closedForMs >= CLOSED_PROVISIONAL_GRACE_MS;
+}
+
+function provisionalReachedSettlement(
+  expectedSettledCardCount: number | undefined,
+  settledCardCount: number,
+): boolean {
+  return expectedSettledCardCount !== undefined
+    && settledCardCount >= expectedSettledCardCount;
+}
+
+/** Suppress consumed fingerprints until (and only until) the next submitted
+ * user marker. Process in terminal order so a stale prior-turn candidate that
+ * precedes that marker stays suppressed, while an intentionally repeated
+ * fingerprint after the marker belongs to the new turn and may be admitted. */
+function filterTerminalCandidatesForTurn<
+  T extends { type: string; terminalFingerprint?: string },
+>(
+  candidates: T[],
+  settledFingerprints: Set<string>,
+): T[] {
+  const admitted: T[] = [];
+  for (const candidate of candidates) {
+    if (candidate.type === 'user') settledFingerprints.clear();
+    if (candidate.terminalFingerprint
+        && settledFingerprints.has(candidate.terminalFingerprint)) {
+      continue;
+    }
+    admitted.push(candidate);
+  }
+  return admitted;
+}
 // Stable, non-animated markers that lead a NON-verb line. Used to keep the multi-word
 // active clause from mistaking a response/tool/result/prompt/task line that ends in an
 // ellipsis for a thinking verb line. (The animation glyphs \u273b\u273d\u2733\u00b7\u2234 are an open set \u2014 we
@@ -562,59 +735,16 @@ const NON_VERB_GLYPHS = new Set([
   '\u2713', // \u2713 tool/check
 ]);
 
-/** Find where the message content ends — the index where the overlay's live
- *  region begins.
- *
- *  Spec (PianoMan): "The overlay stops one above the thinking/verb line; failing
- *  to find that, one above the prompt's top separator."
- *
- *  The verb line is the topmost element of the live tail. Below it sit the task
- *  summary, task list, blank lines, and the prompt — all outside the overlay.
- *  So: scan up from the prompt for the verb line and stop AT it (slice excludes
- *  it). If none is found, stop at the prompt's top separator.
- *
- *  Returns an index `c` such that lines[0..c-1] are overlay content and lines[c..]
- *  are the live terminal region. */
-/** Max size of the live tail above the prompt: verb line + task summary/list +
- *  blank lines. The live-tail verb line always sits within this many lines of the
- *  prompt; anything farther up is a stale marker from a previous turn. */
-const LIVE_TAIL_MAX_LINES = 20;
-
-function findContentEnd(lines: string[], promptStart: number, visibleRows?: number): number {
-  // Boundary = the LOWEST (most recent) verb line _within the live tail_ — active OR
-  // completed (per PianoMan's spec: "when the verb line is encountered, nothing below
-  // it is part of a message; the line above it is the last line of the overlay").
-  // Detection relies on the gerund-tied ellipsis / "for <dur>" structure (see
-  // isVerbLine), NOT a bare ellipsis.
-  //
-  // The scan is BOUNDED to a live-tail window just above the prompt. Completed verb
-  // lines persist in scrollback (a settled buffer holds several). An unbounded scan
-  // would latch onto a STALE verb line from a previous turn that the current turn's
-  // streaming content pushed far above the viewport; then liveAreaLines saturates to
-  // visibleRows, the cover collapses to 0px, and the whole overlay blanks until the
-  // turn ends. Clamping the window keeps the boundary within the lower viewport.
-  // No verb line in the window ⇒ fall back to promptStart (cover the full visible
-  // region — the SAFE direction; blanking is never acceptable).
-  // Returns index c: lines[0..c-1] = overlay content, lines[c..] = live region.
-  const rows = visibleRows && visibleRows > 0 ? visibleRows : 9999;
-  const window = Math.max(4, Math.min(LIVE_TAIL_MAX_LINES, rows - 12));
-  const stop = Math.max(0, promptStart - window);
-  for (let i = promptStart - 1; i >= stop; i--) {
-    if (isVerbLine(lines[i])) return i;  // lowest live-tail verb line = boundary
-  }
-  return promptStart;  // no live-tail verb line — stop one above the prompt-area top separator
-}
-
 // A Claude Code interactive DECISION area (tool-permission "Do you want to proceed?",
 // plan approval, etc.) REPLACES the normal ──── ❯ ──── prompt block while the CLI waits
 // for a choice: there are no separators, so findPromptAreaStart would otherwise fall
 // through to `return lines.length` and the WHOLE viewport (the live dialog included)
-// gets covered — the user can't see the prompt they must answer without toggling
-// Memorex off. The discriminator (per PianoMan's spec, verified against Broken-Clock):
+// would otherwise be classified as message text. The discriminator (per PianoMan's
+// spec, verified against Broken-Clock):
 // the dialog's structural lines are indented by ONE space, so the option's ❯ sits at
 // COLUMN 1 — whereas a real user/prompt ❯ sits at COLUMN 0. Detect the dialog and return
-// its TOP so it stays in the raw (uncovered) live tail. The dialog disappears once
-// answered, so it only ever needs this live-region treatment (no settled-section type).
+// its TOP so it stays in the plain terminal-chrome block. The dialog disappears once
+// answered, so it only ever needs plain-chrome treatment (no settled-section type).
 const DECISION_OPTION_RE = /^ ❯\s*\d+\./;   // " ❯ 1. Yes" — ❯ at column 1, numbered option
 
 function findDecisionAreaStart(lines: string[]): number {
@@ -767,10 +897,41 @@ interface SectionGroup {
    *  position-independent id so inserting one never renumbers terminal neighbors
    *  (Codex review HIGH 5). Consumers key off `.key`; never assume content+occurrence. */
   key: string;
-  /** Where this section came from. 'terminal' = scraped/classified from the live
-   *  terminal (all current sections). 'synthetic' = reconstructed from the JSONL to
-   *  heal a markerless/dropped section (reconciler, todo_0392 — not yet emitted). */
-  origin: 'terminal' | 'synthetic';
+  /** Terminal fallback, transcript truth, or the terminal's folded tool rendering. */
+  origin: 'terminal' | 'transcript' | 'terminal-tool';
+  /** Content revision for incremental DOM replacement without changing collapse identity. */
+  version: string;
+  msgId?: number;
+  lastMsgId?: number;
+  turnNum?: number;
+  timestamp?: string;
+  /** Terminal-only opening-marker identity used to advance the provisional chain. */
+  terminalFingerprint?: string;
+  /** Settled-card count at which this FIFO position must already have been
+   * consumed. This is positional bookkeeping, never terminal/Transcript content
+   * matching. */
+  expectedSettledCardCount?: number;
+}
+
+function sectionVersion(group: Pick<SectionGroup, 'type' | 'lines'>): string {
+  let hash = 2166136261;
+  const source = `${group.type}|${group.lines.join('\n')}`;
+  for (let i = 0; i < source.length; i++) {
+    hash ^= source.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36);
+}
+
+function sectionDefaultCollapsed(type: string, override: boolean | null | undefined, label?: string): boolean {
+  // AskUserQuestion is an interactive DECISION prompt, not routine tool output. Its
+  // question/options must be readable at a glance, so it renders EXPANDED by default
+  // rather than collapsing to a "24 lines" header like ordinary tool cards. The
+  // per-card collapse toggle still works (the caller inverts this default per key),
+  // and an explicit Collapse/Expand-all override still takes precedence.
+  if (override !== null && override !== undefined) return override;
+  if (label === 'AskUserQuestion') return false;
+  return type === 'tool' || type === 'thinking';
 }
 
 function groupIntoSections(lines: string[], stickyMap?: Map<string, Section>, sectionLabels?: Record<Section, string>): SectionGroup[] {
@@ -827,10 +988,10 @@ function groupIntoSections(lines: string[], stickyMap?: Map<string, Section>, se
       const baseKey = `${section}:${keyContent}`;
       keySeen[baseKey] = (keySeen[baseKey] || 0) + 1;
       const key = keySeen[baseKey] > 1 ? `${baseKey}#${keySeen[baseKey]}` : baseKey;
-      current = { type: section, label, lines: [lines[i]], startIdx: i, key, origin: 'terminal' };
+      current = { type: section, label, lines: [lines[i]], startIdx: i, key, origin: 'terminal', version: '' };
     } else if (section === 'separator') {
       if (current) groups.push(current);
-      groups.push({ type: 'separator', label: '', lines: [lines[i]], startIdx: i, key: `sep-${i}`, origin: 'terminal' });
+      groups.push({ type: 'separator', label: '', lines: [lines[i]], startIdx: i, key: `sep-${i}`, origin: 'terminal', version: '' });
       current = null;
     } else {
       // Continuation line — add to current section
@@ -838,7 +999,7 @@ function groupIntoSections(lines: string[], stickyMap?: Map<string, Section>, se
         current.lines.push(lines[i]);
       } else {
         // Orphan continuation — parent marker scrolled off buffer
-        current = { type: 'cont', label: '', lines: [lines[i]], startIdx: i, key: `cont-${i}`, origin: 'terminal' };
+        current = { type: 'cont', label: '', lines: [lines[i]], startIdx: i, key: `cont-${i}`, origin: 'terminal', version: '' };
       }
     }
   }
@@ -849,9 +1010,74 @@ function groupIntoSections(lines: string[], stickyMap?: Map<string, Section>, se
   for (const g of groups) {
     if (g.type === 'separator') continue;
     if (g.lines.length >= 6) g.lines = dedupConsecutiveBlocks(g.lines);
+    g.version = sectionVersion(g);
   }
+  for (const g of groups) if (!g.version) g.version = sectionVersion(g);
 
   return groups;
+}
+
+function transcriptBlocksToGroups(
+  blocks: SettledTranscriptBlock[],
+  toolViews: Map<string, string[]>,
+): SectionGroup[] {
+  const rendered = applyTerminalToolViews(blocks, toolViews);
+  return rendered.map((block) => ({
+    type: block.section,
+    label: block.label,
+    lines: block.lines.length > 0 ? block.lines : [''],
+    startIdx: block.firstMsgId,
+    key: block.key,
+    origin: block.section === 'tool' && toolViews.has(block.key) ? 'terminal-tool' : 'transcript',
+    version: block.version,
+    msgId: block.firstMsgId,
+    lastMsgId: block.lastMsgId,
+    turnNum: block.turnNum,
+    timestamp: block.timestamp,
+  }));
+}
+
+function terminalOpeningFingerprint(type: string, line: string): string {
+  // Keep this prefix long enough to identify a message but short enough to
+  // survive terminal reflow changing the latter half of a long opening row.
+  // Settled Transcript cards eventually disambiguate any genuinely repeated
+  // opening; provisional safety favors suppressing a repaint duplicate.
+  const opening = stripAnsi(line).replace(/\s+/g, ' ').trim().slice(0, 96);
+  return `${type}:${opening}`;
+}
+
+/** Build the terminal's ordered message-card list. Separators are chrome, not
+ *  messages. An orphan continuation is shown as assistant output rather than
+ *  allowing a missing opening marker to blank the live bottom. */
+function terminalMessageGroups(
+  lines: string[],
+  stickyMap: Map<string, Section>,
+  labels: Record<Section, string>,
+): SectionGroup[] {
+  const grouped = groupIntoSections(lines, stickyMap, labels)
+    .filter((group) => (
+      group.type !== 'separator'
+      && group.lines.some((line) => stripAnsi(line).trim().length > 0)
+    ));
+
+  return grouped.map((group, index) => {
+    const type = group.type === 'cont' ? 'assistant' : group.type;
+    return {
+      ...group,
+      type,
+      label: group.type === 'cont' ? labels.assistant : group.label,
+      key: `terminal:${index}`,
+      origin: 'terminal',
+      version: sectionVersion({ type, lines: group.lines }),
+      terminalFingerprint: terminalOpeningFingerprint(type, group.lines[0] || ''),
+    };
+  });
+}
+
+function isTaskChromeLine(line: string): boolean {
+  const plain = stripAnsi(line);
+  return /^\s*[◼✔□]\s/u.test(plain)
+    || /^\S\s+Running\s+\S/u.test(plain);
 }
 
 /** Determine the section color at a given line index by scanning preceding lines */
@@ -866,6 +1092,9 @@ function sectionColorAt(lines: string[], index: number): string {
 
 const POLL_ACTIVE_MS = 1000;
 const POLL_BACKGROUND_MS = 5000;
+const INITIAL_CAPTURE_LINES = 50000;
+const REFRESH_CAPTURE_LINES = 2000;
+const CLOSED_PROVISIONAL_GRACE_MS = 10000;
 
 // ── Memorex diagnostic recorder (todo_0392 / todo_0385) ────────────────────
 // An always-on, bounded ring buffer of per-refresh frames: boundary state +
@@ -906,26 +1135,46 @@ const TerminalFormatOverlay = ({ termRef, containerRef, sessionName, sessionId, 
   const overlayRef = useRef<HTMLDivElement>(null);
   const contentHostRef = useRef<HTMLDivElement>(null);
   const coverRef = useRef<HTMLDivElement | null>(null);
-  const fillerPxRef = useRef(0);  // last bottom-mask height, guards redundant re-renders
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const refreshInFlightRef = useRef(false);
+  const refreshPendingRef = useRef(false);
   const lastTextRef = useRef('');
+  const hasInitialCaptureRef = useRef(false);
+  const lastTranscriptRenderRevisionRef = useRef('');
   const prevLinesRef = useRef<string[]>([]);
   const memorexStateRef = useRef<Record<string, unknown>>({});
   const autoScrollRef = useRef(true);
   const refreshRef = useRef<() => void>(() => {});
+  const renderWindowRef = useRef<(force?: boolean) => void>(() => {});
+  const windowRenderRafRef = useRef<number | null>(null);
+  const virtualRenderGuardRef = useRef(false);
+  const virtualRangeRef = useRef({ start: -1, end: -1 });
+  const measuredHeightRef = useRef<Map<string, number>>(new Map());
+  const renderedVersionsRef = useRef<Map<string, string>>(new Map());
+  const hasRenderedTranscriptRef = useRef(false);
   // Debounce for auto-persisting Memorex anomalies to disk (todo_0385/0392).
   const lastAnomalySaveRef = useRef(0);
   // Sticky section classifications: once a ⏺ line is identified as 'tool',
   // that classification sticks across polls even if streaming changes the line content.
   // Key: stripped line text prefix (first 60 chars), Value: section type
   const stickyClassRef = useRef<Map<string, Section>>(new Map());
-  // Track last section key from previous render — used for blink protection
-  const lastSectionKeyRef = useRef<string | null>(null);
-  // Transcript cache — lightweight JSONL metadata for section annotation
-  const transcriptCacheRef = useRef<TranscriptMeta[]>([]);
-  const transcriptTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  // Map from section key → matched transcript metadata
-  const sectionMetaRef = useRef<Map<string, { msgId: number; turnNum: number; timestamp: string }>>(new Map());
+  // Transcript owns a persistent settled chain. Terminal-only opening markers append
+  // to a persistent provisional FIFO below it; each new Transcript card consumes the
+  // first provisional by position.
+  const transcriptBlocksRef = useRef<SettledTranscriptBlock[]>([]);
+  const liveGroupsRef = useRef<SectionGroup[]>([]);
+  const terminalGroupsSnapshotRef = useRef<SectionGroup[]>([]);
+  const hasTerminalSnapshotRef = useRef(false);
+  const terminalSnapshotTranscriptRevisionRef = useRef('');
+  const settledTerminalFingerprintsRef = useRef<Set<string>>(new Set());
+  const closedTerminalSinceRef = useRef<number | null>(null);
+  const nextProvisionalIdRef = useRef(1);
+  const hasTranscriptBaselineRef = useRef(false);
+  const terminalOutputEpochRef = useRef(0);
+  const terminalChromeRef = useRef<SectionGroup[]>([]);
+  const transcriptRevisionRef = useRef('');
+  const transcriptLoadGenerationRef = useRef(0);
+  const toolViewsRef = useRef<Map<string, string[]>>(new Map());
   // Per-type default override: when user clicks expand/collapse triangle for a type,
   // all future sections of that type inherit the override instead of the hardcoded default.
   // null = use hardcoded default, true = collapsed, false = expanded
@@ -935,120 +1184,98 @@ const TerminalFormatOverlay = ({ termRef, containerRef, sessionName, sessionId, 
 
   // ── Viewport registration — makes Memorex a queryable tree citizen ──
   useViewport('memorex_view', () => ({
-    visible: enabled,
+    visible: enabled && active,
     label: `memorex: ${sessionName}`,
     state: memorexStateRef.current,
     children: [],
-  }));
+  }), active);
 
-  /** Fetch JSONL transcript metadata, match to sections, and inject metadata in-place */
-  const refreshTranscriptCache = useCallback(async () => {
+  /** Fetch the canonical settled-message list. Rendering and live-tail trimming happen
+   *  together on the next terminal capture. */
+  const refreshTranscriptCache = useCallback(async (triggerRefresh = true): Promise<boolean> => {
     const api = window.uai;
-    if (!api?.transcript?.read) return;
+    if (!api?.transcript?.read) return false;
+    const generation = ++transcriptLoadGenerationRef.current;
     try {
-      const result = await api.transcript.read(sessionName, sessionId, 'structured');
-      if (!result?.ok || !result.days) return;
-      const metas: TranscriptMeta[] = [];
-      // Turn/Msg numbers MUST match the Transcript pane (TranscriptViewer):
-      //  • Turn = the backend's `turn.number` (read_jsonl._assign_turn_numbers — prologue
-      //    is turn 0, each real user prompt opens a new turn). A local 1..N counter drifts
-      //    from Transcript whenever a prologue/turn-0 exists.
-      //  • Msg = a flat 1-indexed counter over every message in days→turns→messages order,
-      //    identical to TranscriptViewer's `id = msgId++`.
-      let msgId = 0;
-      let fallbackTurn = 0;
-      for (const day of result.days as any[]) {
-        for (const turn of (day.turns ?? [])) {
-          fallbackTurn++;
-          const turnNum = (typeof turn.number === 'number') ? turn.number : fallbackTurn;
-          for (const m of (turn.messages ?? [])) {
-            msgId++;
-            metas.push({
-              msgId,
-              turnNum,
-              type: m.type ?? m.role ?? 'unknown',
-              timestamp: m.timestamp ?? '',
-              toolName: m.tool_name,
-              contentPreview: (m.content ?? '').slice(0, 80),
-            });
-          }
-        }
+      let result = api.transcript.getCached ? await api.transcript.getCached(sessionId) : null;
+      if (!result || !result.ok || !result.days) {
+        result = await api.transcript.read(sessionName, sessionId, 'structured');
       }
-      transcriptCacheRef.current = metas;
-      matchSectionsToTranscript();
+      if (generation !== transcriptLoadGenerationRef.current) return false;
+      if (!result?.ok || !result.days) return false;
 
-      // Inject metadata into existing DOM elements in-place (no rebuild needed)
-      const cover = coverRef.current;
-      if (cover) {
-        for (let i = 0; i < cover.children.length; i++) {
-          const el = cover.children[i] as HTMLElement;
-          const key = el.dataset.sectionKey;
-          if (!key) continue;
-          const meta = sectionMetaRef.current.get(key);
-          if (!meta) continue;
-          // Find or create the metadata span in the header
-          const header = el.querySelector('[data-meta]') as HTMLElement | null;
-          if (header) {
-            const parts: string[] = [];
-            parts.push(meta.turnNum !== undefined ? `Turn #${meta.turnNum} Msg #${meta.msgId}` : `Msg #${meta.msgId}`);
-            if (meta.timestamp) {
-              const d = new Date(meta.timestamp);
-              const mo = (d.getMonth() + 1).toString().padStart(2, '0');
-              const dy = d.getDate().toString().padStart(2, '0');
-              const h = d.getHours().toString().padStart(2, '0');
-              const m = d.getMinutes().toString().padStart(2, '0');
-              const s = d.getSeconds().toString().padStart(2, '0');
-              parts.push(`${mo}-${dy} ${h}:${m}:${s}`);
-            }
-            header.textContent = parts.join('  ');
+      const records = flattenStructuredTranscript(result.days);
+      const last = records[records.length - 1];
+      // Keep this source compatible with the currently committed preload type,
+      // which predates the optional cache revision even though newer runtimes
+      // already return it.
+      const cacheRevision = (result as typeof result & { revision?: string }).revision;
+      const revision = cacheRevision
+        || `${result.path || sessionId}:${records.length}:${last?.msgId || 0}:${last?.timestamp || ''}`;
+      if (revision === transcriptRevisionRef.current) return false;
+
+      const previousBlocks = transcriptBlocksRef.current;
+      const nextBlocks = buildSettledTranscriptBlocks(
+        records,
+        sectionLabelsRef.current.assistant,
+      );
+      const isAppend = previousBlocks.length <= nextBlocks.length
+        && previousBlocks.every((block, index) => block.key === nextBlocks[index]?.key);
+      const appendedSettledCards = hasTranscriptBaselineRef.current && isAppend
+        ? nextBlocks.length - previousBlocks.length
+        : 0;
+
+      // Compaction/truncation: the settled Transcript got SHORTER. The old JSONL
+      // was rewritten and renumbered, so the provisional chain hanging below the
+      // previous (longer) settled tail is stale — every provisional's
+      // expectedSettledCardCount referenced the old baseline and is now unreachable,
+      // so it can never settle by position and, if the turn never cleanly closes,
+      // never drains (the "message repeated many times, untagged, persists across
+      // toggles" bug). Folded tool views keyed by the old msgId numbering would also
+      // mis-apply to renumbered blocks. Drop the provisional + terminal snapshot
+      // state so the chain rebuilds cleanly from the new baseline. Consistent with
+      // invariant 8: when the settled prefix itself is redefined, the provisional
+      // bottom rebuilds. Never fires on first load (previousBlocks empty) or a
+      // growing/in-place revision (only a genuine shrink resets).
+      if (hasTranscriptBaselineRef.current && nextBlocks.length < previousBlocks.length) {
+        liveGroupsRef.current = [];
+        terminalGroupsSnapshotRef.current = [];
+        hasTerminalSnapshotRef.current = false;
+        terminalSnapshotTranscriptRevisionRef.current = '';
+        settledTerminalFingerprintsRef.current.clear();
+        closedTerminalSinceRef.current = null;
+        toolViewsRef.current.clear();
+        stickyClassRef.current.clear();
+      }
+
+      if (appendedSettledCards > 0) {
+        for (const group of liveGroupsRef.current.slice(0, appendedSettledCards)) {
+          if (group.terminalFingerprint) {
+            settledTerminalFingerprintsRef.current.add(group.terminalFingerprint);
           }
         }
+        liveGroupsRef.current = settleProvisionalCards(
+          liveGroupsRef.current,
+          appendedSettledCards,
+        );
       }
-    } catch { /* non-critical — timestamps just won't appear */ }
+
+      // Preserve unchanged card objects so the settled chain remains stable across
+      // cache refreshes. Tool-result updates replace only their existing card.
+      transcriptBlocksRef.current = nextBlocks.map((block, index) => {
+        const previous = previousBlocks[index];
+        return previous?.key === block.key && previous.version === block.version ? previous : block;
+      });
+      hasTranscriptBaselineRef.current = true;
+      transcriptRevisionRef.current = revision;
+      if (triggerRefresh) refreshRef.current();
+      return true;
+    } catch {
+      // Transcript lag/failure leaves the settled DOM intact.
+      return false;
+    }
   }, [sessionName, sessionId]);
 
-  /** Match overlay sections to transcript messages by walking backward from the end.
-   *  The overlay only has recent scrollback; the transcript has full history.
-   *  Matching from the end aligns the most recent sections correctly. */
-  const matchSectionsToTranscript = useCallback(() => {
-    const groups = groupIntoSections(prevLinesRef.current, stickyClassRef.current, sectionLabelsRef.current);
-    const metas = transcriptCacheRef.current;
-    if (metas.length === 0) return;
-
-    const sectionToMsgType: Record<string, string[]> = {
-      user: ['user'],
-      inject: ['user', 'injected'],  // inter-session prompts land as on-chain user / injected records
-      assistant: ['response'],
-      tool: ['tool_use', 'tool_result'],
-      thinking: ['thinking'],
-    };
-
-    // Filter to matchable sections (skip separators, cont)
-    const matchable = groups.filter(g => g.type !== 'separator' && g.type !== 'cont' && sectionToMsgType[g.type]);
-
-    // Walk backward through both sequences
-    const metaMap = new Map<string, { msgId: number; turnNum: number; timestamp: string }>();
-    let metaIdx = metas.length - 1;
-
-    for (let i = matchable.length - 1; i >= 0; i--) {
-      const group = matchable[i];
-      const matchTypes = sectionToMsgType[group.type];
-
-      // Find previous matching message in transcript (walking backward)
-      while (metaIdx >= 0 && !matchTypes.includes(metas[metaIdx].type)) {
-        metaIdx--;
-      }
-      if (metaIdx >= 0) {
-        metaMap.set(group.key, {
-          msgId: metas[metaIdx].msgId,
-          turnNum: metas[metaIdx].turnNum,
-          timestamp: metas[metaIdx].timestamp,
-        });
-        metaIdx--;
-      }
-    }
-    sectionMetaRef.current = metaMap;
-  }, []);
   const lastDimsRef = useRef('');
   // Collapsed sections: tracked by stable key (type-ordinal, e.g. "tool-3")
   const collapsedRef = useRef<Set<string>>(new Set());
@@ -1070,7 +1297,27 @@ const TerminalFormatOverlay = ({ termRef, containerRef, sessionName, sessionId, 
       sepDiv.style.cssText = 'white-space:pre-wrap;color:#333a4a;';
       sepDiv.textContent = group.lines[0];
       sepDiv.dataset.sectionKey = group.key;
+      sepDiv.dataset.sectionVersion = group.version;
       return sepDiv;
+    }
+
+    // Prompt, decision dialog, and status rows are not messages. While idle,
+    // render them plainly at the bottom of the full-height surface. During active
+    // thinking, terminalChromeRef is empty because the real animated xterm chrome
+    // is visible below the shortened cover.
+    if (group.type === 'statusbar') {
+      const chrome = document.createElement('div');
+      chrome.style.cssText = 'white-space:pre-wrap;color:#8890b0;border-top:1px solid #333a4a;margin-top:8px;padding-top:4px;';
+      chrome.dataset.section = 'statusbar';
+      chrome.dataset.sectionKey = group.key;
+      chrome.dataset.sectionVersion = group.version;
+      for (const line of group.lines) {
+        const lineDiv = document.createElement('div');
+        lineDiv.style.cssText = 'white-space:pre-wrap;min-height:1.4em;';
+        renderAnsiLine(line, lineDiv, '#8890b0');
+        chrome.appendChild(lineDiv);
+      }
+      return chrome;
     }
 
     // Skip orphan cont groups (completion markers, blank lines between sections)
@@ -1080,9 +1327,7 @@ const TerminalFormatOverlay = ({ termRef, containerRef, sessionName, sessionId, 
 
     const sectionKey = group.key;
     const typeOverride = defaultOverrideRef.current[group.type];
-    const defaultCollapsed = typeOverride !== null && typeOverride !== undefined
-      ? typeOverride
-      : (group.type === 'tool' || group.type === 'thinking');
+    const defaultCollapsed = sectionDefaultCollapsed(group.type, typeOverride, group.label);
     const isCollapsed = collapsed.has(sectionKey) ? !defaultCollapsed : defaultCollapsed;
 
     const color = SECTION_COLORS[group.type] || SECTION_COLORS.cont;
@@ -1093,6 +1338,7 @@ const TerminalFormatOverlay = ({ termRef, containerRef, sessionName, sessionId, 
     container.dataset.section = group.type;
     container.dataset.sectionKey = sectionKey;
     container.dataset.lineCount = String(group.lines.length);
+    container.dataset.sectionVersion = group.version;
 
     if (group.label) {
       const header = document.createElement('div');
@@ -1155,51 +1401,13 @@ const TerminalFormatOverlay = ({ termRef, containerRef, sessionName, sessionId, 
 
       const key = sectionKey;
       const sType = group.type;
-      const groupLines = group.lines;
-      const groupType = group.type;
       header.addEventListener('click', (e) => {
         e.stopPropagation();
         if (collapsed.has(key)) collapsed.delete(key);
         else collapsed.add(key);
-        const parent = header.parentElement;
-        if (parent) {
-          const nowCollapsed = collapsed.has(key) ? !defaultCollapsed : defaultCollapsed;
-          chevron.textContent = nowCollapsed ? '\u25B6' : '\u25BC';
-          if (nowCollapsed) {
-            // Hide content children
-            for (let ci = 1; ci < parent.children.length; ci++) {
-              (parent.children[ci] as HTMLElement).style.display = 'none';
-            }
-          } else {
-            if (parent.children.length <= 1) {
-              // Content was never created (built collapsed) — create it now
-              for (const line of groupLines) {
-                const lineDiv = document.createElement('div');
-                if (groupType === 'thinking') {
-                  lineDiv.style.cssText = 'white-space:pre-wrap;';
-                  lineDiv.style.color = THINKING_TEXT_COLOR;
-                  lineDiv.textContent = stripAnsi(line);
-                } else if (groupType === 'user' || groupType === 'inject') {
-                  lineDiv.style.cssText = 'white-space:pre-wrap;';
-                  lineDiv.style.color = '#c0caf5';
-                  lineDiv.textContent = stripAnsi(line);
-                } else {
-                  lineDiv.style.cssText = 'white-space:pre-wrap;';
-                  const dc = groupType === 'tool' ? color : '#c0caf5';
-                  renderAnsiLine(line, lineDiv, dc);
-                }
-                linkifyElement(lineDiv);
-                linkifyRefsInElement(lineDiv);
-                parent.appendChild(lineDiv);
-              }
-            } else {
-              // Content exists — show it
-              for (let ci = 1; ci < parent.children.length; ci++) {
-                (parent.children[ci] as HTMLElement).style.display = '';
-              }
-            }
-          }
-        }
+        // A collapsed card changes the virtual row height. Re-render the small
+        // visible window so the spacers and following cards remain aligned.
+        renderWindowRef.current(true);
       });
 
       header.addEventListener('contextmenu', (e) => {
@@ -1294,157 +1502,191 @@ const TerminalFormatOverlay = ({ termRef, containerRef, sessionName, sessionId, 
     return container;
   }, []);
 
-  /** Get section metadata from transcript cache */
-  const getSectionMeta = (key: string): { msgId: number; turnNum: number; timestamp: string } | undefined => {
-    return sectionMetaRef.current.get(key);
+  const currentGroups = (): SectionGroup[] => {
+    if (transcriptBlocksRef.current.length > 0) {
+      return [
+        ...transcriptBlocksToGroups(transcriptBlocksRef.current, toolViewsRef.current),
+        ...liveGroupsRef.current,
+        ...terminalChromeRef.current,
+      ];
+    }
+    return [
+      ...groupIntoSections(prevLinesRef.current, stickyClassRef.current, sectionLabelsRef.current),
+      ...terminalChromeRef.current,
+    ];
   };
 
-  /** Full rebuild — used by filter/collapse toggles and session changes */
-  const fullRebuild = useCallback(() => {
+  const groupIsCollapsed = (group: SectionGroup): boolean => {
+    const override = defaultOverrideRef.current[group.type];
+    const defaultCollapsed = sectionDefaultCollapsed(group.type, override, group.label);
+    return collapsedRef.current.has(group.key) ? !defaultCollapsed : defaultCollapsed;
+  };
+
+  const visibleCurrentGroups = (): SectionGroup[] => currentGroups().filter((group) => (
+    group.type === 'separator'
+    || group.type === 'statusbar'
+    || (group.type !== 'cont' && filtersRef.current[group.type])
+  ));
+
+  const estimatedGroupHeight = (group: SectionGroup): number => {
+    if (group.type === 'separator') return 22;
+    if (group.type === 'statusbar') return Math.max(22, group.lines.length * 18.2 + 8);
+    const bodyLines = groupIsCollapsed(group) ? 0 : Math.max(1, group.lines.length);
+    const headerHeight = group.label ? 24 : 0;
+    return 8 + headerHeight + bodyLines * 18.2;
+  };
+
+  const heightCacheKey = (group: SectionGroup): string => (
+    `${group.key}@${group.version}@${groupIsCollapsed(group) ? 'c' : 'e'}`
+  );
+
+  /** Render only the cards intersecting the viewport plus two viewports of
+   *  overscan. Top/bottom spacers preserve the full scroll range. */
+  const renderVirtualWindow = useCallback((force = false) => {
     const cover = coverRef.current;
-    if (!cover || prevLinesRef.current.length === 0) return;
+    if (!cover) return;
 
-    // Preserve scroll position across rebuild
-    const scrollBefore = cover.scrollTop;
-    const scrollHeightBefore = cover.scrollHeight;
+    const groups = visibleCurrentGroups();
+    // A transient empty scrape must not erase a previously good surface. An empty
+    // result caused by the user's filters is intentional and may render empty.
+    const anyFilterEnabled = Object.values(filtersRef.current).some(Boolean);
+    if (groups.length === 0 && anyFilterEnabled && renderedKeysRef.current.length > 0) return;
 
-    const groups = groupIntoSections(prevLinesRef.current, stickyClassRef.current, sectionLabelsRef.current);
-    const collapsed = collapsedRef.current;
+    const viewportHeight = Math.max(1, cover.clientHeight || cover.getBoundingClientRect().height || 600);
+    const heights = groups.map((group) => (
+      measuredHeightRef.current.get(heightCacheKey(group)) ?? estimatedGroupHeight(group)
+    ));
+    const estimatedTotal = heights.reduce((sum, height) => sum + height, 0);
+    const wantedScrollTop = autoScrollRef.current
+      ? Math.max(0, estimatedTotal - viewportHeight)
+      : cover.scrollTop;
+    const range = calculateVirtualWindow(heights, wantedScrollTop, viewportHeight, viewportHeight * 2);
 
-    cover.replaceChildren();
-    const keys: string[] = [];
-
-    let firstRealSection = 0;
-    while (firstRealSection < groups.length && groups[firstRealSection].type === 'cont') firstRealSection++;
-
-    for (let g = firstRealSection; g < groups.length; g++) {
-      const group = groups[g];
-      const meta = getSectionMeta(group.key);
-      const el = renderSectionDom(group, collapsed,
-        meta?.msgId,
-        meta?.timestamp ? new Date(meta.timestamp).getTime() : undefined, meta?.turnNum);
-      if (el) { cover.appendChild(el); keys.push(group.key); }
+    if (!force
+        && virtualRangeRef.current.start === range.start
+        && virtualRangeRef.current.end === range.end) {
+      return;
     }
-    renderedKeysRef.current = keys;
 
-    // Restore scroll position — keep the same visual position
-    // If user was at the bottom, stay at bottom; otherwise maintain offset from bottom
-    const scrollHeightAfter = cover.scrollHeight;
+    const anchorOffset = wantedScrollTop - range.beforePx;
+    const fragment = document.createDocumentFragment();
+    const topSpacer = document.createElement('div');
+    topSpacer.dataset.virtualSpacer = 'top';
+    topSpacer.style.cssText = `height:${range.beforePx}px;pointer-events:none;`;
+    fragment.appendChild(topSpacer);
+
+    const mounted: Array<{ group: SectionGroup; element: HTMLElement }> = [];
+    const previousVersions = renderedVersionsRef.current;
+    for (let index = range.start; index < range.end; index++) {
+      const group = groups[index];
+      const element = renderSectionDom(
+        group,
+        collapsedRef.current,
+        group.msgId,
+        group.timestamp ? new Date(group.timestamp).getTime() : undefined,
+        group.turnNum,
+      );
+      if (!element) continue;
+      fragment.appendChild(element);
+      mounted.push({ group, element });
+
+      if (hasRenderedTranscriptRef.current && group.origin !== 'terminal') {
+        const previousVersion = previousVersions.get(group.key);
+        if (previousVersion === undefined) highlightTranscriptChange(element, group.type, 'inserted');
+        else if (previousVersion !== group.version) highlightTranscriptChange(element, group.type, 'updated');
+      }
+    }
+
+    const bottomSpacer = document.createElement('div');
+    bottomSpacer.dataset.virtualSpacer = 'bottom';
+    bottomSpacer.style.cssText = `height:${range.afterPx}px;pointer-events:none;`;
+    fragment.appendChild(bottomSpacer);
+
+    virtualRenderGuardRef.current = true;
+    cover.replaceChildren(fragment);
+
+    let measurementChanged = false;
+    for (const { group, element } of mounted) {
+      const style = window.getComputedStyle(element);
+      const measured = element.getBoundingClientRect().height
+        + (parseFloat(style.marginTop) || 0)
+        + (parseFloat(style.marginBottom) || 0);
+      const key = heightCacheKey(group);
+      const previous = measuredHeightRef.current.get(key);
+      if (measured > 0 && (previous === undefined || Math.abs(previous - measured) > 0.5)) {
+        measuredHeightRef.current.set(key, measured);
+        measurementChanged = true;
+      }
+    }
+
+    // Recalculate spacer heights from the new measurements without rendering any
+    // additional cards. Preserve the first mounted card as the scroll anchor.
+    const correctedHeights = groups.map((group) => (
+      measuredHeightRef.current.get(heightCacheKey(group)) ?? estimatedGroupHeight(group)
+    ));
+    const correctedBefore = correctedHeights.slice(0, range.start).reduce((sum, height) => sum + height, 0);
+    const correctedRendered = correctedHeights.slice(range.start, range.end).reduce((sum, height) => sum + height, 0);
+    const correctedTotal = correctedHeights.reduce((sum, height) => sum + height, 0);
+    topSpacer.style.height = `${correctedBefore}px`;
+    bottomSpacer.style.height = `${Math.max(0, correctedTotal - correctedBefore - correctedRendered)}px`;
+
     if (autoScrollRef.current) {
-      cover.scrollTop = scrollHeightAfter;
+      cover.scrollTop = cover.scrollHeight;
+      autoScrollRef.current = true;
     } else {
-      // Keep the same distance from the bottom
-      const distFromBottom = scrollHeightBefore - scrollBefore;
-      cover.scrollTop = scrollHeightAfter - distFromBottom;
+      cover.scrollTop = Math.max(0, correctedBefore + anchorOffset);
+    }
+
+    virtualRangeRef.current = { start: range.start, end: range.end };
+    renderedKeysRef.current = mounted.map(({ group }) => group.key);
+    renderedVersionsRef.current = new Map(groups.map((group) => [group.key, group.version]));
+    const activeHeightKeys = new Set(groups.map(heightCacheKey));
+    for (const key of measuredHeightRef.current.keys()) {
+      if (!activeHeightKeys.has(key)) measuredHeightRef.current.delete(key);
+    }
+    hasRenderedTranscriptRef.current = hasRenderedTranscriptRef.current
+      || groups.some((group) => group.origin !== 'terminal');
+    virtualRenderGuardRef.current = false;
+
+    if (measurementChanged && windowRenderRafRef.current === null) {
+      windowRenderRafRef.current = requestAnimationFrame(() => {
+        windowRenderRafRef.current = null;
+        renderWindowRef.current(true);
+      });
     }
   }, [renderSectionDom]);
 
-  /** Incremental update — only rebuild the last section and append new ones */
-  const incrementalUpdate = useCallback(() => {
-    const cover = coverRef.current;
-    if (!cover || prevLinesRef.current.length === 0) return;
+  renderWindowRef.current = renderVirtualWindow;
 
-    const groups = groupIntoSections(prevLinesRef.current, stickyClassRef.current, sectionLabelsRef.current);
-    const collapsed = collapsedRef.current;
-
-    // Skip orphan cont groups at the start
-    let firstRealSection = 0;
-    while (firstRealSection < groups.length && groups[firstRealSection].type === 'cont') firstRealSection++;
-
-    // Filter to groups that will actually render (renderSectionDom returns null for cont)
-    const visibleGroups = groups.slice(firstRealSection).filter(g =>
-      g.type === 'separator' || (g.type !== 'cont' && filtersRef.current[g.type])
-    );
-    const newKeys = visibleGroups.map(g => g.key);
-    const oldKeys = renderedKeysRef.current;
-
-    // Find how many leading sections are unchanged
-    let commonPrefix = 0;
-    while (commonPrefix < oldKeys.length && commonPrefix < newKeys.length &&
-           oldKeys[commonPrefix] === newKeys[commonPrefix]) {
-      commonPrefix++;
-    }
-
-    // If everything matches and count is equal, only the last section may have new content
-    if (commonPrefix === oldKeys.length && commonPrefix === newKeys.length && commonPrefix > 0) {
-      // Last section may have grown — only replace if line count changed
-      const lastIdx = commonPrefix - 1;
-      const lastChild = cover.children[lastIdx] as HTMLElement | undefined;
-      if (lastChild) {
-        const group = visibleGroups[lastIdx];
-        const oldLineCount = lastChild.dataset.lineCount;
-        if (oldLineCount !== String(group.lines.length)) {
-          const meta = getSectionMeta(group.key);
-          const el = renderSectionDom(group, collapsed, meta?.msgId,
-            meta?.timestamp ? new Date(meta.timestamp).getTime() : undefined, meta?.turnNum);
-          if (el) { cover.replaceChild(el, lastChild); }
-        }
-      }
-      return;
-    }
-
-    // Blink protection: if sections shrank (last marker blinked away) and no
-    // new marker appeared after it, keep the existing DOM — don't remove sections.
-    // Only update the last rendered section's content (new cont lines may have arrived).
-    if (newKeys.length < oldKeys.length && commonPrefix === newKeys.length) {
-      // All new keys match the prefix of old keys — tail keys disappeared (blink).
-      // Update the last visible section in case it grew with new cont lines.
-      const lastVisibleIdx = newKeys.length - 1;
-      if (lastVisibleIdx >= 0 && lastVisibleIdx < (cover.children.length)) {
-        const lastChild = cover.children[lastVisibleIdx] as HTMLElement;
-        const group = visibleGroups[lastVisibleIdx];
-        if (lastChild && group) {
-          const oldLineCount = lastChild.dataset.lineCount;
-          if (oldLineCount !== String(group.lines.length)) {
-            const meta = getSectionMeta(group.key);
-            const el = renderSectionDom(group, collapsed, meta?.msgId,
-              meta?.timestamp ? new Date(meta.timestamp).getTime() : undefined, meta?.turnNum);
-            if (el) { cover.replaceChild(el, lastChild); }
-          }
-        }
-      }
-      return;
-    }
-
-    // Sections diverge at commonPrefix — remove from there, append new
-    while (cover.children.length > commonPrefix) {
-      cover.removeChild(cover.lastChild!);
-    }
-
-    for (let i = commonPrefix; i < visibleGroups.length; i++) {
-      const group = visibleGroups[i];
-      const meta = getSectionMeta(group.key);
-      const el = renderSectionDom(group, collapsed, meta?.msgId,
-        meta?.timestamp ? new Date(meta.timestamp).getTime() : undefined, meta?.turnNum);
-      if (el) cover.appendChild(el);
-    }
-
-    renderedKeysRef.current = newKeys;
-  }, [renderSectionDom]);
-
-  /** Main rebuild entry — uses incremental when possible, full when needed */
-  const rebuildFromCache = useCallback(() => {
-    if (renderedKeysRef.current.length === 0) {
-      fullRebuild();
-    } else {
-      incrementalUpdate();
-    }
-  }, [fullRebuild, incrementalUpdate]);
+  /** A rebuild now means recalculating only the visible card window. */
+  const fullRebuild = useCallback(() => renderVirtualWindow(true), [renderVirtualWindow]);
+  const rebuildFromCache = fullRebuild;
 
   const refresh = useCallback(async () => {
     if (!enabled || !sessionName || !containerRef.current || !overlayRef.current) return;
+    if (refreshInFlightRef.current) {
+      refreshPendingRef.current = true;
+      return;
+    }
+    refreshInFlightRef.current = true;
 
-    const api = window.uai;
-    if (!api?.terminal?.captureScrollback) return;
+    try {
+      const api = window.uai;
+      if (!api?.terminal?.captureScrollback) return;
 
     let result: any = null;
+    const captureOutputEpoch = terminalOutputEpochRef.current;
     try {
-      result = await api.terminal.captureScrollback(sessionName, 50000);
+      result = await api.terminal.captureScrollback(
+        sessionName,
+        hasInitialCaptureRef.current ? REFRESH_CAPTURE_LINES : INITIAL_CAPTURE_LINES,
+      );
     } catch {
       return;
     }
 
     if (!result?.ok || !result.text) return;
+    hasInitialCaptureRef.current = true;
     // Clean ANSI noise (OSC hyperlinks + bare CSI codes with no ESC byte) once at
     // ingest so both change-detection and parsing/display see leak-free text.
     // ESC-prefixed SGR is preserved for renderAnsiLine's coloring.
@@ -1481,14 +1723,41 @@ const TerminalFormatOverlay = ({ termRef, containerRef, sessionName, sessionId, 
 
       // Scroll tracking for auto-scroll
       cover.addEventListener('scroll', () => {
+        if (virtualRenderGuardRef.current) return;
         autoScrollRef.current = cover!.scrollHeight - cover!.scrollTop - cover!.clientHeight < 50;
+        if (windowRenderRafRef.current === null) {
+          windowRenderRafRef.current = requestAnimationFrame(() => {
+            windowRenderRafRef.current = null;
+            renderWindowRef.current(false);
+          });
+        }
       });
+      cover.addEventListener('wheel', (e: WheelEvent) => e.stopPropagation(), { passive: true });
 
       // Keyboard: Cmd+C copies from overlay, everything else goes to terminal
       cover.tabIndex = -1;
       cover.addEventListener('keydown', (e: KeyboardEvent) => {
         const selection = window.getSelection();
         const hasSelection = selection && selection.toString().length > 0;
+
+        // Mirror the raw terminal's explicit history navigation while the Memorex
+        // cover owns focus. Without this, the browser's default Home/ArrowUp action
+        // can move the cover to the top without updating our bottom-follow state.
+        if ((e.metaKey || e.ctrlKey) && (e.key === 'Home' || e.key === 'ArrowUp')) {
+          e.preventDefault();
+          cover!.scrollTop = 0;
+          autoScrollRef.current = false;
+          termRef.current?.scrollToTop();
+          return;
+        }
+        if ((e.metaKey || e.ctrlKey) && (e.key === 'End' || e.key === 'ArrowDown')) {
+          e.preventDefault();
+          cover!.scrollTop = cover!.scrollHeight;
+          autoScrollRef.current = true;
+          termRef.current?.scrollToBottom();
+          renderWindowRef.current(true);
+          return;
+        }
 
         // Cmd+C with selection: copy from overlay
         if (hasSelection && (e.metaKey || e.ctrlKey) && e.key === 'c') {
@@ -1515,14 +1784,28 @@ const TerminalFormatOverlay = ({ termRef, containerRef, sessionName, sessionId, 
         // so the current keypress isn't lost during focus transfer.
         const term = termRef.current;
         if (term) {
-          term.focus();
-          // Replay control characters (Ctrl+key) directly via PTY input
+          let terminalInput: string | null = null;
+          // Replay the first key directly: the cover owns focus, so
+          // merely focusing xterm would otherwise discard the key that answered a
+          // permission/decision dialog.
           if (e.ctrlKey && e.key.length === 1) {
             const charCode = e.key.toLowerCase().charCodeAt(0) - 96;  // Ctrl+A=1, Ctrl+U=21, etc.
             if (charCode > 0 && charCode < 27) {
-              window.uai?.terminal?.input?.(sessionId, String.fromCharCode(charCode));
+              terminalInput = String.fromCharCode(charCode);
             }
+          } else if (!e.metaKey) {
+            const special: Record<string, string> = {
+              Enter: '\r', Escape: '\x1b', Tab: '\t', Backspace: '\x7f',
+              ArrowUp: '\x1b[A', ArrowDown: '\x1b[B', ArrowRight: '\x1b[C', ArrowLeft: '\x1b[D',
+              Delete: '\x1b[3~', Home: '\x1b[H', End: '\x1b[F', PageUp: '\x1b[5~', PageDown: '\x1b[6~',
+            };
+            terminalInput = special[e.key] ?? (e.key.length === 1 ? e.key : null);
           }
+          if (terminalInput !== null) {
+            e.preventDefault();
+            window.uai?.terminal?.input?.(sessionId, terminalInput);
+          }
+          term.focus();
           setTimeout(() => refreshRef.current(), 150);
         }
       });
@@ -1538,7 +1821,7 @@ const TerminalFormatOverlay = ({ termRef, containerRef, sessionName, sessionId, 
       });
 
       // Mouse events: capture all, ensure cover gets focus for keyboard
-      for (const evt of ['wheel', 'mousemove', 'click', 'dblclick', 'contextmenu'] as const) {
+      for (const evt of ['mousemove', 'click', 'dblclick', 'contextmenu'] as const) {
         cover.addEventListener(evt, (e: Event) => {
           e.stopPropagation();
         });
@@ -1558,6 +1841,20 @@ const TerminalFormatOverlay = ({ termRef, containerRef, sessionName, sessionId, 
       }
       coverRef.current = cover;
     }
+
+    // Remember the user's state before geometry or DOM updates can generate their
+    // own scroll events. A layout-induced jump to 0 is not a user scroll-up.
+    const shouldRestoreBottom = autoScrollRef.current;
+    const restoreBottomAfterLayout = () => {
+      if (!shouldRestoreBottom) return;
+      const restore = () => {
+        if (coverRef.current !== cover) return;
+        cover.scrollTop = cover.scrollHeight;
+        autoScrollRef.current = true;
+      };
+      restore();
+      requestAnimationFrame(restore);
+    };
 
     // Always update cover position and dimensions — even if content unchanged
     cover.style.left = '0px';
@@ -1579,80 +1876,234 @@ const TerminalFormatOverlay = ({ termRef, containerRef, sessionName, sessionId, 
     const promptStart = findPromptAreaStart(detLines);
     const term = termRef.current;
     const cellHeight = term?.rows ? sr.height / term.rows : 13 * 1.4;
-    const visibleRows = term?.rows ?? Math.max(1, Math.round(sr.height / cellHeight));
 
-    // Content ends at the verb line (if present) or the separator.
-    // The verb line and everything below it (task list, completion markers,
-    // separator, prompt, status) are fixed live terminal — not overlay content.
-    // visibleRows bounds the live-tail scan so a stale verb line far up the
-    // scrollback can't become the boundary and collapse the cover (see findContentEnd).
-    const contentEnd = findContentEnd(detLines, promptStart, visibleRows);
-    // The live region's height is measured against the VISIBLE viewport, not the
-    // full scrollback. `allLines` spans the whole scrollback (hundreds of lines),
-    // but only the bottom `term.rows` are on screen. Counting the raw scrollback
-    // distance (allLines.length - contentEnd) over-counts whenever a long tool
-    // result or streamed response sits below the verb line — liveAreaHeight then
-    // exceeds sr.height, the cover collapses to 0px, and the formatted overlay
-    // vanishes mid-stream (showing raw terminal) until the tail shrinks. Clamp the
-    // live tail to the visible rows so the overlay only yields to genuinely
-    // on-screen live content. (visibleRows computed above.)
-    // …but `allLines` can ALSO carry trailing blank rows BEYOND the visible viewport
-    // (terminal padding below the last on-screen row) — and turning the tmux status
-    // bar OFF increased that padding. Those phantom rows inflate the live-area count
-    // and pull the cover UP over real content (the "overlay too short by a line or two"
-    // seen after status-off: the last content line leaks out raw below the cover).
-    // Cap the buffer's trailing blanks to what's actually ON SCREEN (from the live xterm
-    // DOM). On-screen trailing blanks (e.g. a band of empty rows under the prompt) are
-    // preserved — only genuinely off-screen padding is discounted. (todo_0450.)
-    let bufTrailBlanks = 0;
-    for (let i = allLines.length - 1; i >= 0 && allLines[i] === ''; i--) bufTrailBlanks++;
-    let domTrailBlanks = 0;
-    const trailRows = containerRef.current?.querySelectorAll('.xterm-rows > div');
-    if (trailRows && trailRows.length) {
-      for (let i = trailRows.length - 1; i >= 0; i--) {
-        if ((trailRows[i].textContent || '').trim() === '') domTrailBlanks++;
-        else break;
-      }
+    // Establish Transcript authority before deriving the first terminal live
+    // region. This bootstrap read cannot overtake a provisional because none
+    // exists yet; it prevents an initial full-history capture from being treated
+    // as live merely because the settled baseline had not loaded.
+    if (!hasTranscriptBaselineRef.current) {
+      await refreshTranscriptCache(false);
     }
-    const offscreenPad = Math.max(0, bufTrailBlanks - domTrailBlanks);
-    const liveAreaLines = Math.min(Math.max(0, (allLines.length - offscreenPad) - contentEnd), visibleRows);
-    const liveAreaHeight = liveAreaLines * cellHeight;
-    cover.style.height = `${Math.max(0, sr.height - liveAreaHeight)}px`;
 
-    // ── Bottom mask (no-redraw "spacing below the statusline" fix) ──────────
-    // A space-needing interaction (typing "/" for the command menu, then
-    // backspacing it away; or a pane-size mismatch) can leave the CLI's status
-    // footer drawn HIGH with a band of blank rows below it, down to the tmux
-    // status bar. We must NOT fix this by forcing the CLI to redraw — that
-    // re-renders an overflowing response and corrupts the scrollback (interleaved
-    // blanks, duplication, sometimes a dropped ⏺ marker). Instead we mask the dead
-    // band at the overlay layer: measure the contiguous blank rows directly above
-    // the tmux status bar (the last on-screen row) and cover them + the status bar
-    // with a filler, so the terminal reads as ending cleanly at the footer.
-    // Measured from the live xterm DOM (not the capture) so it reflects exactly
-    // what's on screen. Threshold ≥3 so the normal 0–1 trailing blank is untouched.
-    {
-      const rowEls = containerRef.current?.querySelectorAll('.xterm-rows > div');
-      let bandRows = 0;
-      if (rowEls && rowEls.length > 1) {
-        // Skip the last row (tmux status bar), count contiguous blank rows above it.
-        for (let i = rowEls.length - 2; i >= 0; i--) {
-          if ((rowEls[i].textContent || '').trim() === '') bandRows++;
-          else break;
+    const terminalKinds = detLines.map((line) => isVerbLine(line) ? 'boundary' : classifyLine(line));
+
+    // Only the unfinished terminal turn may create provisional cards. Settled
+    // history is already represented by Transcript and must never be reintroduced
+    // by a mount repaint or a deep bounded scrape.
+    const terminalMessageEnd = Math.max(0, promptStart);
+    const isChrome = (line: string) => isVerbLine(line) || isTaskChromeLine(line);
+    const fallbackTerminalLines = allLines
+      .slice(0, terminalMessageEnd)
+      .filter((line) => !isChrome(line));
+    const fallbackPrivate = findPrivateLines(fallbackTerminalLines);
+    const visibleFallbackLines = fallbackPrivate.size > 0
+      ? fallbackTerminalLines.filter((_: string, index: number) => !fallbackPrivate.has(index))
+      : fallbackTerminalLines;
+    if (visibleFallbackLines.length > 0 || prevLinesRef.current.length === 0) {
+      prevLinesRef.current = visibleFallbackLines;
+    }
+
+    const currentRegionStart = currentTerminalRegionStart(
+      allLines,
+      terminalMessageEnd,
+      transcriptBlocksRef.current.length > 0,
+    );
+    const currentRegionLines = allLines.slice(currentRegionStart, terminalMessageEnd);
+    const currentMessageLines = currentRegionLines.filter((line) => !isChrome(line));
+    const currentPrivate = findPrivateLines(currentMessageLines);
+    const visibleCurrentMessageLines = currentPrivate.size > 0
+      ? currentMessageLines.filter((_: string, index: number) => !currentPrivate.has(index))
+      : currentMessageLines;
+    const allTerminalGroups = terminalMessageGroups(
+      visibleCurrentMessageLines,
+      stickyClassRef.current,
+      sectionLabelsRef.current,
+    );
+
+    const previousTerminalGroups = terminalGroupsSnapshotRef.current;
+    const previousSnapshotTranscriptRevision = terminalSnapshotTranscriptRevisionRef.current;
+    const terminalDelta = !hasTerminalSnapshotRef.current
+      ? {
+          updatedTail: null,
+          appended: [],
+          anchored: true,
         }
+      : previousTerminalGroups.length === 0
+      ? {
+          updatedTail: null,
+          appended: allTerminalGroups,
+          anchored: true,
+        }
+      : terminalCardDelta(
+          previousTerminalGroups,
+          allTerminalGroups,
+          (group) => group.terminalFingerprint || '',
+        );
+    if (terminalDelta.anchored) {
+      const previousTailFingerprint = previousTerminalGroups.at(-1)?.terminalFingerprint;
+      const previousTailVersion = previousTerminalGroups.at(-1)?.version;
+      const provisionalTail = liveGroupsRef.current.at(-1);
+      const appendedCandidates = [...terminalDelta.appended];
+      if (terminalDelta.updatedTail
+          && provisionalTail
+          && provisionalTail.terminalFingerprint === previousTailFingerprint) {
+        liveGroupsRef.current[liveGroupsRef.current.length - 1] = {
+          ...terminalDelta.updatedTail,
+          key: provisionalTail.key,
+          origin: 'terminal',
+          expectedSettledCardCount: provisionalTail.expectedSettledCardCount,
+        };
+      } else if (terminalDelta.updatedTail
+          && previousTailFingerprint
+          && terminalDelta.updatedTail.terminalFingerprint === previousTailFingerprint
+          && terminalDelta.updatedTail.version !== previousTailVersion
+          && shouldSeedUpdatedTerminalTail(
+            terminalDelta.updatedTail.terminalFingerprint,
+            previousSnapshotTranscriptRevision,
+            transcriptRevisionRef.current,
+            settledTerminalFingerprintsRef.current,
+          )) {
+        // On a cold mount, the bounded unfinished-turn snapshot may already hold
+        // settled cards from earlier in that turn. Do not seed them. If the tail
+        // subsequently changes, it is the actual streaming card and can safely
+        // become the first provisional.
+        appendedCandidates.unshift(terminalDelta.updatedTail);
       }
-      // Clamp so the mask can never climb into live content (cap at ~40% of the pane).
-      const maxBand = Math.floor(visibleRows * 0.4);
-      const mask = bandRows >= 3 ? Math.min(bandRows, maxBand) + 1 : 0; // +1 covers the tmux bar
-      const px = Math.round(mask * cellHeight);
-      if (px !== fillerPxRef.current) {
-        fillerPxRef.current = px;
-        setFillerPx(px);
+      const currentTurnCandidates = filterTerminalCandidatesForTurn(
+        appendedCandidates,
+        settledTerminalFingerprintsRef.current,
+      );
+      const firstExpectedSettledCardCount = transcriptBlocksRef.current.length
+        + liveGroupsRef.current.length
+        + 1;
+      const appendedWithKeys = currentTurnCandidates
+        .map((group, index) => ({
+          ...group,
+          key: `provisional:${nextProvisionalIdRef.current++}`,
+          origin: 'terminal',
+          expectedSettledCardCount: firstExpectedSettledCardCount + index,
+        } satisfies SectionGroup));
+      liveGroupsRef.current = appendUniqueProvisionalCards(
+        liveGroupsRef.current,
+        appendedWithKeys,
+        (group) => group.terminalFingerprint || '',
+        (existing, replacement) => ({
+          ...replacement,
+          key: existing.key,
+          expectedSettledCardCount: existing.expectedSettledCardCount,
+        }),
+      );
+    }
+    // A lost terminal-only anchor (capture eviction/reflow) resets only the scrape
+    // baseline. It never rebuilds, slices, or discards the persistent card chain.
+    terminalGroupsSnapshotRef.current = allTerminalGroups;
+    // Store the revision that was current when this terminal snapshot was
+    // ingested. If Transcript advances below, the next terminal repaint can see
+    // that the old tail crossed the settlement boundary and must not be re-added.
+    terminalSnapshotTranscriptRevisionRef.current = transcriptRevisionRef.current;
+    hasTerminalSnapshotRef.current = true;
+
+    // Terminal events must enter the provisional FIFO before the completed JSONL
+    // record consumes that FIFO. Reading Transcript after the terminal snapshot
+    // preserves that causal order even when the zero-delay file watcher wins the race.
+    const terminalChangedDuringCapture = terminalOutputEpochRef.current !== captureOutputEpoch;
+    // The terminal snapshot was ingested first, so a changed Transcript can settle
+    // its FIFO head now. Never postpone Transcript reads until output pauses: a busy
+    // stream may be continuous for minutes, and the old deferral loop accumulated a
+    // large provisional backlog while starving settlement.
+    const transcriptChanged = await refreshTranscriptCache(false);
+    const blocks = transcriptBlocksRef.current;
+
+    const terminalRegionClosed = allTerminalGroups.length === 0
+      && currentRegionStart > 0
+      && allLines.slice(0, terminalMessageEnd).some(isCompletedVerbLine);
+    if (terminalRegionClosed) {
+      const now = Date.now();
+      if (closedTerminalSinceRef.current === null) closedTerminalSinceRef.current = now;
+      // Remove only cards individually proven consumed first. Transcript can
+      // append several records over successive watcher events after the terminal
+      // closes; clearing the whole FIFO on the first changed revision would hide
+      // later records during normal JSONL lag.
+      liveGroupsRef.current = liveGroupsRef.current.filter((group) => (
+        !provisionalReachedSettlement(group.expectedSettledCardCount, blocks.length)
+        && (!group.terminalFingerprint
+          || !settledTerminalFingerprintsRef.current.has(group.terminalFingerprint))
+      ));
+      const closedForMs = now - closedTerminalSinceRef.current;
+      if (shouldDrainClosedTerminalProvisionals(
+        true,
+        closedForMs,
+      )) {
+        liveGroupsRef.current = [];
+      }
+    } else {
+      closedTerminalSinceRef.current = null;
+    }
+
+    // Compact terminal tool cards are a display-only carve-out. Identity checks here
+    // choose a folded rendering; they never place the settled/live split.
+    if (blocks.length > 0) {
+      const mountedToolViews = collectTerminalToolViews(
+        blocks,
+        detLines,
+        terminalKinds,
+        terminalMessageEnd,
+      );
+      for (const [key, lines] of mountedToolViews) {
+        toolViewsRef.current.set(key, lines);
       }
     }
+
+    const visibleRows = term?.rows ?? Math.max(1, Math.round(sr.height / cellHeight));
+    let visibleTrailingBlankRows = 0;
+    const visibleRowElements = containerRef.current?.querySelectorAll('.xterm-rows > div');
+    if (visibleRowElements && visibleRowElements.length > 0) {
+      for (let i = visibleRowElements.length - 1; i >= 0; i--) {
+        if ((visibleRowElements[i].textContent || '').trim() !== '') break;
+        visibleTrailingBlankRows++;
+      }
+    }
+    const activeVerbLineIndex = visibleActiveVerbLineIndex(
+      allLines,
+      currentRegionStart,
+      terminalMessageEnd,
+      visibleRows,
+      visibleTrailingBlankRows,
+    );
+    const hasActiveVerb = activeVerbLineIndex !== null;
+    // While a verb is active, the real xterm rows from that animated line through
+    // the prompt/status remain visible below the cover. Rendering a static chrome
+    // card inside Memorex would duplicate and freeze the animation.
+    const chromeLines = hasActiveVerb ? [] : detLines.slice(terminalMessageEnd);
+    terminalChromeRef.current = chromeLines.length > 0 ? [{
+      type: 'statusbar',
+      label: '',
+      lines: chromeLines,
+      startIdx: terminalMessageEnd,
+      key: 'terminal-chrome',
+      origin: 'terminal',
+      version: sectionVersion({ type: 'statusbar', lines: chromeLines }),
+    }] : [];
+
+    // Memorex owns the full viewport while idle. During active thinking only, yield
+    // the bottom rows beginning at the real animated verb line so the terminal's
+    // spinner, task rows, prompt, and status remain live rather than being replaced
+    // by a static overlay copy.
+    const liveFormattedLines = blocks.length > 0
+      ? liveGroupsRef.current.reduce((sum, group) => sum + group.lines.length, 0)
+      : 0;
+    const liveAreaLines = visibleTerminalGapLineCount(
+      allLines,
+      activeVerbLineIndex,
+      visibleRows,
+      visibleTrailingBlankRows,
+    );
+    const liveAreaHeight = Math.min(sr.height, liveAreaLines * cellHeight);
+    const coverHeight = Math.max(0, sr.height - liveAreaHeight);
+    cover.style.height = `${coverHeight}px`;
 
     // Detect dimension changes — force content rebuild when layout changes
-    const dims = `${Math.round(cr.width)}|${Math.round(sr.height)}|${Math.round(sr.top - cr.top)}`;
+    const dims = `${Math.round(cr.width)}|${Math.round(sr.height)}|${Math.round(sr.top - cr.top)}|${Math.round(coverHeight)}`;
     if (dims !== lastDimsRef.current) {
       lastDimsRef.current = dims;
       lastTextRef.current = '';
@@ -1662,12 +2113,8 @@ const TerminalFormatOverlay = ({ termRef, containerRef, sessionName, sessionId, 
     // Exposes overlay state for AI diagnostic queries and future viewport tree.
     // Query via: window.__memorex (DevTools), uai:memorex:state (IPC),
     // or chrome-control execute_javascript.
-    const sections = groupIntoSections(
-      allLines.slice(0, contentEnd),
-      stickyClassRef.current,
-      sectionLabelsRef.current,
-    );
-    (window as any).__memorex = {
+    const sections = currentGroups();
+    const memorexSnapshot: Record<string, any> = {
       sessionId,
       sessionName,
       platform,
@@ -1676,9 +2123,32 @@ const TerminalFormatOverlay = ({ termRef, containerRef, sessionName, sessionId, 
       boundaries: {
         totalLines: allLines.length,
         promptStart,
-        contentEnd,
+        // Line-based seam fields are retained as null for diagnostic consumers;
+        // the PM-locked seam is the persistent settled/provisional card link.
+        contentEnd: null,
+        markerContentEnd: null,
+        settledTranscriptMsgId: blocks.at(-1)?.lastMsgId ?? 0,
+        settledTranscriptCardCount: blocks.length,
+        terminalCardCount: allTerminalGroups.length,
+        firstLiveCardOrdinal: blocks.length,
+        liveCardCount: liveGroupsRef.current.length,
+        firstLiveExpectedSettledCardCount:
+          liveGroupsRef.current[0]?.expectedSettledCardCount ?? null,
+        terminalDeltaAppended: terminalDelta.appended.length,
+        terminalDeltaAnchored: terminalDelta.anchored,
+        terminalOutputEpoch: terminalOutputEpochRef.current,
+        terminalChangedDuringCapture,
+        terminalRegionClosed,
+        hasActiveVerb,
+        activeVerbLineIndex,
+        closedTerminalAgeMs: closedTerminalSinceRef.current === null
+          ? 0
+          : Date.now() - closedTerminalSinceRef.current,
+        transcriptChanged,
         liveAreaLines,
-        coverHeightPx: Math.max(0, sr.height - liveAreaHeight),
+        liveFormattedLines,
+        coverHeightPx: coverHeight,
+        normalCoverHeightPx: Math.max(0, sr.height),
         cellHeightPx: cellHeight,
         termRows: term?.rows,
       },
@@ -1696,25 +2166,52 @@ const TerminalFormatOverlay = ({ termRef, containerRef, sessionName, sessionId, 
       })),
       sectionCount: sections.length,
       renderedKeys: renderedKeysRef.current,
-      // Boundary zone — lines around contentEnd for diagnosing overlap
-      boundaryZone: allLines.slice(Math.max(0, contentEnd - 3), Math.min(allLines.length, promptStart + 2)).map((l: string, i: number) => {
-        const idx = Math.max(0, contentEnd - 3) + i;
-        const plain = stripAnsi(l).trim();
+      virtualWindow: {
+        start: virtualRangeRef.current.start,
+        end: virtualRangeRef.current.end,
+        mountedCardCount: renderedKeysRef.current.length,
+        totalCardCount: sections.length,
+      },
+      // Persistent-chain seam diagnostics: settled Transcript tail followed by
+      // the provisional FIFO. No terminal-history origin participates.
+      boundaryZone: sections
+        .slice(Math.max(0, blocks.length - 3), blocks.length + 3)
+        .map((group, i) => {
+        const idx = Math.max(0, blocks.length - 3) + i;
+        const plain = stripAnsi(group.lines[0] || '').trim();
         return {
           idx,
           text: plain.slice(0, 120),
-          classification: classifyLine(l),
-          isVerbLine: isVerbLine(l),
+          classification: group.type,
+          isVerbLine: false,
           isMarkerPattern: /^\S\s/.test(plain),
-          role: idx < contentEnd ? 'OVERLAY' : idx === contentEnd ? 'CONTENT_END' : idx === promptStart ? 'PROMPT_START' : 'LIVE_TERMINAL',
+          role: idx < blocks.length
+            ? 'SETTLED_TRANSCRIPT'
+            : group.type === 'statusbar'
+              ? 'TERMINAL_CHROME'
+              : 'PROVISIONAL_TERMINAL',
         };
       }),
-      // Last overlay line vs first live terminal line — the overlap diagnostic
-      lastOverlayLine: contentEnd > 0 ? stripAnsi(allLines[contentEnd - 1] || '').trim().slice(0, 120) : null,
-      firstLiveTerminalLine: contentEnd < allLines.length ? stripAnsi(allLines[contentEnd] || '').trim().slice(0, 120) : null,
+      lastOverlayLine: blocks.length > 0
+        ? stripAnsi(blocks.at(-1)?.lines.at(-1) || '').trim().slice(0, 120)
+        : null,
+      firstLiveTerminalLine: liveGroupsRef.current.length > 0
+        ? stripAnsi(liveGroupsRef.current[0].lines[0] || '').trim().slice(0, 120)
+        : null,
+      firstVisibleTerminalLine: activeVerbLineIndex !== null
+        ? stripAnsi(allLines[activeVerbLineIndex] || '').trim().slice(0, 120)
+        : null,
       // Timestamp
       updatedAt: new Date().toISOString(),
     };
+    // Hidden mounted tabs retain queryable state under their exact tracking ID.
+    // The active-session shortcut remains for compatibility, but diagnostics must
+    // not select by a non-unique display name (two live/stopped sessions can both
+    // be called "Relay").
+    const diagnosticWindow = window as any;
+    diagnosticWindow.__memorexSessions ??= {};
+    diagnosticWindow.__memorexSessions[sessionId] = memorexSnapshot;
+    if (active) diagnosticWindow.__memorex = memorexSnapshot;
     // ── Geometry snapshot + recorder frame (Codex MAJOR 7) ───────────────
     // The cover-blanket bug (todo_0385) is likely a DOM geometry/mask issue,
     // invisible in boundary text alone — so capture the actual rects. Best-effort:
@@ -1730,28 +2227,28 @@ const TerminalFormatOverlay = ({ termRef, containerRef, sessionName, sessionId, 
         screenHeight: Math.round(sr.height),
         containerTop: Math.round(cr.top),
         containerHeight: Math.round(cr.height),
-        fillerPx: fillerPxRef.current,
+        fillerPx: 0,
         scrollTop: Math.round(cover.scrollTop),
         zIndex: cs.zIndex,
         pointerEvents: cs.pointerEvents,
         cellHeightPx: Math.round(cellHeight),
         termRows: term?.rows,
       };
-      (window as any).__memorex.geometry = geometry;
-      // Anomaly: the cover reaches (near) full screen height while ~no live area
-      // remains — i.e. it is blanketing the prompt/status region.
-      // GUARD: only meaningful when the overlay is actually visible/laid-out. An
-      // inactive (display:none) tab reports sr.height=0 / cellHeight=0, which made
-      // `coverPx(0) >= sr.height(0)` trivially true and spammed false captures.
+      memorexSnapshot.geometry = geometry;
+      // Idle full-height and bounded active-verb exposure are intentional. The
+      // actionable anomaly is a visible cover with source content but no
+      // formatted cards.
       const overlayVisible = sr.height > 20 && cellHeight > 1;
-      const coverPx = Math.max(0, sr.height - liveAreaHeight);
-      const anomalyFull = overlayVisible && (liveAreaLines <= 1 || coverPx >= sr.height - cellHeight);
+      const anomalyFull = active
+        && overlayVisible
+        && sections.length === 0
+        && (blocks.length > 0 || terminalMessageEnd > 0);
       recordMemorexFrame({
         ts: Date.now(),
         sessionId,
-        boundaries: (window as any).__memorex.boundaries,
+        boundaries: memorexSnapshot.boundaries,
         geometry,
-        firstLiveTerminalLine: (window as any).__memorex.firstLiveTerminalLine,
+        firstLiveTerminalLine: memorexSnapshot.firstLiveTerminalLine,
         anomalyFull,
       });
       // Auto-persist to disk on a detected anomaly (debounced) — no DevTools needed.
@@ -1759,42 +2256,44 @@ const TerminalFormatOverlay = ({ termRef, containerRef, sessionName, sessionId, 
         const now = Date.now();
         if (now - lastAnomalySaveRef.current > 10000) {
           lastAnomalySaveRef.current = now;
-          saveAnomalyToDisk(sessionId, 'auto:cover-full', {
+          saveAnomalyToDisk(sessionId, 'auto:blank-cover', {
             // Bound the scrape: the boundary/cover live in the bottom rows, so the
             // tail is all we need — the full scrollback can be 14k+ lines (MBs).
             frames: memorexRecBuffer.slice(-100),
             capturedText: allLines.slice(-1500).join('\n'),
-            boundaryZone: (window as any).__memorex.boundaryZone,
+            boundaryZone: memorexSnapshot.boundaryZone,
           });
         }
       }
     } catch { /* recorder is best-effort — never break the overlay */ }
 
     // Also update the viewport state ref so the tree sees the same data
-    memorexStateRef.current = (window as any).__memorex;
+    memorexStateRef.current = memorexSnapshot;
 
-    // Skip content rebuild if text unchanged
-    if (normalized === lastTextRef.current) return;
+    // Skip DOM work only when BOTH the terminal and settled transcript are unchanged.
+    if (normalized === lastTextRef.current
+        && transcriptRevisionRef.current === lastTranscriptRenderRevisionRef.current) {
+      // Geometry may still have changed even when text did not.
+      restoreBottomAfterLayout();
+      return;
+    }
     lastTextRef.current = normalized;
-
-    // Content lines stop at the verb line (or separator if no verb line)
-    const contentLines = allLines.slice(0, contentEnd);
-
-    // Strip [/PRIVATE] thinking blocks
-    const privateSkip = findPrivateLines(contentLines);
-    const newLines = privateSkip.size > 0
-      ? contentLines.filter((_: string, i: number) => !privateSkip.has(i))
-      : contentLines;
-
-    prevLinesRef.current = newLines;
+    lastTranscriptRenderRevisionRef.current = transcriptRevisionRef.current;
 
     // Rebuild from the new content
     rebuildFromCache();
 
-    if (autoScrollRef.current) {
-      cover.scrollTop = cover.scrollHeight;
+    // The cover height and card layout settle after this refresh. Restore once now
+    // and once on the next frame so the final layout owns the scroll.
+    restoreBottomAfterLayout();
+    } finally {
+      refreshInFlightRef.current = false;
+      if (refreshPendingRef.current) {
+        refreshPendingRef.current = false;
+        setTimeout(() => refreshRef.current(), 0);
+      }
     }
-  }, [enabled, sessionName, containerRef, termRef]);
+  }, [enabled, active, sessionName, sessionId, platform, containerRef, termRef, rebuildFromCache, refreshTranscriptCache]);
 
   // Keep ref current so event listeners can call latest refresh
   refreshRef.current = refresh;
@@ -1802,16 +2301,41 @@ const TerminalFormatOverlay = ({ termRef, containerRef, sessionName, sessionId, 
   // Reset state when session changes
   useEffect(() => {
     lastTextRef.current = '';
+    hasInitialCaptureRef.current = false;
+    lastTranscriptRenderRevisionRef.current = '';
     prevLinesRef.current = [];
     stickyClassRef.current.clear();
-    lastSectionKeyRef.current = null;
-    transcriptCacheRef.current = [];
-    sectionMetaRef.current.clear();
+    transcriptBlocksRef.current = [];
+    transcriptRevisionRef.current = '';
+    transcriptLoadGenerationRef.current++;
+    toolViewsRef.current.clear();
+    liveGroupsRef.current = [];
+    terminalGroupsSnapshotRef.current = [];
+    hasTerminalSnapshotRef.current = false;
+    terminalSnapshotTranscriptRevisionRef.current = '';
+    settledTerminalFingerprintsRef.current.clear();
+    closedTerminalSinceRef.current = null;
+    nextProvisionalIdRef.current = 1;
+    hasTranscriptBaselineRef.current = false;
+    terminalOutputEpochRef.current = 0;
+    terminalChromeRef.current = [];
     renderedKeysRef.current = [];
+    renderedVersionsRef.current.clear();
+    measuredHeightRef.current.clear();
+    virtualRangeRef.current = { start: -1, end: -1 };
+    hasRenderedTranscriptRef.current = false;
+    // Scroll state belongs to a session. A new/remounted session starts at its live
+    // bottom rather than inheriting "scrolled up" from the previous session.
+    autoScrollRef.current = true;
     if (coverRef.current) {
       coverRef.current.replaceChildren();
     }
-  }, [sessionName]);
+  }, [sessionName, sessionId]);
+
+  useEffect(() => () => {
+    const sessions = (window as any).__memorexSessions;
+    if (sessions) delete sessions[sessionId];
+  }, [sessionId]);
 
   // One-key manual anomaly capture (⌘⇧M) for the ACTIVE session's overlay — the
   // reliable path when the auto-detector misses a transient (dumps to disk, no
@@ -1837,28 +2361,61 @@ const TerminalFormatOverlay = ({ termRef, containerRef, sessionName, sessionId, 
   useEffect(() => {
     if (!enabled) {
       if (timerRef.current) clearInterval(timerRef.current);
-      if (transcriptTimerRef.current) clearInterval(transcriptTimerRef.current);
       coverRef.current = null;
       lastTextRef.current = '';
-      prevLinesRef.current = [];
+      lastTranscriptRenderRevisionRef.current = '';
+      terminalChromeRef.current = [];
       renderedKeysRef.current = [];
-      sectionMetaRef.current.clear();
+      renderedVersionsRef.current.clear();
+      virtualRangeRef.current = { start: -1, end: -1 };
+      hasRenderedTranscriptRef.current = false;
+      autoScrollRef.current = true;
+      if (windowRenderRafRef.current !== null) cancelAnimationFrame(windowRenderRafRef.current);
+      windowRenderRafRef.current = null;
       if (contentHostRef.current) contentHostRef.current.replaceChildren();
       return;
     }
+    // Canonicalize scroll before the first capture. captureScrollback returns the
+    // live buffer tail, but the geometry pass reads the xterm '.xterm-rows' DOM
+    // (visibleRows / visibleTrailingBlankRows) — and those reflect the terminal's
+    // CURRENT scroll viewport. If the terminal was scrolled up when Memorex is
+    // enabled, the DOM rows describe mid-history while the captured text is the live
+    // bottom; that mismatch corrupts the active-verb/gap math and can leave a
+    // full-height cover with no proven live region (the "black screen on enable while
+    // scrolled up" bug). Snapping the covered terminal to its live bottom makes the
+    // DOM agree with the capture. Invariant 11: never inherit a stale scroll state.
+    termRef.current?.scrollToBottom();
     refresh();
     const pollMs = active ? POLL_ACTIVE_MS : POLL_BACKGROUND_MS;
     timerRef.current = setInterval(refresh, pollMs);
 
-    // Fetch transcript metadata periodically (every 10s) for section annotations
-    refreshTranscriptCache();
-    transcriptTimerRef.current = setInterval(refreshTranscriptCache, 10000);
+    // The watcher event is the immediate path, but refresh always ingests terminal
+    // cards before Transcript so a completed record cannot outrun its provisional.
+    // These short warmup retries cover mount/order races.
+    const warmupTimers = [250, 800, 2000].map((ms) => setTimeout(() => refreshRef.current(), ms));
+    const unsubTranscript = window.uai?.transcript?.onUpdated
+      ? window.uai.transcript.onUpdated((ref) => { if (ref === sessionId) refreshRef.current(); })
+      : null;
+    let outputRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+    const unsubTerminalData = active && window.uai?.terminal?.onData
+      ? window.uai.terminal.onData((sid) => {
+          if (sid !== sessionId) return;
+          terminalOutputEpochRef.current++;
+          if (outputRefreshTimer) return;
+          // Bound capture work during token streaming while staying much faster than
+          // the one-second safety poll. The terminal snapshot remains the parser.
+          outputRefreshTimer = setTimeout(() => {
+            outputRefreshTimer = null;
+            refreshRef.current();
+          }, 250);
+        })
+      : null;
 
     // Watch for container/terminal resize to refresh the overlay dimensions.
     // DEBOUNCED: a resize (e.g. dragging the PromptBox handle) fires the observer
-    // continuously, and each refresh() forces a full recapture+reparse+DOM rebuild
+    // continuously, and each refresh() forces another terminal capture and layout pass
     // (a dimension change clears lastTextRef on purpose, to reflow to the new width).
-    // Un-debounced that was a storm of full 50k-line rebuilds → multi-second lag. A
+    // Un-debounced that was a storm of repeated rebuilds → multi-second lag. A
     // short trailing debounce collapses the whole drag into ONE rebuild after it
     // settles; semantics are unchanged (still reflows, still never blanks).
     let resizeObserver: ResizeObserver | null = null;
@@ -1876,11 +2433,14 @@ const TerminalFormatOverlay = ({ termRef, containerRef, sessionName, sessionId, 
 
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
-      if (transcriptTimerRef.current) clearInterval(transcriptTimerRef.current);
+      warmupTimers.forEach(clearTimeout);
+      unsubTranscript?.();
+      unsubTerminalData?.();
+      if (outputRefreshTimer) clearTimeout(outputRefreshTimer);
       if (resizeTimer) clearTimeout(resizeTimer);
       resizeObserver?.disconnect();
     };
-  }, [enabled, active, refresh, refreshTranscriptCache]);
+  }, [enabled, active, refresh, refreshTranscriptCache, sessionId]);
 
   // Filter and collapse handlers — full rebuild since visibility changes
   const toggleFilter = useCallback((type: string) => {
@@ -1892,7 +2452,7 @@ const TerminalFormatOverlay = ({ termRef, containerRef, sessionName, sessionId, 
     // Set override so future sections of this type are also collapsed
     defaultOverrideRef.current[type] = true;
     // Clear per-section toggles so all use the new default
-    const groups = groupIntoSections(prevLinesRef.current, undefined, sectionLabelsRef.current);
+    const groups = currentGroups();
     for (const group of groups) {
       if (group.type !== type) continue;
       collapsedRef.current.delete(group.key);
@@ -1904,7 +2464,7 @@ const TerminalFormatOverlay = ({ termRef, containerRef, sessionName, sessionId, 
     // Set override so future sections of this type are also expanded
     defaultOverrideRef.current[type] = false;
     // Clear per-section toggles so all use the new default
-    const groups = groupIntoSections(prevLinesRef.current, undefined, sectionLabelsRef.current);
+    const groups = currentGroups();
     for (const group of groups) {
       if (group.type !== type) continue;
       collapsedRef.current.delete(group.key);
@@ -1914,10 +2474,6 @@ const TerminalFormatOverlay = ({ termRef, containerRef, sessionName, sessionId, 
 
   // Force re-render to pick up filter state for button styling
   const [, forceUpdate] = useState(0);
-  // Bottom-mask height (px) for the "spacing below the statusline" dead band.
-  // 0 = no band. Driven imperatively from the geometry loop; fillerPxRef guards
-  // against redundant re-renders.
-  const [fillerPx, setFillerPx] = useState(0);
 
   if (!enabled) return null;
 
@@ -1933,6 +2489,9 @@ const TerminalFormatOverlay = ({ termRef, containerRef, sessionName, sessionId, 
   return (
     <div
       ref={overlayRef}
+      data-memorex-session-id={sessionId}
+      data-memorex-session-name={sessionName}
+      data-memorex-active={active ? 'true' : 'false'}
       style={{
         position: 'absolute',
         top: 0, left: 0, right: 0, bottom: 0,
@@ -1942,21 +2501,6 @@ const TerminalFormatOverlay = ({ termRef, containerRef, sessionName, sessionId, 
     >
       {/* Content host for imperative DOM — separate from React filter bar */}
       <div ref={contentHostRef} style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, pointerEvents: 'none' }} />
-
-      {/* Bottom mask: covers the dead "spacing below the statusline" band + tmux
-          status bar so the terminal reads as ending cleanly at the footer. No CLI
-          redraw involved (a redraw would corrupt the scrollback). Hidden (0px) in
-          the normal case. */}
-      {fillerPx > 0 && (
-        <div
-          style={{
-            position: 'absolute', left: 0, right: 0, bottom: 0,
-            height: `${fillerPx}px`,
-            background: 'var(--bg-panel, #0a0c10)',
-            pointerEvents: 'none', zIndex: 10,
-          }}
-        />
-      )}
 
       {/* Filter bar */}
       <div style={{
@@ -1986,8 +2530,7 @@ const TerminalFormatOverlay = ({ termRef, containerRef, sessionName, sessionId, 
               <button
                 onClick={() => {
                   const override = defaultOverrideRef.current[key];
-                  const hardDefault = key === 'tool' || key === 'thinking';
-                  const currentlyCollapsed = override !== null && override !== undefined ? override : hardDefault;
+                  const currentlyCollapsed = sectionDefaultCollapsed(key, override);
                   if (currentlyCollapsed) { expandAllOfType(key); } else { collapseAllOfType(key); }
                   forceUpdate((n: number) => n + 1);
                 }}
@@ -1998,8 +2541,7 @@ const TerminalFormatOverlay = ({ termRef, containerRef, sessionName, sessionId, 
                 }}
               >{(() => {
                   const override = defaultOverrideRef.current[key];
-                  const hardDefault = key === 'tool' || key === 'thinking';
-                  const currentlyCollapsed = override !== null && override !== undefined ? override : hardDefault;
+                  const currentlyCollapsed = sectionDefaultCollapsed(key, override);
                   return currentlyCollapsed ? '\u25B6' : '\u25BC';
                 })()}</button>
             </div>
@@ -2013,5 +2555,22 @@ const TerminalFormatOverlay = ({ termRef, containerRef, sessionName, sessionId, 
 export default TerminalFormatOverlay;
 
 // Exported for testing
-export { classifyLine, groupIntoSections, findPromptAreaStart, findPrivateLines, stripAnsi };
+export {
+  classifyLine,
+  currentTerminalRegionStart,
+  filterTerminalCandidatesForTurn,
+  findPrivateLines,
+  findPromptAreaStart,
+  groupIntoSections,
+  isActiveVerbLine,
+  isCompletedVerbLine,
+  provisionalReachedSettlement,
+  sectionDefaultCollapsed,
+  shouldDrainClosedTerminalProvisionals,
+  shouldSeedUpdatedTerminalTail,
+  stripAnsi,
+  terminalOpeningFingerprint,
+  visibleActiveVerbLineIndex,
+  visibleTerminalGapLineCount,
+};
 export type { Section, SectionGroup };

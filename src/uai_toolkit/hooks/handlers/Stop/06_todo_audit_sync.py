@@ -58,13 +58,15 @@ def _resolve_mode(context):
         pass
     try:
         if context.tracking_id and context.session_dir:
-            state_path = Path(context.session_dir) / (context.tracking_id + "_state.json")
-            if state_path.is_file():
-                state = json.loads(state_path.read_text())
-                override = state.get("todo_audit.mode")
-                if override in VALID_MODES:
-                    mode = override
-    except (OSError, json.JSONDecodeError, ValueError):
+            # UNION read (canonical over legacy) so a flipped session's override,
+            # written through the bridge into the canonical file, is still seen
+            # (todo_0495). read_union never raises; {} → keep the default mode.
+            from uai_toolkit.hooks.common.lib_session_state_union import read_union
+            state = read_union(context.session_dir, context.tracking_id)
+            override = state.get("todo_audit.mode")
+            if override in VALID_MODES:
+                mode = override
+    except Exception:
         pass
     return mode
 

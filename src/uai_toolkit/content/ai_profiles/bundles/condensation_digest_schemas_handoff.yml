@@ -1,0 +1,20 @@
+name: Condensation, Digest Schemas & Handoff
+description: >
+  Condensation, Digest Schemas & Handoff — bundle assembled from the todo_0319 grouping pass.
+_registry:
+  id: condensation_digest_schemas_handoff
+  name: Condensation, Digest Schemas & Handoff
+  status: active
+  version: 1.0.0
+
+context_files:
+  how_tos:
+    - ai_context_files/instructions/how_tos/instr_operational_handoff
+    - ai_context_files/instructions/how_tos/instr_schema_evolution_guide
+  schemas:
+    - ai_context_files/knowledge/schemas/schema_condensation_flags
+    - ai_context_files/knowledge/schemas/schema_base
+    - ai_context_files/knowledge/schemas/schema_knowledge_digest
+    - ai_context_files/knowledge/schemas/schema_protocol_spec
+    - ai_context_files/knowledge/schemas/schema_chat_memory
+    - ai_context_files/knowledge/schemas/schema_condensed_chat_draft

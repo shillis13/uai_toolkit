@@ -90,9 +90,15 @@ interface ProjectFolderTreeProps {
   selectedPath?: string;
   onSelectFile?: (entry: FsEntry) => void;
   onOpenFile?: (path: string) => void;
+  /** If set, show ONLY these top-level entries by name (Playbook = its folders). */
+  includeNames?: string[];
+  /** If set, hide these top-level entries by name (Workspace = everything but Playbook). */
+  excludeNames?: string[];
+  /** Message when there are no (visible) entries. */
+  emptyMessage?: string;
 }
 
-export default function ProjectFolderTree({ rootPath, selectedPath, onSelectFile, onOpenFile }: ProjectFolderTreeProps): JSX.Element {
+export default function ProjectFolderTree({ rootPath, selectedPath, onSelectFile, onOpenFile, includeNames, excludeNames, emptyMessage }: ProjectFolderTreeProps): JSX.Element {
   const [roots, setRoots] = useState<FsEntry[] | null>(null);
 
   useEffect(() => {
@@ -107,10 +113,15 @@ export default function ProjectFolderTree({ rootPath, selectedPath, onSelectFile
   const openInOs = (path: string) => { (onOpenFile ?? ((p: string) => window.uai.openPath(p)))(path); };
 
   if (roots === null) return <div className="pe-tree-loading">Loading…</div>;
-  if (roots.length === 0) return <div className="pe-note">Empty or unreadable directory.</div>;
+  // Top-level filtering so one tree can back both the Playbook (include) and the
+  // Workspace (exclude the Playbook folders) views.
+  let shown = roots;
+  if (includeNames) shown = shown.filter(e => includeNames.includes(e.name));
+  if (excludeNames && excludeNames.length) shown = shown.filter(e => !excludeNames.includes(e.name));
+  if (shown.length === 0) return <div className="pe-note">{emptyMessage || 'Empty or unreadable directory.'}</div>;
   return (
     <div className="pe-tree">
-      {roots.map(e => (
+      {shown.map(e => (
         <FsNode key={e.path} entry={e} depth={0} selectedPath={selectedPath} onSelectFile={onSelectFile} onOpenFile={openInOs} />
       ))}
     </div>

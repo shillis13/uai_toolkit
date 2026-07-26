@@ -10,13 +10,14 @@ import { useRef, useEffect } from 'react';
 import { ViewportRegistry } from './viewport-registry';
 import type { ViewportReporter } from '@contracts/viewport';
 
-export function useViewport(id: string, reporter: ViewportReporter): void {
+export function useViewport(id: string, reporter: ViewportReporter, registered = true): void {
   const reporterRef = useRef(reporter);
   reporterRef.current = reporter;
 
   useEffect(() => {
+    if (!registered) return;
     const stableReporter: ViewportReporter = () => reporterRef.current();
     ViewportRegistry.register(id, stableReporter);
     return () => ViewportRegistry.unregister(id);
-  }, [id]);
+  }, [id, registered]);
 }

@@ -49,25 +49,19 @@ def main() -> int:
         )
         return 2
 
-    state_path = Path(session_dir) / f"{tracking_id}_state.json"
-    state = {}
-    if state_path.exists():
-        try:
-            state = json.loads(state_path.read_text())
-        except (json.JSONDecodeError, OSError) as e:
-            sys.stderr.write(f"register_self_brief.py: could not read state {state_path}: {e}\n")
-            return 1
-
-    state["compact.brief_file"] = str(brief_path)
-    state["compact.self"] = True
-    state["updated_at"] = datetime.now().isoformat()
-
-    try:
-        tmp = state_path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(state, indent=2))
-        tmp.rename(state_path)
-    except OSError as e:
-        sys.stderr.write(f"register_self_brief.py: could not write state {state_path}: {e}\n")
+    # Write through the shared bridge (todo_0495): enrolled sessions use the
+    # locked canonical accessor, everyone else the legacy file. These are fixed
+    # keys (no read-modify needed).
+    _hook_common = Path(__file__).resolve().parents[2] / "data" / "hooks" / "common"
+    if str(_hook_common) not in sys.path:
+        sys.path.insert(0, str(_hook_common))
+    from uai_toolkit.hooks.common.lib_session_state_union import write_session_state
+    if not write_session_state(session_dir, tracking_id, {
+        "compact.brief_file": str(brief_path),
+        "compact.self": True,
+        "updated_at": datetime.now().isoformat(),
+    }):
+        sys.stderr.write(f"register_self_brief.py: could not write session state for {tracking_id}\n")
         return 1
 
     # Stage the brief as a .ref into context_to_load/ NOW — at the moment we know
@@ -79,7 +73,11 @@ def main() -> int:
     try:
         inbox = Path(session_dir) / "context_to_load"
         inbox.mkdir(exist_ok=True)
-        ref = {"type": "briefs", "name": brief_path.stem, "path": str(brief_path)}
+        # pin_path: this brief is an EXACT file we just wrote — load it by path,
+        # never re-resolve `name` through guidance. A session named e.g. "Prism"
+        # collides with a guidance doc of the same name, which would shadow the
+        # real handoff brief and load the wrong content. See lib_context_load.
+        ref = {"type": "briefs", "name": brief_path.stem, "path": str(brief_path), "pin_path": True}
         # Clear any stale entry (incl. a legacy symlink of the same stem).
         for stale in (inbox / f"{brief_path.stem}.ref", inbox / brief_path.name):
             if stale.exists() or stale.is_symlink():

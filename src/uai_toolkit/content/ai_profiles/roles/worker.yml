@@ -16,6 +16,9 @@ context_files:
   - ai_context_files/instructions/how_tos/instr_workstate_tracking
   - ai_context_files/instructions/how_tos/instr_todo
   - ai_context_files/instructions/how_tos/instr_activity_logging
+  rules:
+    - ai_context_files/instructions/rules/rules_development
+    - ai_context_files/instructions/rules/rules_file_conventions
 _registry:
   id: worker
   name: Worker
@@ -23,3 +26,8 @@ _registry:
   version: 1.0.0
   created: '2026-04-15'
   updated: '2026-04-15'
+
+roles:
+  - ai_profiles/bundles/sessions_identity_state_logging
+  - ai_profiles/globals/base
+  - ai_profiles/bundles/task_todo_workflow_playbooks

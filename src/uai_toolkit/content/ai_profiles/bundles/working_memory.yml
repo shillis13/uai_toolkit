@@ -1,0 +1,18 @@
+name: Working Memory
+description: >
+  Working Memory — bundle assembled from the todo_0319 grouping pass.
+_registry:
+  id: working_memory
+  name: Working Memory
+  status: active
+  version: 1.0.0
+
+context_files:
+  how_tos:
+    - ai_context_files/instructions/how_tos/instr_federated_memory
+    - ai_context_files/instructions/how_tos/instr_memory_slot_protocol
+  reminders:
+    - ai_context_files/instructions/reminders/reminder_check_for_learnings
+    - ai_context_files/instructions/reminders/reminder_use_memory_system
+  schemas:
+    - ai_context_files/knowledge/schemas/schema_memory_slot

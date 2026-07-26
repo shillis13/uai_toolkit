@@ -98,6 +98,23 @@ For explicit commit requests, stage exact requested files. For general sync swee
 
 Ask before force push, branch deletion, destructive conflict recovery, suspicious/mass commits, or discarding any work.
 
+## Todo Requirement & Commit Body Stamp
+
+Every request that changes a repo (has files or git commands) MUST cite a todo. The `git_guardian request` CLI now hard-rejects a change request with no `--todo`, so a well-formed request already carries `todos:` in its payload. If one still reaches you without a todo (e.g. a hand-written or legacy request), REJECT it (`status: rejected`, `reason: "no todo cited — every committed change must belong to a todo"`) and ask for the todo id. Advisories and pure no-op/status requests are exempt.
+
+Stamp every commit you make on a requester's behalf with two trailer lines in the commit BODY, after a blank line below the message/summary:
+
+```text
+Todo: todo_0333[, todo_0412]
+Requested-By: <requester> (<requester_tracking_id>)
+```
+
+Take the values straight from the request payload: `todos` (join multiple with `, `), `requester` (the friendly session name), and `requester_tracking_id`. If the requester name and tracking id are identical (no friendly name was given), show the id once: `Requested-By: <tracking_id>`.
+
+Why: this makes the todo and the originating session visible FROM the commit. The UAI Files/git view links a todo to its changed files by the `Todo:` trailer, and `Requested-By` records which session asked for the work. Passing `--todo` alone historically did NOT produce the trailer — write the trailer lines yourself.
+
+For your OWN sync/preservation sweeps that aren't tied to a requester, a todo is not required; note the sweep rationale in the commit body as usual.
+
 ## DevTree Policy
 
 DevTrees live under `$HOME/AI/devTrees/AI_ROOT_<id>/`. They are hybrid environments: sparse `ai_general` worktree on `dev/<id>`, editable dirs `scripts/`, `apps/`, `projects/`, `docs/`, shared symlinks to production, copied `data/`.
@@ -137,8 +154,11 @@ Hook-blocked requests should include blocked command/context. Perform safe equiv
 - Staged files reference missing unstaged files?
 - Relevant tests/syntax checks run or N/A acceptable?
 - Commit message accurate?
+- Change request cites a todo (reject if not)?
+- Commit body stamped with `Todo:` + `Requested-By:` trailers?
 - Parent submodule pointer commit required?
 - If syncing, final local/GitHub ahead-behind status verified?
+- After committing, request acked with `git_guardian ack --request-id <id>` (verified SHA) so the requester isn't left waiting on silence?
 
 ## Reply Format
 
@@ -172,6 +192,37 @@ type: git_guardian_result
 status: needs_input
 question: <narrow question>
 ```
+
+## Ack-on-commit (verified reply — todo_0626)
+
+Every commit request now carries a pending-reply obligation (the `git_guardian request`
+CLI defaults `response_required` ON). After you commit + push, ACK the request so the
+requester learns the outcome instead of waiting on silence — and so an un-acked request
+is detectable if you go dark mid-handling (this is the fix for the committer-going-dark,
+silent-drop failure):
+
+```text
+git_guardian ack --request-id <request_msg_id> --repo <repo_path>
+```
+
+This verifies the commit SHA is actually reachable from HEAD, replies to the requester
+with a `commit_result` (status + verified sha + requested-file coverage), resolves their
+pending reply, and fires their callback. It REFUSES to ack a SHA that did not land
+(exit 2), so "committed" can never be claimed without the work in HEAD. Pass
+`--sha <sha>` to ack a specific commit (defaults to current HEAD).
+
+If you cannot complete a request, send a failure signal instead of staying silent:
+
+```text
+git_guardian ack --request-id <id> --status rejected --note "<why>"
+git_guardian ack --request-id <id> --status failed   --note "<what broke>"
+```
+
+The hand-written `git_guardian_result` YAML above remains valid for rich, multi-commit
+replies, but `git_guardian ack` is the preferred path: it ties the ack to a real,
+verified commit and resolves the requester's obligation automatically. Requesters can
+run `git_guardian check-acks` to surface their own requests left un-acked past a timeout
+(and whether the awaited committer is still live).
 
 ## Forbidden Without Explicit PianoMan Approval
 

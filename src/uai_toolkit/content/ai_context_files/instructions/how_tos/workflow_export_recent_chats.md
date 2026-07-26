@@ -10,7 +10,7 @@ updated: '2026-04-15'
 # Export Recent Chats for Pipeline Processing
 
 ## Purpose
-Export chat conversations updated since a specified date to `ai_memories/_incoming/chats/claude/` for pipeline processing into the chat history archive.
+Export WebUI or Desktop Claude chat conversations updated since a specified date to `ai_memories/_incoming/chats/claude/` for pipeline processing into the chat history archive.
 
 ## Trigger
 User asks: "Export chats since [date]" or "Catch up chat exports"

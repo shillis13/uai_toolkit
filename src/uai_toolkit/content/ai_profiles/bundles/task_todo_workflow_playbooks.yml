@@ -1,0 +1,23 @@
+name: Task, Todo, Workflow & Playbooks
+description: >
+  Task, Todo, Workflow & Playbooks — bundle assembled from the todo_0319 grouping pass.
+_registry:
+  id: task_todo_workflow_playbooks
+  name: Task, Todo, Workflow & Playbooks
+  status: active
+  version: 1.0.0
+
+context_files:
+  how_tos:
+    - ai_context_files/instructions/how_tos/instr_feedback
+    - ai_context_files/instructions/how_tos/instr_todo
+    - ai_context_files/instructions/how_tos/instr_workstate_tracking
+  perspectives:
+    - ai_context_files/instructions/perspectives/perspective_work_awareness
+  templates:
+    - ai_context_files/instructions/templates/cli_task_session_aware
+    - ai_context_files/instructions/templates/task_file_header_template
+  schemas:
+    - ai_context_files/knowledge/schemas/schema_playbook
+    - ai_context_files/knowledge/schemas/schema_task_file
+    - ai_context_files/knowledge/schemas/schema_task_notes

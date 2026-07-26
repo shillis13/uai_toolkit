@@ -315,6 +315,26 @@ export default function MessagesTab({ sessionTrackingId }: MessagesTabProps): JS
     return messages.filter(m => (readFilter === 'unread' ? isMsgUnread(m) : !isMsgUnread(m)));
   }, [messages, readFilter, isMsgUnread]);
 
+  // Group the list by conversation (item 4). A conversation with more than one
+  // distinct recipient is a multi-recipient send — surfaced in its header (item 2).
+  const conversationGroups = useMemo(() => {
+    const byConvo = new Map<string, InboxMessage[]>();
+    for (const m of visibleMessages) {
+      const key = m.conversation_id || m.id;   // no conversation → its own singleton
+      const arr = byConvo.get(key);
+      if (arr) arr.push(m); else byConvo.set(key, [m]);
+    }
+    const groups = [...byConvo.entries()].map(([key, msgs]) => {
+      const sorted = [...msgs].sort((a, b) => (a.created_at || '').localeCompare(b.created_at || ''));
+      const recipients = [...new Set(msgs.map(m => m.to).filter(Boolean))];
+      const subject = msgs.find(m => m.subject)?.subject || '';
+      const latest = sorted[sorted.length - 1]?.created_at || '';
+      return { key, subject, msgs: sorted, recipients, latest };
+    });
+    groups.sort((a, b) => (b.latest || '').localeCompare(a.latest || ''));
+    return groups;
+  }, [visibleMessages]);
+
   const allSelected = visibleMessages.length > 0 && selected.size === visibleMessages.length;
   const toggleSelectAll = useCallback(() => {
     setSelected(allSelected ? new Set() : new Set(visibleMessages.map(m => m.id)));
@@ -437,7 +457,23 @@ export default function MessagesTab({ sessionTrackingId }: MessagesTabProps): JS
               <span>{selected.size > 0 ? `${selected.size} selected` : 'Select all'}</span>
             </label>
           )}
-          {visibleMessages.map(msg => {
+          {conversationGroups.map(group => {
+            // Header only when it's actually a conversation (multiple messages) or a
+            // multi-recipient send — a lone message needs no group chrome.
+            const multi = group.msgs.length > 1 || group.recipients.length > 1;
+            return (
+              <div className="msg-convo" key={group.key}>
+                {multi && (
+                  <div className="msg-convo-header" title={group.recipients.join(', ')}>
+                    <span className="msg-convo-subject">{group.subject || '(no subject)'}</span>
+                    {folder === 'sent' && group.recipients.length > 1 && (
+                      <span className="msg-convo-recips">{group.recipients.length} recipients</span>
+                    )}
+                    {group.msgs.length > 1 && <span className="msg-convo-count">{group.msgs.length} msgs</span>}
+                    <span className="msg-convo-time">{formatTime(group.latest)}</span>
+                  </div>
+                )}
+                {group.msgs.map(msg => {
             // Only recognized SEMANTIC types get a pill; 'direct'/'broadcast' get
             // none (a "direct" pill adds nothing when nearly everything is direct).
             const typeBadge = TYPE_BADGES[msg.type];
@@ -487,11 +523,12 @@ export default function MessagesTab({ sessionTrackingId }: MessagesTabProps): JS
                           falls back to received/sent-ago while still unread. Hover
                           for the full Sent + Read timestamps. */}
                       {(() => {
+                        // Show the SENT time in the row without needing to open the
+                        // message. Read time stays in the hover tooltip.
                         const readerId = folder === 'sent' ? (msg.to || null) : sessionTrackingId;
-                        const readAt = readAtFor(msg, readerId);
                         return (
                           <span className="msg-time" title={receiptTooltip(msg, sessions, readerId)}>
-                            {formatTime(readAt ?? msg.created_at)}
+                            {formatTime(msg.created_at)}
                           </span>
                         );
                       })()}
@@ -578,6 +615,9 @@ export default function MessagesTab({ sessionTrackingId }: MessagesTabProps): JS
                     </div>
                   </div>
                 )}
+              </div>
+            );
+                })}
               </div>
             );
           })}

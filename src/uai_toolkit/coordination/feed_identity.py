@@ -13,7 +13,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-_SESSION_STORE = Path(__file__).resolve().parents[1] / "session_mgmt" / "session_store.py"
+_SESSION_STORE = Path(__file__).resolve().parents[1] / "session_mgmt" / "session_registry.py"
 _PLATFORM = {"claude_cli": "Claude", "codex_cli": "Codex", "gemini_cli": "Gemini"}
 
 

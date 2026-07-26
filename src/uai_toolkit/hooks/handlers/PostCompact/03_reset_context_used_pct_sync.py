@@ -20,31 +20,22 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "common"))
 from uai_toolkit.hooks.common.lib_hook_base import run_hook, HookResult  # noqa: E402
+from uai_toolkit.hooks.common.lib_session_state_union import read_union, write_session_state  # session-state bridge (todo_0495)
 
 
 def handler(hook_input, context):
     if not context.tracking_id or not context.session_dir:
         return HookResult.skip("no session identity")
 
-    state_path = Path(context.session_dir) / f"{context.tracking_id}_state.json"
-    if not state_path.exists():
-        return HookResult.skip("no state file")
-
-    try:
-        state = json.loads(state_path.read_text())
-    except (OSError, json.JSONDecodeError) as e:
-        return HookResult.error(f"state read failed: {e}")
-
+    state = read_union(context.session_dir, context.tracking_id)
     if "context.used_pct" not in state:
         return HookResult.skip("no context.used_pct to reset")
 
-    prev = state.pop("context.used_pct", None)
-    try:
-        tmp = state_path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(state, indent=2))
-        tmp.rename(state_path)
-    except OSError as e:
-        return HookResult.error(f"state write failed: {e}")
+    prev = state.get("context.used_pct")
+    # Targeted delete through the bridge (enrolled → canonical, else legacy).
+    if not write_session_state(context.session_dir, context.tracking_id,
+                               deletes=["context.used_pct"]):
+        return HookResult.error("state write failed")
 
     return HookResult.allow(f"cleared context.used_pct (was {prev}) post-compact")
 

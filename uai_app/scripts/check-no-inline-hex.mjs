@@ -61,6 +61,7 @@ const ALLOW_VALUES = new Set([
   '#666', '#666666',                       // neutral swatch default (tag identity)
   '#e07a4a', '#8b5cf6', '#4285f4', '#74aa9c', // platform / web-AI brand identity
   '#bb9af7', // Perplexity brand marker (coincides w/ --accent-purple; identity here)
+  '#d0d0d0', // Grok / xAI monochrome brand marker (New-menu identity stripe)
 ].map((s) => s.toLowerCase()));
 
 const HEX = /#([0-9a-fA-F]{3,8})(?![0-9a-fA-F])/g;

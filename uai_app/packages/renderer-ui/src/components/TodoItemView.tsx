@@ -22,6 +22,8 @@ import ProjectFolderTree, { type FsEntry } from './ProjectFolderTree';
 import SessionLink, { LinkifySessions, trackingIdFrom } from './SessionLink';
 import { executeCommand } from '../utils/execute-command';
 import { assigneeLabel } from './assigneeLabel';
+import { notifyTodosChanged } from '../utils/todo-events';
+import MarkdownBlock from './MarkdownBlock';
 import GitFileViewPane from './GitFileViewPane';
 import type { GitFileViewFilter } from './git-file-view-scope';
 
@@ -121,9 +123,6 @@ const SUBTABS: Array<{ key: Sub; label: string }> = [
   { key: 'files', label: 'Files' },
 ];
 
-function Bullets({ items }: { items: string[] }): JSX.Element {
-  return <ul className="tiv-list">{items.map((x, i) => <li key={i}>{x}</li>)}</ul>;
-}
 
 // ── Threaded comments (note_0035) ───────────────────────────────────────────
 // Comments are history.log entries (status 'comment') whose note is prefixed
@@ -158,27 +157,20 @@ function isCommentOnly(text: string): boolean {
 // Render a notes body, turning HTML comments <!-- text --> into DIMMED inline
 // text with the markers stripped (note_0035) — so authoring hints/placeholders
 // read as muted asides rather than raw syntax. Non-comment text renders as-is.
-function renderNotesBody(text: string): ReactNode {
-  if (!text || text.indexOf('<!--') === -1) return text;
-  const out: ReactNode[] = [];
-  let last = 0; let k = 0;
-  for (const m of text.matchAll(/<!--([\s\S]*?)-->/g)) {
-    const idx = m.index ?? 0;
-    if (idx > last) out.push(text.slice(last, idx));
-    const inner = (m[1] || '').trim();
-    if (inner) out.push(<span key={k++} className="tiv-comment">{inner}</span>);
-    last = idx + m[0].length;
-  }
-  if (last < text.length) out.push(text.slice(last));
-  return out;
-}
-function Sample({ children }: { children: ReactNode }): JSX.Element {
-  return <div className="tiv-sample"><span className="tiv-sample-tag">sample · capture not wired</span>{children}</div>;
+// Render a notes section body as FORMATTED markdown — bold/italic, lists, code,
+// links, sub-headings — instead of raw text (todo_0339). HTML comments <!-- x -->
+// are kept but DIMMED (marked would otherwise drop them), preserving the
+// comment-dimming from note_0035. Output is sanitized with DOMPurify.
+// Thin wrapper over the shared MarkdownBlock (todo_0619): keeps the `tiv-notes-body`
+// class the viewer's spacing depends on while all marked/DOMPurify/comment-dimming
+// logic lives in one reusable place.
+function NotesBody({ text }: { text: string }): JSX.Element {
+  return <MarkdownBlock text={text} className="tiv-notes-body" />;
 }
 
-export default function TodoItemView({ todo, allTodos = [], search = '', onSelect, statusEditor, assigneeEditor, moveControl, viewportId = 'todo_item_view' }: {
+export default function TodoItemView({ todo, allTodos = [], search = '', onSelect, statusEditor, priorityEditor, assigneeEditor, moveControl, viewportId = 'todo_item_view' }: {
   todo: TodoLite; allTodos?: TodoLite[]; search?: string;
-  onSelect?: (id: string) => void; statusEditor?: ReactNode; assigneeEditor?: ReactNode; moveControl?: ReactNode;
+  onSelect?: (id: string) => void; statusEditor?: ReactNode; priorityEditor?: ReactNode; assigneeEditor?: ReactNode; moveControl?: ReactNode;
   /** Per-instance viewport id so multiple TodoItemViews register distinctly in
    *  describeViewport() (Prism's Git-Viewer pattern). Defaults for a lone host. */
   viewportId?: string;
@@ -198,8 +190,26 @@ export default function TodoItemView({ todo, allTodos = [], search = '', onSelec
   const [secSaving, setSecSaving] = useState(false);
   const [commentDraft, setCommentDraft] = useState('');
   const [commentSaving, setCommentSaving] = useState(false);
+  // Editable title (note_0040) — the title is the first `# ` heading in notes.md,
+  // so editing it is a notes.md write (no dir rename). titleOverride shows the new
+  // value immediately until the parent list re-derives it from the engine.
+  const [titleEditing, setTitleEditing] = useState(false);
+  const [titleDraft, setTitleDraft] = useState('');
+  const [titleSaving, setTitleSaving] = useState(false);
+  const [titleOverride, setTitleOverride] = useState<string | null>(null);
   const [replyTarget, setReplyTarget] = useState<{ id: string; author: string } | null>(null);
+  // Add Child (todo_0592) — inline title input in the header; creates a new todo
+  // with THIS todo as its parent, then selects it.
+  const [addingChild, setAddingChild] = useState(false);
+  const [childTitle, setChildTitle] = useState('');
+  const [childBusy, setChildBusy] = useState(false);
   const commentComposeRef = useRef<HTMLTextAreaElement>(null);
+  const editorRef = useRef<HTMLDivElement>(null);
+  const editorActionsRef = useRef<HTMLSpanElement>(null);
+  // Click-away should COMMIT the edit, not discard it (todo_0651). Held in a ref,
+  // reassigned every render, so the deferred mousedown listener always sees the
+  // current draft without re-binding on each keystroke.
+  const commitOrExitRef = useRef<() => void>(() => {});
   const focusComposer = () => { setSub('activities'); setTimeout(() => commentComposeRef.current?.focus(), 60); };
 
   // Viewport reporter — this todo-detail component surfaces its identity + active
@@ -226,7 +236,23 @@ export default function TodoItemView({ todo, allTodos = [], search = '', onSelec
   }, [todo.id, reloadKey]);
 
   // Editing exits when switching to another todo.
-  useEffect(() => { setEditing(false); }, [todo.id]);
+  useEffect(() => { setEditing(false); setTitleEditing(false); setTitleOverride(null); }, [todo.id]);
+  // Click outside the open editor COMMITS the edit (todo_0651 — PM: edits should
+  // save when you click away, not be silently discarded). Explicit discard is still
+  // available via Esc / Cancel. Introduced as an exit affordance in todo_0554 so a
+  // long edit isn't trapped by an off-screen Cancel button — now it saves.
+  useEffect(() => {
+    if (!editing) return;
+    const onDown = (e: MouseEvent) => {
+      const target = e.target as Node;
+      const insideEditor = editorRef.current?.contains(target);
+      const insideActions = editorActionsRef.current?.contains(target);
+      if (!insideEditor && !insideActions) commitOrExitRef.current();
+    };
+    // defer binding so the click that opened the editor doesn't immediately close it
+    const id = window.setTimeout(() => window.addEventListener('mousedown', onDown), 0);
+    return () => { window.clearTimeout(id); window.removeEventListener('mousedown', onDown); };
+  }, [editing]);
 
   const startEdit = () => { setDraft(notes); setEditing(true); };
   // Per-section edit (todo_0405): splice the new body into notes.md between `### <heading>`
@@ -247,12 +273,40 @@ export default function TodoItemView({ todo, allTodos = [], search = '', onSelec
         out.push(lines[i]); i++;
       }
       await executeCommand('todo.writeNotes', { id: todo.id, content: out.join('\n') });
+      notifyTodosChanged();
     } finally { setSecSaving(false); setEditSec(null); setReloadKey(k => k + 1); }
   };
   const saveEdit = async () => {
     setSaving(true);
-    try { await executeCommand('todo.writeNotes', { id: todo.id, content: draft }); }
+    try { await executeCommand('todo.writeNotes', { id: todo.id, content: draft }); notifyTodosChanged(); }
     finally { setSaving(false); setEditing(false); setReloadKey(k => k + 1); }
+  };
+  // Click-away behavior (todo_0651): save when the draft changed, else just exit.
+  // Reassigned every render so it always closes over the current draft/notes.
+  // Ignore further outside clicks while the first write is in flight; otherwise
+  // the global listener could enqueue duplicate writes before editing closes.
+  commitOrExitRef.current = () => {
+    if (saving) return;
+    if (draft !== notes) void saveEdit();
+    else setEditing(false);
+  };
+  // Edit the title = set the first `# ` heading in notes.md (note_0040).
+  const startTitleEdit = () => { setTitleDraft(titleOverride ?? titleOf(todo)); setTitleEditing(true); };
+  const saveTitle = async () => {
+    const t = titleDraft.trim();
+    if (!t) { setTitleEditing(false); return; }
+    setTitleSaving(true);
+    try {
+      const lines = notes.split('\n');
+      const idx = lines.findIndex(l => /^#\s+/.test(l));
+      if (idx >= 0) lines[idx] = `# ${t}`;
+      else lines.unshift(`# ${t}`, '');
+      await executeCommand('todo.writeNotes', { id: todo.id, content: lines.join('\n') });
+      setTitleOverride(t);
+      setTitleEditing(false);
+      setReloadKey(k => k + 1);
+      notifyTodosChanged();
+    } finally { setTitleSaving(false); }
   };
   // Post a comment — appended to history.log (status 'comment') via the engine,
   // then reload provenance so it shows in the Comments list (note_0035).
@@ -266,6 +320,23 @@ export default function TodoItemView({ todo, allTodos = [], search = '', onSelec
     } finally { setCommentSaving(false); setReloadKey(k => k + 1); }
   };
 
+  // Add Child (todo_0592): create a new todo, move it under THIS todo, select it.
+  const createChild = async () => {
+    const name = childTitle.trim();
+    if (!name) return;
+    setChildBusy(true);
+    try {
+      const created = await executeCommand<{ out: string }>('todo.create', { name }, { onFailure: 'log' });
+      const newId = (created.data?.out || '').match(/Created:\s*(todo_\d+\S*)/)?.[1];
+      if (!newId) return;
+      await executeCommand('todo.move', { id: newId, target: todo.id }, { onFailure: 'log' });
+      setChildTitle(''); setAddingChild(false);
+      notifyTodosChanged();
+      setReloadKey(k => k + 1);
+      onSelect?.(newId);
+    } finally { setChildBusy(false); }
+  };
+
   const { byTab } = useMemo(() => parseStructured(notes), [notes]);
   const contentsSecs = byTab.contents.filter(s => !META_HEADING.test(s.heading));
   const sessionAssignee = trackingIdFrom((todo.assigned && todo.assigned[0]) || '');
@@ -273,14 +344,6 @@ export default function TodoItemView({ todo, allTodos = [], search = '', onSelec
   const hasDecisions = contentsSecs.some(s => /decision|pivot/i.test(s.heading));
 
   // Lead gist (todo_0538): agent-created todos (workflow_todo_create --description)
-  // put their spec in a trailing ### Description and leave the ### Summary stub
-  // empty, so the todo can read as blank at a glance. Surface the first
-  // content-bearing section as a one-line lead under the title.
-  const leadText = useMemo(() => {
-    const first = contentsSecs.map(s => stripMetaLines(s.body)).find(b => b && !isCommentOnly(b));
-    return (first || '').replace(/<!--[\s\S]*?-->/g, '').replace(/\s+/g, ' ').trim().slice(0, 220);
-  }, [contentsSecs]);
-
   // Parent path (ancestors) + children resolved from the full todo set. parent/children
   // are `a/b/leaf` rel-paths, so match by the LAST todo_NNNN (the leaf), not by t.id.
   const byKey = useMemo(() => { const m = new Map<string, TodoLite>(); allTodos.forEach(t => { const k = tKey(t.id || t.dirName); if (k) m.set(k, t); }); return m; }, [allTodos]);
@@ -300,10 +363,6 @@ export default function TodoItemView({ todo, allTodos = [], search = '', onSelec
   const gitFilter = useMemo<GitFileViewFilter>(() => ({ kind: 'todo', value: todoKey }), [todoKey]);
   const gitSince = useMemo(() => (todo.created ? todo.created.slice(0, 10) : ''), [todo.created]);
 
-  const nn = titleOf(todo);
-  const nameSeed = todo.dirName || todo.id;
-  const sampleDecisions = [`Chose the lighter-weight implementation for "${nn}" to avoid blocking on infra.`, `Deferred edge-case handling until the core flow is verified.`];
-  const sampleQuestions = [`Open: is the scope of "${nn}" fully settled, or are there edge cases to confirm?`, `Recommendation: add a follow-up todo for test coverage once this lands.`];
 
   return (
     <div className="tiv">
@@ -313,16 +372,41 @@ export default function TodoItemView({ todo, allTodos = [], search = '', onSelec
           <button className="tiv-open" onClick={() => window.uai.todos.open(todo.id)} title="Reveal folder in Finder">Open</button>
           {/* Comment from any subtab (note_0035) — jumps to Activities + focuses the composer. */}
           <button className="tiv-edit-btn" onClick={() => { setReplyTarget(null); focusComposer(); }} title="Add a comment">{'💬 Comment'}</button>
-          {!editing
-            ? <>
-                <button className="tiv-edit-btn" onClick={startEdit} title="Edit notes.md (## subtab / ### section)">✎ Edit</button>
-              </>
-            : <>
-                <button className="tiv-edit-btn tiv-save" onClick={saveEdit} disabled={saving} title="Save via todo_mgr">{saving ? 'Saving…' : '✓ Save'}</button>
-                <button className="tiv-edit-btn" onClick={() => setEditing(false)} disabled={saving} title="Discard changes">Cancel</button>
-              </>}
+          {/* Add Child (todo_0592) — new todo parented to this one; inline title input. */}
+          {addingChild ? (
+            <span className="tiv-child-wrap">
+              <input className="tiv-child-input" value={childTitle} autoFocus disabled={childBusy}
+                placeholder="New child todo title…"
+                onChange={e => setChildTitle(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); createChild(); } else if (e.key === 'Escape') { e.preventDefault(); setAddingChild(false); setChildTitle(''); } }} />
+              <button className="tiv-child-save" title="Create child (Enter)" onClick={createChild} disabled={childBusy || !childTitle.trim()}>{childBusy ? '…' : '✓'}</button>
+              <button className="tiv-child-cancel" title="Cancel (Esc)" onClick={() => { setAddingChild(false); setChildTitle(''); }} disabled={childBusy}>{'✕'}</button>
+            </span>
+          ) : (
+            <button className="tiv-edit-btn" onClick={() => setAddingChild(true)} title="Create a new todo parented to this one">{'＋ Child'}</button>
+          )}
+          {/* Edit is now per-region (pencils on each boundary, note_0040). The global
+              Save/Cancel show while the notes editor (opened from a region pencil) is active. */}
+          {editing && (
+            <span ref={editorActionsRef} className="tiv-edit-actions">
+              <button className="tiv-edit-btn tiv-save" onClick={saveEdit} disabled={saving} title="Save via todo_mgr">{saving ? 'Saving…' : '✓ Save'}</button>
+              <button className="tiv-edit-btn" onClick={() => setEditing(false)} disabled={saving} title="Discard changes">Cancel</button>
+            </span>
+          )}
           <span className="tiv-id"><span className="tiv-id-pre">todo_</span>{todoNum(todo.id)}</span>
-          <span className="tiv-title">{titleOf(todo)}</span>
+          {titleEditing ? (
+            <span className="tiv-title-edit-wrap">
+              <input className="tiv-title-input" value={titleDraft} autoFocus disabled={titleSaving}
+                onChange={e => setTitleDraft(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); saveTitle(); } else if (e.key === 'Escape') { e.preventDefault(); setTitleEditing(false); } }} />
+              <button className="tiv-title-save" title="Save title (Enter)" onClick={saveTitle} disabled={titleSaving}>{titleSaving ? '…' : '✓'}</button>
+            </span>
+          ) : (
+            <span className="tiv-title">
+              <button className="tiv-title-edit-btn" title="Edit title" onClick={startTitleEdit}>{'✎'}</button>
+              {titleOverride ?? titleOf(todo)}
+            </span>
+          )}
           <span className="tiv-spacer" />
           <span className="tiv-dates">
             {todo.created && <span title="created">created {fmtDate(todo.created)}</span>}
@@ -332,6 +416,7 @@ export default function TodoItemView({ todo, allTodos = [], search = '', onSelec
         <div className="tiv-header-status">
           <span className="tiv-slabel">Status</span>
           {statusEditor ?? <span className="tiv-badge" style={{ background: statusColor(todo.status) }}>{statusLabel(todo.status)}</span>}
+          {priorityEditor && <><span className="tiv-slabel tiv-slabel-2">Priority</span>{priorityEditor}</>}
           <span className="tiv-slabel tiv-slabel-2">Assigned</span>
           {assigneeEditor ?? <span className="tiv-aval">{(todo.assigned && todo.assigned[0]) ? assigneeLabel(todo.assigned[0]) : '—'}</span>}
           {sessionAssignee && <SessionLink id={sessionAssignee} label="↗ open" />}
@@ -339,7 +424,7 @@ export default function TodoItemView({ todo, allTodos = [], search = '', onSelec
       </div>
 
       {editing ? (
-        <div className="tiv-editor">
+        <div className="tiv-editor" ref={editorRef}>
           <div className="tiv-editor-hint">Editing <b>notes.md</b> — <code>## Subtab</code> (Contents / Activities / Links &amp; Artifacts) and <code>### Section</code>. Fields (created, status, …) are engine-owned; don't add them here. Saved via todo_mgr.</div>
           <textarea className="tiv-editor-area" value={draft} onChange={e => setDraft(e.target.value)} spellCheck={false} autoFocus
             onKeyDown={e => {
@@ -348,7 +433,6 @@ export default function TodoItemView({ todo, allTodos = [], search = '', onSelec
             }} />
         </div>
       ) : (<>
-      {leadText && <div className="tiv-lead" title={leadText}>{leadText}</div>}
       {/* Subtabs — distinct band, clearly separated from the title/status above. */}
       <div className="tiv-subtabs">
         {SUBTABS.map(t => (
@@ -373,8 +457,14 @@ export default function TodoItemView({ todo, allTodos = [], search = '', onSelec
               </div>
             </section>
 
-            {/* User-authored fields — ## Contents / ### sections from notes.md, in order.
-                Each has an inline ✎ to edit just that section (todo_0405). */}
+            {/* Contents region (note_0040): user-authored ## Contents / ### sections,
+                boxed with a boundary + pencil (opens the notes editor). Each section
+                also keeps its own inline ✎ for a quick, scoped edit (todo_0405). */}
+            <div className="tiv-region">
+              <div className="tiv-region-h">
+                {!editing && <button className="tiv-region-edit" title="Edit contents" onClick={startEdit}>{'✎'}</button>}
+                <span className="tiv-region-name">Contents</span>
+              </div>
             {contentsSecs.map((s, i) => {
               const body = stripMetaLines(s.body);
               // Hide sections that are empty OR contain only <!-- comments -->
@@ -384,8 +474,9 @@ export default function TodoItemView({ todo, allTodos = [], search = '', onSelec
               return (
                 <section key={i} className="tiv-sec">
                   {s.heading && (
-                    <div className="tiv-h">{s.heading}
+                    <div className="tiv-h">
                       {!editing && s.heading && !isEditing && <button className="tiv-sec-edit" title="Edit this section" onClick={() => startSecEdit(s.heading, body)}>✎</button>}
+                      {s.heading}
                     </div>
                   )}
                   {isEditing ? (
@@ -398,14 +489,16 @@ export default function TodoItemView({ todo, allTodos = [], search = '', onSelec
                         <button className="tiv-edit-btn" onClick={() => setEditSec(null)} disabled={secSaving}>Cancel</button>
                       </div>
                     </div>
-                  ) : <p className="tiv-notes-body">{renderNotesBody(body)}</p>}
+                  ) : <NotesBody text={body} />}
                 </section>
               );
             })}
+            </div>
 
-            {/* System — provenance from origin.yml (not user-editable). */}
-            <section className="tiv-sec">
-              <div className="tiv-h">Provenance</div>
+            {/* Provenance region — from origin.yml, system-owned, so it's boxed but
+                has no pencil (note_0040: not free text). */}
+            <section className="tiv-sec tiv-region">
+              <div className="tiv-region-h"><span className="tiv-region-name">Provenance</span></div>
               {prov && Object.keys(prov.origin || {}).length ? (
                 <div className="tiv-prov">{Object.entries(prov.origin).map(([k, v]) => {
                   const tid = trackingIdFrom(String(v));
@@ -414,20 +507,32 @@ export default function TodoItemView({ todo, allTodos = [], search = '', onSelec
               ) : <div className="tiv-muted">No origin.yml.</div>}
             </section>
 
-            {/* Placeholders only when the author hasn't written these sections yet. */}
+            {/* Open questions / Decisions regions — boxed with a pencil; when the
+                author hasn't written them yet, the pencil opens the notes editor to
+                add the section (note_0040). */}
             {!hasOpenQ && (
-              <section className="tiv-sec"><div className="tiv-h">Open questions &amp; recommendations</div><Sample><Bullets items={sampleQuestions} /></Sample></section>
+              <section className="tiv-sec tiv-region">
+                <div className="tiv-region-h">
+                  {!editing && <button className="tiv-region-edit" title="Add / edit this section" onClick={startEdit}>{'✎'}</button>}
+                  <span className="tiv-region-name">Open questions &amp; recommendations</span>
+                </div>
+                <div className="tiv-muted">None yet — ✎ to add.</div>
+              </section>
             )}
             {!hasDecisions && (
-              <section className="tiv-sec"><div className="tiv-h">Decisions &amp; pivots</div><Sample><Bullets items={sampleDecisions} /></Sample></section>
+              <section className="tiv-sec tiv-region">
+                <div className="tiv-region-h">
+                  {!editing && <button className="tiv-region-edit" title="Add / edit this section" onClick={startEdit}>{'✎'}</button>}
+                  <span className="tiv-region-name">Decisions &amp; pivots</span>
+                </div>
+                <div className="tiv-muted">None yet — ✎ to add.</div>
+              </section>
             )}
 
-            {/* Artifacts — work products living INSIDE this todo's folder. Moved
-                here from Activity & Links (that name didn't fit them): they're part
-                of the todo's CONTENTS, distinct from the Files tab's git-changed
-                files OUTSIDE the dir. */}
-            <section className="tiv-sec">
-              <div className="tiv-h">Artifacts ({artifacts.length})</div>
+            {/* Artifacts region — files inside the todo folder; boxed, no pencil
+                (not free text, note_0040). */}
+            <section className="tiv-sec tiv-region">
+              <div className="tiv-region-h"><span className="tiv-region-name">Artifacts ({artifacts.length})</span></div>
               {artifacts.length === 0 ? <div className="tiv-muted">No artifacts in this todo's folder.</div> : (
                 <div className="tiv-artifacts">{artifacts.map(f => (
                   <div key={f.rel} className="tiv-artifact" onClick={() => (window.uai.todos as any).openData?.(todo.id, f.rel.replace(/^data\//, ''))} title="Open externally">
@@ -502,7 +607,7 @@ export default function TodoItemView({ todo, allTodos = [], search = '', onSelec
             {byTab.activities.filter(s => !META_HEADING.test(s.heading)).map((s, i) => {
               const body = stripMetaLines(s.body);
               if (!body || isCommentOnly(body)) return null;
-              return <section key={i} className="tiv-sec">{s.heading && <div className="tiv-h">{s.heading}</div>}<p className="tiv-notes-body">{renderNotesBody(body)}</p></section>;
+              return <section key={i} className="tiv-sec">{s.heading && <div className="tiv-h">{s.heading}</div>}<NotesBody text={body} /></section>;
             })}
             {!byTab.activities.some(s => /review/i.test(s.heading)) && (
               <section className="tiv-sec"><div className="tiv-h">Reviews</div><div className="tiv-muted">No reviews recorded for this item yet.</div></section>
@@ -528,7 +633,7 @@ export default function TodoItemView({ todo, allTodos = [], search = '', onSelec
             {byTab.related.filter(s => !META_HEADING.test(s.heading)).map((s, i) => {
               const body = stripMetaLines(s.body);
               if (!body || isCommentOnly(body)) return null;
-              return <section key={i} className="tiv-sec">{s.heading && <div className="tiv-h">{s.heading}</div>}<p className="tiv-notes-body">{renderNotesBody(body)}</p></section>;
+              return <section key={i} className="tiv-sec">{s.heading && <div className="tiv-h">{s.heading}</div>}<NotesBody text={body} /></section>;
             })}
           </>
         )}

@@ -21,6 +21,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "common"))
 from uai_toolkit.hooks.common.lib_hook_base import run_hook, HookResult
+from uai_toolkit.hooks.common.lib_session_state_union import read_union, write_session_state  # session-state bridge (todo_0495)
 
 TRACKED_TOOLS = {
     "knowledge_get_context": "context",
@@ -83,24 +84,6 @@ def _guarded_read_load(hook_input, raw_tool_name):
     return None, None
 
 
-def read_state(path):
-    if path.exists():
-        try:
-            return json.loads(path.read_text())
-        except (json.JSONDecodeError, OSError):
-            pass
-    return {}
-
-
-def write_state(path, state):
-    try:
-        tmp = path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(state, indent=2))
-        tmp.rename(path)
-    except OSError:
-        pass
-
-
 def handler(hook_input, context):
     raw_tool_name = hook_input.get("tool_name", "")
 
@@ -156,9 +139,8 @@ def handler(hook_input, context):
     if not names_to_record:
         return HookResult.skip("nothing to record")
 
-    # Read current state and update loaded.manifest
-    state_path = Path(context.session_dir) / f"{context.tracking_id}_state.json"
-    state = read_state(state_path)
+    # Read current state (union) and update loaded.manifest + the flat lists.
+    state = read_union(context.session_dir, context.tracking_id)
 
     manifest_raw = state.get("loaded.manifest", "[]")
     try:
@@ -168,6 +150,12 @@ def handler(hook_input, context):
 
     if not isinstance(manifest, list):
         manifest = []
+
+    # Track the flat comma-lists locally so the write below is TARGETED (never a
+    # whole-state writeback, which would copy canonical keys into legacy — todo_0495).
+    roles = [r.strip() for r in state.get("loaded.roles", "").split(",") if r.strip()]
+    traits = [t.strip() for t in state.get("loaded.traits", "").split(",") if t.strip()]
+    roles_changed = traits_changed = False
 
     recorded = []
     for name in names_to_record:
@@ -185,26 +173,25 @@ def handler(hook_input, context):
         # Maintain the flat comma-lists only for clean identifier loads (knowledge
         # tools) — a guarded Read records a path, which doesn't belong in these.
         if update_lists and load_type == "role":
-            existing_roles = state.get("loaded.roles", "")
-            roles = [r.strip() for r in existing_roles.split(",") if r.strip()] if existing_roles else []
             if name not in roles:
                 roles.append(name)
-                state["loaded.roles"] = ",".join(roles)
+                roles_changed = True
         elif update_lists and load_type == "trait":
-            existing = state.get("loaded.traits", "")
-            traits = [t.strip() for t in existing.split(",") if t.strip()] if existing else []
             if name not in traits:
                 traits.append(name)
-                state["loaded.traits"] = ",".join(traits)
+                traits_changed = True
 
         recorded.append(name)
 
     if not recorded:
         return HookResult.allow(f"already recorded: {load_type}/{','.join(names_to_record)}")
 
-    state["loaded.manifest"] = json.dumps(manifest)
-    state["updated_at"] = now
-    write_state(state_path, state)
+    updates = {"loaded.manifest": json.dumps(manifest), "updated_at": now}
+    if roles_changed:
+        updates["loaded.roles"] = ",".join(roles)
+    if traits_changed:
+        updates["loaded.traits"] = ",".join(traits)
+    write_session_state(context.session_dir, context.tracking_id, updates)
     return HookResult.allow(f"recorded {load_type}: {','.join(recorded)}")
 
 

@@ -14,11 +14,12 @@ import { useViewport } from '../viewport';
 interface SessionPaneProps {
   session: Session;
   memorexEnabled?: boolean;
+  active?: boolean;
 }
 
-export default function SessionPane({ session, memorexEnabled }: SessionPaneProps): JSX.Element {
+export default function SessionPane({ session, memorexEnabled, active = true }: SessionPaneProps): JSX.Element {
   useViewport('session_pane', () => ({
-    visible: true,
+    visible: active,
     label: session?.display_name || session?.tracking_id || 'Unknown Session',
     state: {
       trackingId: session?.tracking_id,
@@ -27,7 +28,7 @@ export default function SessionPane({ session, memorexEnabled }: SessionPaneProp
       memorexEnabled: memorexEnabled ?? true,
     },
     children: ['terminal_pane', 'prompt_box'],
-  }));
+  }), active);
 
   return (
     <TerminalPane
@@ -36,6 +37,7 @@ export default function SessionPane({ session, memorexEnabled }: SessionPaneProp
       cliSessionId={session.cli_session_id}
       displayName={session.display_name || session.tracking_id}
       memorexEnabled={memorexEnabled}
+      active={active}
     />
   );
 }

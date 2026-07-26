@@ -39,7 +39,9 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-sys.path.insert(0, os.environ.get("AI_SCRIPTS") or str(Path(__file__).resolve().parents[1]))
+_ai_scripts = os.environ.get("AI_SCRIPTS")
+if _ai_scripts:
+    sys.path.insert(0, _ai_scripts)
 from uai_toolkit.paths import AI_ROOT, AI_SCRIPTS  # noqa: E402
 
 AI_GENERAL = AI_ROOT / "ai_general"

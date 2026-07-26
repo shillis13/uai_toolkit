@@ -24,14 +24,13 @@ AI_ROOT = Path(os.environ.get("AI_ROOT", Path.home() / "AI/ai_root"))
 SCRIPT = AI_ROOT / "ai_general/scripts/session_mgmt/declare_stop.py"
 
 _DESC = (
-    "Declare WHY you are ending your turn, before you stop. Select one or more "
-    "reason ids from the taxonomy (Stop/declare_stop.config.yml), plus optional "
-    "per-reason params and a free-text note. This is the structured replacement "
-    "for the heuristic stop-checkers: it records your intent to session state for "
-    "the Stop gate, the Live Board, and downstream effects. For a reason not in "
-    "the taxonomy, pass no reasons and use `note`. Common ids: awaiting_user "
-    "(default), more_work, finished_todo, need_decision, context_pressure, "
-    "waiting_on, blocked, no_more_work, wake_me, break, switch_work, discuss_soonest."
+    "Call this at the end of your turn, before you stop. PREFERRED: fill in the "
+    "`checklist` — a short yes/no turn self-review (did you address the prompt, "
+    "was it logical, claims verified, work finished, more work now, waiting on "
+    "anything, want a break/switch, a note to send PianoMan or Hamilton, etc.). "
+    "It records your review to session state for the Stop gate + Live Board and "
+    "returns a terse end/continue decision. (Legacy: `reasons`/`note` are still "
+    "accepted during phase-in, but prefer the checklist.)"
 )
 
 
@@ -56,6 +55,38 @@ def tools():
                         "type": "string",
                         "description": "Free-text note. Always allowed; REQUIRED if `reasons` is empty (a fully custom reason).",
                     },
+                    "checklist": {
+                        "type": "object",
+                        "description": "PREFERRED. Your end-of-turn self-review. Answer every field explicitly (no defaults).",
+                        "additionalProperties": False,
+                        "properties": {
+                            "addressed_prompt": {"type": "boolean", "description": "Did your response address what the prompt actually asked?"},
+                            "logical": {"type": "boolean", "description": "Were your responses logical and internally consistent?"},
+                            "claims_verified": {"type": "boolean", "description": "Are your factual claims verified / evidence-backed, not just asserted?"},
+                            "did_what_i_said": {"type": "boolean", "description": "Did you do everything you said you'd do this turn (nothing said-but-skipped)?"},
+                            "work_finished": {"type": "boolean", "description": "Is all work you touched finished and saved/committed (nothing half-done)?"},
+                            "errors_handled": {"type": "boolean", "description": "Were any errors this turn resolved or flagged (none silently dropped)?"},
+                            "asking_needless_question": {"type": "boolean", "description": "Are you asking the user something you could answer or move forward without?"},
+                            "want_to_revisit": {"type": "boolean", "description": "Do you want a chance to re-think or revise your response before ending?"},
+                            "more_work_now": {"type": "boolean", "description": "Is there more work you can start right now without new input?"},
+                            "waiting_on": {"type": "string", "description": "If waiting on a person/response/dependency, what? Empty string if not waiting."},
+                            "told_to_stop": {"type": "boolean", "description": "Were you told to stop at this point?"},
+                            "want_break": {"type": "boolean", "description": "Do you want to pause / take a break?"},
+                            "want_switch": {"type": "boolean", "description": "Would you rather switch to different work?"},
+                            "start_next_now": {"type": "boolean", "description": "Should the next turn start immediately?"},
+                            "schedule_next_min": {"type": "integer", "description": "Schedule the next turn in N minutes (0 = don't schedule)."},
+                            "note_to_user": {"type": "string", "description": "A note to send PianoMan now, or empty string."},
+                            "note_to_hamilton": {"type": "string", "description": "A note to send Hamilton now, or empty string."},
+                        },
+                        "required": [
+                            "addressed_prompt", "logical", "claims_verified",
+                            "did_what_i_said", "work_finished", "errors_handled",
+                            "asking_needless_question", "want_to_revisit",
+                            "more_work_now", "waiting_on", "told_to_stop",
+                            "want_break", "want_switch", "start_next_now",
+                            "schedule_next_min", "note_to_user", "note_to_hamilton",
+                        ],
+                    },
                 },
                 "required": [],
             },
@@ -71,6 +102,7 @@ async def call_tool(name, arguments):
         "reasons": a.get("reasons") or [],
         "params": a.get("params") or {},
         "note": a.get("note") or "",
+        "checklist": a.get("checklist"),   # None → script uses the legacy reason path
     })
     try:
         p = subprocess.run(

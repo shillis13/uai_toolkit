@@ -36,6 +36,13 @@ function formatTimeAgo(iso: string): string {
   } catch { return ''; }
 }
 
+function formatBytes(n?: number | null): string {
+  if (n == null) return '';
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${Math.round(n / 1024)}K`;
+  return `${(n / (1024 * 1024)).toFixed(1)}M`;
+}
+
 interface SessionCardVisualProps {
   card: SessionCard;
   hasTab?: boolean;
@@ -51,8 +58,24 @@ export default function SessionCardVisual({ card, hasTab }: SessionCardVisualPro
   const turnCount = card.exchange_count ?? 0;
   const block = promptBlockChip(card.prompt_block);
 
+  // Attention severity, derived from context pressure (more triggers — unread comms,
+  // open-todo backlog, long-idle — land as those signals get wired onto the card).
+  const ctxPct = card.context_percent;
+  const attn = isStopped
+    ? 'dormant'
+    : ctxPct != null && ctxPct >= 85 ? 'crit'
+    : ctxPct != null && ctxPct >= 70 ? 'warn'
+    : 'ok';
+  const attnReason = attn === 'crit'
+    ? `context ${ctxPct}% — compaction imminent`
+    : attn === 'warn'
+    ? `context ${ctxPct}% — filling`
+    : '';
+  const restarts = card.restart_count ?? 0;
+  const sizeStr = formatBytes(card.transcript_bytes);
+
   return (
-    <div className={`card-meta${isStopped ? ' card-meta-stopped' : ''}`}>
+    <div className={`card-meta${isStopped ? ' card-meta-stopped' : ''}${attn === 'crit' ? ' card-attn-crit' : attn === 'warn' ? ' card-attn-warn' : ''}`}>
       {/* Row 1: status + turns + pill (right) */}
       <div className="card-row">
         <span className="card-row-left">
@@ -95,6 +118,17 @@ export default function SessionCardVisual({ card, hasTab }: SessionCardVisualPro
           />
         </span>
       </div>
+
+      {/* Signal row: attention reason (left) + restart count and transcript size (right). */}
+      {(attnReason || restarts > 0 || sizeStr) && (
+        <div className="card-row card-signal-row">
+          <span className={`card-row-left card-attn card-attn-${attn}`}>{attnReason}</span>
+          <span className="card-row-right card-signals">
+            {restarts > 0 && <span className="card-restarts" title="Session restarts">{'↻'}{restarts}</span>}
+            {sizeStr && <span className="card-logsize" title="Transcript (JSONL) size">{sizeStr}</span>}
+          </span>
+        </div>
+      )}
 
       {/* Row 4: URI on its own line, full width, smaller font, no wrap */}
       <div className="card-row card-uri-row">

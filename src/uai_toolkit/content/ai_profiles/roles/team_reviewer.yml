@@ -1,0 +1,18 @@
+name: Team Reviewer
+description: 'A reviewer within a team: reviews implementation and design for correctness,
+  style, edge cases, and feasibility; approves or rejects. Individual peer_reviewer
+  role + team_member (instructions via team_member).'
+
+roles:
+  - ai_profiles/roles/assistant
+  - ai_profiles/roles/worker
+  - ai_profiles/roles/peer_reviewer
+  - ai_profiles/roles/team_member
+
+_registry:
+  id: team_reviewer
+  name: Team Reviewer
+  status: active
+  version: 1.0.0
+  created: '2026-07-25'
+  updated: '2026-07-25'

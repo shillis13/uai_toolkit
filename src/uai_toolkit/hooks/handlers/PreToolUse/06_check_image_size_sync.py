@@ -9,7 +9,6 @@ Checks dimensions using sips (macOS, no deps) and blocks with a suggestion
 to resize using resize-for-claude.sh.
 """
 
-import json
 import os
 import re
 import struct
@@ -93,16 +92,16 @@ def _get_dimensions_header(file_path):
 
 
 def _read_state(context):
-    """Read session state for bypass checks."""
+    """Read session state (union: canonical accessor over legacy) for bypass checks.
+    The bypass flags may be set via the MCP into the canonical file, and post-flip
+    all writes land there, so a legacy-only read would miss them (todo_0495)."""
     if not context.tracking_id or not context.session_dir:
         return {}
-    state_path = Path(context.session_dir) / f"{context.tracking_id}_state.json"
-    if state_path.exists():
-        try:
-            return json.loads(state_path.read_text())
-        except (json.JSONDecodeError, OSError):
-            pass
-    return {}
+    try:
+        from uai_toolkit.hooks.common.lib_session_state_union import read_union
+        return read_union(context.session_dir, context.tracking_id)
+    except Exception:
+        return {}
 
 
 def _is_allowed(file_path, state):

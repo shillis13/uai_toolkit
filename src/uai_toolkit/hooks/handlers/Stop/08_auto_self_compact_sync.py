@@ -28,6 +28,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "common"))
 from uai_toolkit.hooks.common.lib_hook_base import run_hook, HookResult
+from uai_toolkit.hooks.common.lib_session_state_union import read_union, write_session_state   # union read + write bridge (todo_0495)
 
 DEFAULT_THRESHOLD = 85
 DEFAULT_WARNING_THRESHOLD = 80
@@ -43,14 +44,11 @@ def handler(hook_input, context):
     if not context.tracking_id or not context.session_dir:
         return HookResult.skip("no session identity")
 
-    # Read session state
-    state_path = Path(context.session_dir) / f"{context.tracking_id}_state.json"
-    state = {}
-    if state_path.exists():
-        try:
-            state = json.loads(state_path.read_text())
-        except (json.JSONDecodeError, OSError):
-            pass
+    # Read session state. Union read so the threshold (compact.auto_self_pct, set
+    # via the set-self-compact-threshold skill into the canonical accessor file) is
+    # seen alongside the hook's runtime keys (compact.self_triggered, context.used_pct)
+    # in the legacy file (todo_0495). Canonical wins on read conflict.
+    state = read_union(context.session_dir, context.tracking_id)
 
     # Check threshold (0 = disabled)
     threshold = state.get("compact.auto_self_pct", DEFAULT_THRESHOLD)
@@ -132,12 +130,13 @@ def handler(hook_input, context):
            f"— the brief auto-loads afterward.")
 
     # Guard once-per-cycle: persist BEFORE returning so a re-entrant Stop skips
-    # (line ~54) and the deferred one-shot STOPs on its next fire.
-    state["compact.self_triggered"] = True
-    try:
-        state_path.write_text(json.dumps(state, indent=2))
-    except OSError as e:
-        return HookResult.error(f"self-compact state write failed: {e} | {defer_status}")
+    # (line ~54) and the deferred one-shot STOPs on its next fire. Write ONLY the
+    # runtime flag through the shared bridge (targeted update — never write the
+    # UNION `state` back, which holds canonical keys that must not land in the
+    # legacy file). Enrolled → locked canonical accessor; else legacy (todo_0495).
+    if not write_session_state(context.session_dir, context.tracking_id,
+                               {"compact.self_triggered": True}):
+        return HookResult.error(f"self-compact state write failed | {defer_status}")
 
     # Stand the deferred one-shot down so it doesn't fire later only to no-op.
     if _cancel_deferred:

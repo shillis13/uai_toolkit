@@ -25,7 +25,6 @@ trigger:
 context_files:
   processes:
   - ai_context_files/instructions/how_tos/instr_session_messaging
-  - ai_context_files/instructions/how_tos/instr_federated_memory
   procedures:
   - ai_context_files/instructions/how_tos/instr_activity_logging
 tools:

@@ -1,0 +1,15 @@
+name: Ontology, Glossary & Workspace Map
+description: >
+  Ontology, Glossary & Workspace Map — bundle assembled from the todo_0319 grouping pass.
+_registry:
+  id: ontology_glossary_workspace_map
+  name: Ontology, Glossary & Workspace Map
+  status: active
+  version: 1.0.0
+
+context_files:
+  reference:
+    - ai_context_files/knowledge/reference/ref_glossary_knowledge_index
+    - ai_context_files/knowledge/reference/ref_ontology_glossary
+  schemas:
+    - ai_context_files/knowledge/schemas/schema_knowledge_glossary

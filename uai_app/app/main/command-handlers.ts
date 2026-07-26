@@ -29,12 +29,10 @@ import {
   moveCard as containerMoveCard,
   reorderContainerCards, getContainerSnapshot,
 } from './container-manager';
-import { loadTeamDefinition } from './team-indexer';
-import { setEntityHidden } from './project-indexer';
+import { setEntityHidden, setRoleAssignment, setRoleContext, setMembers, setPlaybook, promoteTeamToProject, createTeam, updateEntity } from './project-indexer';
 import { createBrief } from './brief-ops';
 import { runSessionTraits } from './session-traits';
 import { runTodoMgr, resolveTodoDir } from './todo-ops';
-import { runTeamsMgr } from './teams-ops';
 import { sendMessage } from './comms-reader';
 import { callAiEngine } from './assigned-tasks';
 import { aiRootMain as getAiRootMain, shellPath } from './paths';
@@ -229,24 +227,6 @@ function loadNormalizedAppState(statePath: string): Record<string, unknown> {
   return normalizePersistedAppState(current).state;
 }
 
-function teamMembershipRows(
-  teamId: string,
-  relationships: EntityRelationship[],
-): EntityRelationship[] {
-  return relationships.filter((row) =>
-    row.relation_type === 'member_of'
-    && row.source_type === 'session'
-    && row.target_type === 'team'
-    && row.target_id === teamId,
-  );
-}
-
-function relationshipSlot(row: EntityRelationship): string | null {
-  const metadata = (row as EntityRelationship & { metadata?: Record<string, unknown> | null }).metadata;
-  const slot = metadata?.slot;
-  return typeof slot === 'string' && slot.trim().length > 0 ? slot : null;
-}
-
 /**
  * Close any open tabs that target the given entity ids. A tab's `targetId` holds
  * the entity id regardless of tab type (session tracking_id, folder/project/team
@@ -335,6 +315,80 @@ export function registerCommandHandlers(bus: CommandBus, emit: EmitFn): void {
         ok: false, command_id: command.id,
         error: { code: 'LANDSCAPE_FAILED', message },
       };
+    }
+  });
+
+  // ── work.decision.answer ──────────────────────────────────────────────
+  // PM answers a "Needs Me" decision from the Live Board (todo_0578/0579):
+  // mark it answered in the store (needs_user_mgr) AND route the answer back to
+  // Hamilton so he actions it + relays to the source session; then it clears.
+  bus.register('work.decision.answer', async (command: Command): Promise<CommandResult<{ result: unknown }>> => {
+    const { id, answer } = command.payload as { id: string; answer: string };
+    try {
+      const { execFile: ef } = require('node:child_process');
+      const { promisify } = require('node:util');
+      const execFileAsync = promisify(ef);
+      const rootMain = getAiRootMain();
+      const scriptPath = path.join(rootMain, 'ai_general/scripts/work/needs_user_mgr.py');
+      const { stdout } = await execFileAsync(
+        'python3', [scriptPath, '--answer', String(id), '--text', String(answer), '--json'],
+        { timeout: 15000, maxBuffer: 1024 * 1024, env: { ...process.env, AI_ROOT: rootMain, PATH: shellPath() } },
+      );
+      const res = JSON.parse(stdout);
+      if (!res.success) {
+        return { ok: false, command_id: command.id, error: { code: 'ANSWER_FAILED', message: res.error || 'answer failed' } };
+      }
+      const rec = res.record || {};
+      const content =
+        `PianoMan answered your escalated decision:\n\n` +
+        `Decision: ${rec.decision || ''}\n` +
+        `Answer:   ${answer}\n\n` +
+        `Source: ${[rec.source_todo, rec.source_session].filter(Boolean).join(' · ') || '(n/a)'}\n\n` +
+        `Please action it and relay to the source session.`;
+      await sendMessage({ from: 'piano_man', to: 'Hamilton', content, urgency: 'prompt', responseType: 'acknowledge', subject: 'PM decision' });
+      return { ok: true, command_id: command.id, data: { result: rec } };
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn('[work.decision.answer] Failed:', message);
+      return { ok: false, command_id: command.id, error: { code: 'ANSWER_FAILED', message } };
+    }
+  });
+
+  // ── work.decision.dismiss ─────────────────────────────────────────────
+  // PM dismisses/archives a "Needs Me" decision as already-addressed or moot
+  // (todo_0579): mark it 'addressed' in the store (no routed answer) so it drops
+  // off the board, and send Hamilton a light heads-up so he stops waiting on it.
+  bus.register('work.decision.dismiss', async (command: Command): Promise<CommandResult<{ result: unknown }>> => {
+    const { id, reason } = command.payload as { id: string; reason?: string };
+    try {
+      const { execFile: ef } = require('node:child_process');
+      const { promisify } = require('node:util');
+      const execFileAsync = promisify(ef);
+      const rootMain = getAiRootMain();
+      const scriptPath = path.join(rootMain, 'ai_general/scripts/work/needs_user_mgr.py');
+      const args = [scriptPath, '--addressed', String(id), '--json'];
+      if (reason && String(reason).trim()) { args.push('--text', String(reason)); }
+      const { stdout } = await execFileAsync(
+        'python3', args,
+        { timeout: 15000, maxBuffer: 1024 * 1024, env: { ...process.env, AI_ROOT: rootMain, PATH: shellPath() } },
+      );
+      const res = JSON.parse(stdout);
+      if (!res.success) {
+        return { ok: false, command_id: command.id, error: { code: 'DISMISS_FAILED', message: res.error || 'dismiss failed' } };
+      }
+      const rec = res.record || {};
+      const content =
+        `PianoMan dismissed your escalated decision as already-addressed:\n\n` +
+        `Decision: ${rec.decision || ''}\n` +
+        `Reason:   ${(reason && String(reason).trim()) || '(marked already addressed)'}\n\n` +
+        `Source: ${[rec.source_todo, rec.source_session].filter(Boolean).join(' · ') || '(n/a)'}\n\n` +
+        `No action needed — it no longer needs the user.`;
+      await sendMessage({ from: 'piano_man', to: 'Hamilton', content, urgency: 'async', responseType: 'acknowledge', subject: 'PM decision dismissed' });
+      return { ok: true, command_id: command.id, data: { result: rec } };
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn('[work.decision.dismiss] Failed:', message);
+      return { ok: false, command_id: command.id, error: { code: 'DISMISS_FAILED', message } };
     }
   });
 
@@ -1615,232 +1669,6 @@ export function registerCommandHandlers(bus: CommandBus, emit: EmitFn): void {
     }
   });
 
-  // ── team.slot.claim ───────────────────────────────────────────────────
-
-  bus.register('team.slot.claim', async (command: Command): Promise<CommandResult> => {
-    const { teamId, role, trackingId, sessionTrackingId, claimedBy } = command.payload as {
-      teamId: string;
-      role: string;
-      trackingId?: string;
-      sessionTrackingId?: string;
-      claimedBy?: string;
-    };
-    const resolvedTrackingId = trackingId || sessionTrackingId;
-
-    if (!resolvedTrackingId) {
-      return {
-        ok: false,
-        command_id: command.id,
-        error: { code: 'SESSION_REQUIRED', message: 'trackingId is required' },
-      };
-    }
-
-    try {
-      const team = loadTeamDefinition(teamId);
-      if (!team) {
-        return {
-          ok: false,
-          command_id: command.id,
-          error: { code: 'TEAM_NOT_FOUND', message: `Team not found: ${teamId}` },
-        };
-      }
-      if (team.availability !== 'available') {
-        return {
-          ok: false,
-          command_id: command.id,
-          error: { code: 'TEAM_UNAVAILABLE', message: `Team ${teamId} is not available for assignment` },
-        };
-      }
-
-      const slot = team.slots.find((candidate) => candidate.role === role);
-      if (!slot) {
-        return {
-          ok: false,
-          command_id: command.id,
-          error: { code: 'SLOT_NOT_FOUND', message: `Slot role not found on team ${teamId}: ${role}` },
-        };
-      }
-
-      const session = await getSession(resolvedTrackingId);
-      if (!session) {
-        return {
-          ok: false,
-          command_id: command.id,
-          error: { code: 'SESSION_NOT_FOUND', message: `Session not found: ${resolvedTrackingId}` },
-        };
-      }
-
-      const relationships = await callSessionStore([
-        'get_relationships',
-        'team',
-        teamId,
-        '--relation-type',
-        'member_of',
-      ]) as EntityRelationship[];
-      const memberships = teamMembershipRows(teamId, relationships);
-      const existingMembership = memberships.find((row) => row.source_id === resolvedTrackingId);
-
-      if (existingMembership) {
-        const existingSlot = relationshipSlot(existingMembership);
-        if (existingSlot === role) {
-          return {
-            ok: true,
-            command_id: command.id,
-            changed: { teams: false, relationships: false },
-          };
-        }
-        return {
-          ok: false,
-          command_id: command.id,
-          error: {
-            code: 'SESSION_ALREADY_ASSIGNED',
-            message: `Session ${resolvedTrackingId} already fills slot ${existingSlot || '(unknown)'} on team ${teamId}`,
-          },
-        };
-      }
-
-      const occupied = memberships.filter((row) => relationshipSlot(row) === role).length;
-      if (occupied >= slot.count) {
-        return {
-          ok: false,
-          command_id: command.id,
-          error: { code: 'SLOT_FULL', message: `Slot ${role} on team ${teamId} is already full (${occupied}/${slot.count})` },
-        };
-      }
-
-      const metadata = {
-        slot: role,
-        claimed_at: new Date().toISOString(),
-        claimed_by: claimedBy || null,
-      };
-
-      await callSessionStore([
-        'add_relationship',
-        'session',
-        resolvedTrackingId,
-        'member_of',
-        'team',
-        teamId,
-        '--metadata',
-        JSON.stringify(metadata),
-      ]);
-      emit('command', ['relationships', 'teams']);
-      return {
-        ok: true,
-        command_id: command.id,
-        changed: { relationships: true, teams: true },
-      };
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      return {
-        ok: false,
-        command_id: command.id,
-        error: { code: 'TEAM_SLOT_CLAIM_FAILED', message },
-      };
-    }
-  });
-
-  // ── team.slot.release ─────────────────────────────────────────────────
-
-  bus.register('team.slot.release', async (command: Command): Promise<CommandResult> => {
-    const { teamId, role, trackingId, sessionTrackingId } = command.payload as {
-      teamId: string;
-      role: string;
-      trackingId?: string;
-      sessionTrackingId?: string;
-    };
-    const resolvedTrackingId = trackingId || sessionTrackingId;
-
-    if (!resolvedTrackingId) {
-      return {
-        ok: false,
-        command_id: command.id,
-        error: { code: 'SESSION_REQUIRED', message: 'trackingId is required' },
-      };
-    }
-
-    try {
-      const team = loadTeamDefinition(teamId);
-      if (!team) {
-        return {
-          ok: false,
-          command_id: command.id,
-          error: { code: 'TEAM_NOT_FOUND', message: `Team not found: ${teamId}` },
-        };
-      }
-
-      const slot = team.slots.find((candidate) => candidate.role === role);
-      if (!slot) {
-        return {
-          ok: false,
-          command_id: command.id,
-          error: { code: 'SLOT_NOT_FOUND', message: `Slot role not found on team ${teamId}: ${role}` },
-        };
-      }
-
-      const session = await getSession(resolvedTrackingId);
-      if (!session) {
-        return {
-          ok: false,
-          command_id: command.id,
-          error: { code: 'SESSION_NOT_FOUND', message: `Session not found: ${resolvedTrackingId}` },
-        };
-      }
-
-      const relationships = await callSessionStore([
-        'get_relationships',
-        'team',
-        teamId,
-        '--relation-type',
-        'member_of',
-      ]) as EntityRelationship[];
-      const memberships = teamMembershipRows(teamId, relationships);
-      const existingMembership = memberships.find((row) => row.source_id === resolvedTrackingId);
-
-      if (!existingMembership) {
-        return {
-          ok: false,
-          command_id: command.id,
-          error: { code: 'SLOT_NOT_CLAIMED', message: `Session ${resolvedTrackingId} is not a member of team ${teamId}` },
-        };
-      }
-
-      const existingSlot = relationshipSlot(existingMembership);
-      if (existingSlot !== role) {
-        return {
-          ok: false,
-          command_id: command.id,
-          error: {
-            code: 'SLOT_ROLE_MISMATCH',
-            message: `Session ${resolvedTrackingId} fills slot ${existingSlot || '(unknown)'} on team ${teamId}, not ${role}`,
-          },
-        };
-      }
-
-      await callSessionStore([
-        'remove_relationship',
-        'session',
-        resolvedTrackingId,
-        'member_of',
-        'team',
-        teamId,
-      ]);
-      emit('command', ['relationships', 'teams']);
-      return {
-        ok: true,
-        command_id: command.id,
-        changed: { relationships: true, teams: true },
-      };
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      return {
-        ok: false,
-        command_id: command.id,
-        error: { code: 'TEAM_SLOT_RELEASE_FAILED', message },
-      };
-    }
-  });
-
   // ── prompt.send ───────────────────────────────────────────────────────
 
   bus.register('prompt.send', async (command: Command): Promise<CommandResult> => {
@@ -2292,11 +2120,14 @@ export function registerCommandHandlers(bus: CommandBus, emit: EmitFn): void {
   });
 
   todoCmd('setStatus', (p) => runTodoMgr('status', [String(p.status), String(p.id), ...(p.note ? ['--note', String(p.note)] : [])]));
+  todoCmd('priority', (p) => runTodoMgr('priority', [String(p.level), String(p.id)]));   // todo_0652
   todoCmd('move', (p) => runTodoMgr('move', [String(p.target || 'root'), String(p.id)]));
   todoCmd('assign', (p) => runTodoMgr('assign', [String(p.id), String(p.uri)]));
   todoCmd('unassign', (p) => runTodoMgr('unassign', [String(p.id), String(p.uri)]));
   todoCmd('tag', (p) => runTodoMgr('tag', [String(p.action), String(p.id), String(p.tag)]));
   todoCmd('create', (p) => runTodoMgr('create', [String(p.name), ...((p.extra as string[]) || [])]));
+  // Move a todo to trash (recoverable). Bulk Delete in the Work Mgr calls this per id.
+  todoCmd('trash', (p) => runTodoMgr('delete', [String(p.id)]));
   // Routes through todo_mgr set-notes (the data authority) — never writes notes.md directly.
   todoCmd('writeNotes', (p) => runTodoMgr('set-notes', [String(p.id), '--content', String(p.content)]));
   // Append a comment to a todo's history.log (status 'comment'; never changes real status).
@@ -2306,42 +2137,30 @@ export function registerCommandHandlers(bus: CommandBus, emit: EmitFn): void {
     ...(p.replyTo ? ['--reply-to', String(p.replyTo)] : []),
   ]));
 
-  // ── team.* — bridge the Team Editor to teams_mgr (the team data authority). todo_0423-0426.
-  const teamCmd = (
-    code: string,
-    run: (p: Record<string, unknown>) => Promise<string>,
-  ) => bus.register(`team.${code}`, async (command: Command): Promise<CommandResult<{ out: string }>> => {
-    try {
-      const out = (await run(command.payload as Record<string, unknown>)).trim();
-      emit('command', ['teams']);
-      return { ok: true, command_id: command.id, data: { out }, changed: { teams: true } as Record<string, boolean> };
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      return { ok: false, command_id: command.id, error: { code: `TEAM_${code.toUpperCase()}_FAILED`, message } };
-    }
-  });
-  const flag = (name: string, v: unknown) => (v != null && v !== '' ? [name, String(v)] : []);
-  teamCmd('create', (p) => runTeamsMgr('create', [String(p.team), ...flag('--description', p.description)]));
-  teamCmd('update', (p) => runTeamsMgr('update', [String(p.team), ...flag('--name', p.name), ...flag('--description', p.description), ...flag('--tags', p.tags), ...flag('--status', p.status)]));
-  teamCmd('archive', (p) => runTeamsMgr('archive', [String(p.team)]));
-  teamCmd('addRole', (p) => runTeamsMgr('add-role', [String(p.team), String(p.role), ...flag('--description', p.description), ...flag('--profile-ref', p.profileRef)]));
-  teamCmd('removeRole', (p) => runTeamsMgr('remove-role', [String(p.team), String(p.role)]));
-  teamCmd('assign', (p) => runTeamsMgr('assign', [String(p.team), String(p.role), String(p.trackingId)]));
-  teamCmd('unassign', (p) => runTeamsMgr('unassign', [String(p.team), String(p.role), String(p.trackingId)]));
+  // ── team.* create/update/archive: registry-backed (todo_0633). These REPLACE the
+  // former teamCmd(runTeamsMgr) bridge, which wrote data/teams/<id>.yml — a store the
+  // UI never reads, so Team-Editor creates/updates silently never appeared (the
+  // split-brain). They're registered further down (after resolveSrc), alongside the
+  // members/roles registry ops. team.addRole/removeRole/setRoleAssignment already go
+  // through the registry via setRole/roleLifecycle below; the old teamCmd duplicates
+  // (which Map.set-overwrote to the registry anyway) and the dead assign/unassign
+  // teams_mgr paths are removed here as the reconciliation Hamilton asked for.
 
   // ── project.setHidden / team.setHidden — "Delete" == HIDE (todo_0532).
   // A pure visibility flag: flips `ui_hidden` in the entity's own source yml. It
   // NEVER moves, renames, or deletes any directory (esp. a project's working_dir)
   // — fully reversible by setting hidden:false. The renderer passes the card's
   // `sourcePath` (the exact yml it was read from); we fall back to resolving by id
-  // in the registry / teams dir if omitted.
+  // in the registry if omitted.
+  const registryDir = path.join(getAiRootMain(), 'ai_general', 'data', 'projects');
+  const isTeamRegistrySource = (sourcePath: string): boolean => {
+    const src = path.resolve(sourcePath);
+    return path.dirname(src) === path.resolve(registryDir) && src.endsWith('.team.yml');
+  };
   const resolveEntityYml = (id: string, prefer: 'project' | 'team'): string | null => {
-    const root = getAiRootMain();
-    const regDir = path.join(root, 'ai_general', 'data', 'projects');
-    const teamsDir = path.join(root, 'ai_general', 'data', 'teams');
     const candidates = prefer === 'team'
-      ? [path.join(regDir, `${id}.team.yml`), path.join(teamsDir, `${id}.yml`), path.join(regDir, `${id}.proj.yml`)]
-      : [path.join(regDir, `${id}.proj.yml`), path.join(regDir, `${id}.team.yml`), path.join(teamsDir, `${id}.yml`)];
+      ? [path.join(registryDir, `${id}.team.yml`)]
+      : [path.join(registryDir, `${id}.proj.yml`), path.join(registryDir, `${id}.team.yml`)];
     return candidates.find(c => fs.existsSync(c)) || null;
   };
   const setHidden = (
@@ -2353,7 +2172,10 @@ export function registerCommandHandlers(bus: CommandBus, emit: EmitFn): void {
     const hidden = p.hidden !== false; // default to hiding
     try {
       const id = String(p.id ?? '').replace(/^(project|team):/, '');
-      let src = p.sourcePath && fs.existsSync(p.sourcePath) ? p.sourcePath : null;
+      let src = p.sourcePath && fs.existsSync(p.sourcePath)
+        && (prefer !== 'team' || isTeamRegistrySource(p.sourcePath))
+        ? p.sourcePath
+        : null;
       if (!src) src = resolveEntityYml(id, prefer);
       if (!src) {
         return { ok: false, command_id: command.id, error: { code: `${storeKey.toUpperCase()}_SET_HIDDEN_FAILED`, message: `No source file for id "${id}"` } };
@@ -2368,6 +2190,181 @@ export function registerCommandHandlers(bus: CommandBus, emit: EmitFn): void {
   });
   setHidden('project.setHidden', 'project', 'projects');
   setHidden('team.setHidden', 'team', 'teams');
+
+  // ── Members & Roles editing (todo_0544) ─────────────────────────────────
+  // All of these edit the entity's own registry yml in place (same reversible,
+  // never-touch-a-directory approach as setHidden) and emit a store refresh.
+  const resolveSrc = (p: { id?: string; sourcePath?: string }, prefer: 'project' | 'team'): string | null => {
+    const id = String(p.id ?? '').replace(/^(project|team):/, '');
+    if (p.sourcePath && fs.existsSync(p.sourcePath)
+        && (prefer !== 'team' || isTeamRegistrySource(p.sourcePath))) return p.sourcePath;
+    return resolveEntityYml(id, prefer);
+  };
+
+  // role holder: member=a name assigns; member=''/null UNASSIGNS but keeps the
+  // slot (an empty `role:`). Deleting a role entirely is removeRoleAssignment.
+  const setRole = (cmdName: string, prefer: 'project' | 'team', storeKey: string) =>
+    bus.register(cmdName, async (command: Command): Promise<CommandResult<{ role: string; member: string; sourcePath: string }>> => {
+      const p = command.payload as { id?: string; role?: string; member?: string | null; sourcePath?: string };
+      const role = String(p.role ?? '').trim();
+      const member = p.member ? String(p.member) : '';   // '' = keep empty slot
+      const CODE = `${storeKey.toUpperCase()}_SET_ROLE_FAILED`;
+      try {
+        if (!role) return { ok: false, command_id: command.id, error: { code: CODE, message: 'role name is required' } };
+        const src = resolveSrc(p, prefer);
+        if (!src) return { ok: false, command_id: command.id, error: { code: CODE, message: `No source file for id "${p.id}"` } };
+        setRoleAssignment(src, role, member);
+        emit('command', [storeKey]);
+        return { ok: true, command_id: command.id, data: { role, member, sourcePath: src }, changed: { [storeKey]: true } as Record<string, boolean> };
+      } catch (err: unknown) {
+        return { ok: false, command_id: command.id, error: { code: CODE, message: err instanceof Error ? err.message : String(err) } };
+      }
+    });
+  setRole('project.setRoleAssignment', 'project', 'projects');
+  setRole('team.setRoleAssignment', 'team', 'teams');
+
+  // addRole: create an empty, unassigned slot. removeRole: delete the role.
+  const roleLifecycle = (cmdName: string, prefer: 'project' | 'team', storeKey: string, mode: 'add' | 'remove') =>
+    bus.register(cmdName, async (command: Command): Promise<CommandResult<{ role: string; sourcePath: string }>> => {
+      const p = command.payload as { id?: string; role?: string; sourcePath?: string };
+      const role = String(p.role ?? '').trim();
+      const CODE = `${storeKey.toUpperCase()}_${mode.toUpperCase()}_ROLE_FAILED`;
+      try {
+        if (!role) return { ok: false, command_id: command.id, error: { code: CODE, message: 'role name is required' } };
+        const src = resolveSrc(p, prefer);
+        if (!src) return { ok: false, command_id: command.id, error: { code: CODE, message: `No source file for id "${p.id}"` } };
+        setRoleAssignment(src, role, mode === 'add' ? '' : null);
+        emit('command', [storeKey]);
+        return { ok: true, command_id: command.id, data: { role, sourcePath: src }, changed: { [storeKey]: true } as Record<string, boolean> };
+      } catch (err: unknown) {
+        return { ok: false, command_id: command.id, error: { code: CODE, message: err instanceof Error ? err.message : String(err) } };
+      }
+    });
+  roleLifecycle('project.addRole', 'project', 'projects', 'add');
+  roleLifecycle('team.addRole', 'team', 'teams', 'add');
+  roleLifecycle('project.removeRole', 'project', 'projects', 'remove');
+  roleLifecycle('team.removeRole', 'team', 'teams', 'remove');
+
+  // team.create — a NEW team in the registry (data/projects/<slug>.team.yml), the
+  // store the UI reads. Replaces the legacy teams_mgr create that wrote data/teams/
+  // (todo_0633). members/roles start empty; a team gets a home only when promoted.
+  bus.register('team.create', async (command: Command): Promise<CommandResult<{ id: string; sourcePath: string }>> => {
+    const p = command.payload as { name?: string; team?: string; description?: string; tags?: string[] | string };
+    const name = String(p.name ?? p.team ?? '').trim();
+    try {
+      if (!name) return { ok: false, command_id: command.id, error: { code: 'TEAM_CREATE_FAILED', message: 'team name is required' } };
+      const tags = Array.isArray(p.tags) ? p.tags : (p.tags ? String(p.tags).split(',') : []);
+      const { id, sourcePath } = createTeam(name, p.description ? String(p.description) : undefined, tags);
+      emit('command', ['teams']);
+      return { ok: true, command_id: command.id, data: { id, sourcePath }, changed: { teams: true } as Record<string, boolean> };
+    } catch (err: unknown) {
+      return { ok: false, command_id: command.id, error: { code: 'TEAM_CREATE_FAILED', message: err instanceof Error ? err.message : String(err) } };
+    }
+  });
+
+  // team.update — scalar metadata (name/description/tags/status) in the registry yml.
+  bus.register('team.update', async (command: Command): Promise<CommandResult<{ sourcePath: string }>> => {
+    const p = command.payload as { id?: string; sourcePath?: string; name?: string; description?: string; tags?: string[] | string; status?: string };
+    try {
+      const src = resolveSrc(p, 'team');
+      if (!src) return { ok: false, command_id: command.id, error: { code: 'TEAM_UPDATE_FAILED', message: `No source file for id "${p.id}"` } };
+      const tags = p.tags == null ? undefined : (Array.isArray(p.tags) ? p.tags : String(p.tags).split(','));
+      updateEntity(src, { name: p.name, description: p.description, tags, status: p.status });
+      emit('command', ['teams']);
+      return { ok: true, command_id: command.id, data: { sourcePath: src }, changed: { teams: true } as Record<string, boolean> };
+    } catch (err: unknown) {
+      return { ok: false, command_id: command.id, error: { code: 'TEAM_UPDATE_FAILED', message: err instanceof Error ? err.message : String(err) } };
+    }
+  });
+
+  // team.archive == hide (the entity's own ui_hidden flag) — never moves/deletes a
+  // directory; mirrors team.setHidden. Kept for callers using the archive verb.
+  bus.register('team.archive', async (command: Command): Promise<CommandResult<{ sourcePath: string }>> => {
+    const p = command.payload as { id?: string; sourcePath?: string };
+    try {
+      const src = resolveSrc(p, 'team');
+      if (!src) return { ok: false, command_id: command.id, error: { code: 'TEAM_ARCHIVE_FAILED', message: `No source file for id "${p.id}"` } };
+      setEntityHidden(src, true);
+      emit('command', ['teams']);
+      return { ok: true, command_id: command.id, data: { sourcePath: src }, changed: { teams: true } as Record<string, boolean> };
+    } catch (err: unknown) {
+      return { ok: false, command_id: command.id, error: { code: 'TEAM_ARCHIVE_FAILED', message: err instanceof Error ? err.message : String(err) } };
+    }
+  });
+
+  // setRoleContext: attach/clear a role's context reference (role_contexts: block).
+  // context = a string sets it; ''/null clears it.
+  const setRoleCtx = (cmdName: string, prefer: 'project' | 'team', storeKey: string) =>
+    bus.register(cmdName, async (command: Command): Promise<CommandResult<{ role: string; context: string | null; sourcePath: string }>> => {
+      const p = command.payload as { id?: string; role?: string; context?: string | null; sourcePath?: string };
+      const role = String(p.role ?? '').trim();
+      const context = p.context ? String(p.context) : null;
+      const CODE = `${storeKey.toUpperCase()}_SET_ROLE_CONTEXT_FAILED`;
+      try {
+        if (!role) return { ok: false, command_id: command.id, error: { code: CODE, message: 'role name is required' } };
+        const src = resolveSrc(p, prefer);
+        if (!src) return { ok: false, command_id: command.id, error: { code: CODE, message: `No source file for id "${p.id}"` } };
+        setRoleContext(src, role, context);
+        emit('command', [storeKey]);
+        return { ok: true, command_id: command.id, data: { role, context, sourcePath: src }, changed: { [storeKey]: true } as Record<string, boolean> };
+      } catch (err: unknown) {
+        return { ok: false, command_id: command.id, error: { code: CODE, message: err instanceof Error ? err.message : String(err) } };
+      }
+    });
+  setRoleCtx('project.setRoleContext', 'project', 'projects');
+  setRoleCtx('team.setRoleContext', 'team', 'teams');
+
+  // setMembers: replace the whole `members:` list (add/remove are computed caller-side).
+  const setMembersCmd = (cmdName: string, prefer: 'project' | 'team', storeKey: string) =>
+    bus.register(cmdName, async (command: Command): Promise<CommandResult<{ members: string[]; sourcePath: string }>> => {
+      const p = command.payload as { id?: string; members?: string[]; sourcePath?: string };
+      const members = Array.isArray(p.members) ? p.members.map(String) : [];
+      const CODE = `${storeKey.toUpperCase()}_SET_MEMBERS_FAILED`;
+      try {
+        const src = resolveSrc(p, prefer);
+        if (!src) return { ok: false, command_id: command.id, error: { code: CODE, message: `No source file for id "${p.id}"` } };
+        setMembers(src, members);
+        emit('command', [storeKey]);
+        return { ok: true, command_id: command.id, data: { members, sourcePath: src }, changed: { [storeKey]: true } as Record<string, boolean> };
+      } catch (err: unknown) {
+        return { ok: false, command_id: command.id, error: { code: CODE, message: err instanceof Error ? err.message : String(err) } };
+      }
+    });
+  setMembersCmd('project.setMembers', 'project', 'projects');
+  setMembersCmd('team.setMembers', 'team', 'teams');
+
+  // project.setPlaybook: set which top-level folders make up the project's Playbook.
+  bus.register('project.setPlaybook', async (command: Command): Promise<CommandResult<{ folders: string[]; sourcePath: string }>> => {
+    const p = command.payload as { id?: string; folders?: string[]; sourcePath?: string };
+    const folders = Array.isArray(p.folders) ? p.folders.map(String) : [];
+    const CODE = 'PROJECT_SET_PLAYBOOK_FAILED';
+    try {
+      const src = resolveSrc(p, 'project');
+      if (!src) return { ok: false, command_id: command.id, error: { code: CODE, message: `No source file for id "${p.id}"` } };
+      setPlaybook(src, folders);
+      emit('command', ['projects']);
+      return { ok: true, command_id: command.id, data: { folders, sourcePath: src }, changed: { projects: true } };
+    } catch (err: unknown) {
+      return { ok: false, command_id: command.id, error: { code: CODE, message: err instanceof Error ? err.message : String(err) } };
+    }
+  });
+
+  // team.promoteToProject: give a Team a home directory and convert its registry
+  // file .team.yml → .proj.yml (todo_0320). Members/roles/contexts carry over.
+  bus.register('team.promoteToProject', async (command: Command): Promise<CommandResult<{ workingDir: string; newSourcePath: string }>> => {
+    const p = command.payload as { id?: string; dirName?: string; sourcePath?: string };
+    const CODE = 'TEAM_PROMOTE_FAILED';
+    try {
+      const src = resolveSrc(p, 'team');
+      if (!src) return { ok: false, command_id: command.id, error: { code: CODE, message: `No source file for id "${p.id}"` } };
+      if (!src.endsWith('.team.yml')) return { ok: false, command_id: command.id, error: { code: CODE, message: 'Only a team can be promoted to a project' } };
+      const res = promoteTeamToProject(src, p.dirName && String(p.dirName).trim() ? String(p.dirName).trim() : undefined);
+      emit('command', ['teams', 'projects']);
+      return { ok: true, command_id: command.id, data: res, changed: { teams: true, projects: true } };
+    } catch (err: unknown) {
+      return { ok: false, command_id: command.id, error: { code: CODE, message: err instanceof Error ? err.message : String(err) } };
+    }
+  });
 
   // ═══════════════════════════════════════════════════════════════════════
   // COMMS COMMANDS

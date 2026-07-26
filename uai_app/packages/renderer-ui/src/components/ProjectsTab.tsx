@@ -7,11 +7,12 @@
  * Right-click context menu: Copy Path, Open in Tab.
  */
 
-import { useState, useMemo, useRef } from 'react';
+import { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import type { AnyCard, ProjectCard } from '@uai/shared/cards';
 import { isProjectCard } from '@uai/shared/cards';
 import { useCardStore } from '../stores/card-store';
 import { useContextMenuDismiss } from '../hooks/use-context-menu-dismiss';
+import { useClampToViewport } from '../hooks/use-clamp-to-viewport';
 import { CardListView } from './cards';
 import { executeCommand } from '../utils/execute-command';
 
@@ -58,6 +59,26 @@ export default function ProjectsTab({ onSelectProject }: ProjectsTabProps): JSX.
   const menuRef = useRef<HTMLDivElement>(null);
 
   useContextMenuDismiss(menuRef, () => setContextMenu(null), contextMenu != null);
+  useClampToViewport(menuRef, contextMenu != null, [contextMenu?.x, contextMenu?.y]);
+
+  // Hidden entities (todo_0532 "Delete" == hide). They're excluded from the card
+  // store, so fetch them separately; Restore flips ui_hidden back via setHidden.
+  const [hidden, setHidden] = useState<ProjectCard[]>([]);
+  const [hiddenCollapsed, setHiddenCollapsed] = useState(true);
+  const reloadHidden = useCallback(() => {
+    (window as { uai?: { entities?: { listHidden?: () => Promise<ProjectCard[]> } } })
+      .uai?.entities?.listHidden?.()
+      .then(res => { if (Array.isArray(res)) setHidden(res); })
+      .catch(() => { /* best-effort */ });
+  }, []);
+  // Refetch on mount and whenever the visible set changes (e.g. after a restore).
+  useEffect(() => { reloadHidden(); }, [reloadHidden, projects]);
+  const restore = (card: ProjectCard) => {
+    const isTeam = card.tags.includes('team') || card.category === 'team';
+    const id = String(card.entity_id || card.project_id || '').replace(/^(project|team):/, '');
+    executeCommand(isTeam ? 'team.setHidden' : 'project.setHidden', { id, hidden: false, sourcePath: card.source_path })
+      .then(() => reloadHidden());
+  };
 
   const filtered = useMemo(() => {
     let result = projects as AnyCard[];
@@ -142,7 +163,29 @@ export default function ProjectsTab({ onSelectProject }: ProjectsTabProps): JSX.
         );
       })}
 
-      {filtered.length === 0 && (
+      {hidden.length > 0 && (
+        <div className="session-section">
+          <div className="session-section-header" onClick={() => setHiddenCollapsed(v => !v)}>
+            <span className="session-section-arrow">{hiddenCollapsed ? '▶' : '▼'}</span>
+            <span className="session-section-title" style={{ color: 'var(--text-muted)' }}>Hidden</span>
+            <span className="session-section-count" style={{ color: 'var(--text-muted)' }}>{hidden.length}</span>
+          </div>
+          {!hiddenCollapsed && (
+            <div className="nav-section-children">
+              {hidden.map(card => (
+                <div key={card.entity_id} className="projects-hidden-row">
+                  <span className="projects-hidden-name" title={card.source_path}>
+                    {(card.tags.includes('team') || card.category === 'team') ? '👥 ' : '📦 '}{card.display_name}
+                  </span>
+                  <button className="projects-hidden-restore" title="Un-hide — show this in the lists again" onClick={() => restore(card)}>Restore</button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {filtered.length === 0 && hidden.length === 0 && (
         <div className="session-list-empty" style={{ fontSize: '11px', padding: '8px 12px' }}>
           {search ? 'No matching projects.' : 'No projects discovered.'}
         </div>

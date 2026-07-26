@@ -35,6 +35,11 @@ export async function runTodoMgr(verb: string, args: string[] = []): Promise<str
       TODO_ROOT: todosRoot(),
       PYTHONPATH: PY_SRC_ROOT,
       PATH: envPath,
+      // Attribute app-initiated edits to the user, not "unknown" (todo_0638). The
+      // UAI app is single-user (PianoMan) and is not a CLI session, so todo_mgr's
+      // history actor would otherwise fall through to 'unknown'. TODO_ACTOR is read
+      // first by todo_mgr.current_session().
+      TODO_ACTOR: 'PianoMan',
     },
   });
   return stdout;

@@ -28,7 +28,9 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-sys.path.insert(0, os.environ.get("AI_SCRIPTS") or str(Path(__file__).resolve().parents[1]))
+_ai_scripts = os.environ.get("AI_SCRIPTS")
+if _ai_scripts:
+    sys.path.insert(0, _ai_scripts)
 from uai_toolkit.paths import AI_ROOT  # noqa: E402
 
 # States we accept as a real, persistable activity_state. "unknown" is intentionally
@@ -52,25 +54,25 @@ def set_activity_state(session_dir: str, tracking_id: str, state: str, *, signal
     if not session_dir or not tracking_id or state not in VALID_STATES:
         return False
     try:
-        path = Path(session_dir) / f"{tracking_id}_state.json"
-        cur = {}
-        if path.exists():
-            try:
-                cur = json.loads(path.read_text())
-            except (ValueError, OSError):
-                cur = {}
+        # Route the read (change-guard) + write through the shared bridge so
+        # enrolled sessions use the locked canonical accessor and everyone else the
+        # legacy file (todo_0495). read_union sees the current value in either file.
+        _hook_common = Path(__file__).resolve().parents[2] / "data" / "hooks" / "common"
+        if str(_hook_common) not in sys.path:
+            sys.path.insert(0, str(_hook_common))
+        from uai_toolkit.hooks.common.lib_session_state_union import read_union, write_session_state
 
+        cur = read_union(session_dir, tracking_id)
         if cur.get("session.activity_state") == state:
             return False  # change-guard: no write, no signal
 
         now = datetime.now().isoformat()
-        cur["session.activity_state"] = state
-        cur["session.activity_state_at"] = now
-        cur["updated_at"] = now
-
-        tmp = path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(cur, indent=2))
-        tmp.rename(path)
+        if not write_session_state(session_dir, tracking_id, {
+            "session.activity_state": state,
+            "session.activity_state_at": now,
+            "updated_at": now,
+        }):
+            return False
 
         if signal:
             try:

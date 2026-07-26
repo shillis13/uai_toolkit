@@ -16,6 +16,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "common"))
 from uai_toolkit.hooks.common.lib_hook_base import run_hook, HookResult
+from uai_toolkit.hooks.common.lib_session_state_union import read_union, write_session_state  # session-state bridge (todo_0495)
 
 AI_ROOT = Path(os.environ.get("AI_ROOT", os.path.expanduser("~/AI/ai_root")))
 AUTO_BRIEF = Path.home() / "bin" / "ai" / "jsonl" / "auto_brief.py"
@@ -30,24 +31,6 @@ except Exception:  # pragma: no cover - degrade to raw id; a lookup must not bre
         return identity if identity else unknown
 
 
-def read_state(path):
-    if path.exists():
-        try:
-            return json.loads(path.read_text())
-        except (json.JSONDecodeError, OSError):
-            pass
-    return {}
-
-
-def write_state(path, state):
-    try:
-        tmp = path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(state, indent=2))
-        tmp.rename(path)
-    except OSError:
-        pass
-
-
 def handler(hook_input, context):
     tracking_id = context.tracking_id
     session_dir = context.session_dir
@@ -57,8 +40,7 @@ def handler(hook_input, context):
     if not session_dir or not Path(session_dir).is_dir():
         return HookResult.skip("no session_dir")
 
-    state_path = Path(session_dir) / f"{tracking_id}_state.json"
-    state = read_state(state_path)
+    state = read_union(session_dir, tracking_id)
     now = datetime.now().isoformat()
 
     # A self-compaction registers its brief BEFORE triggering /compact (via
@@ -68,20 +50,19 @@ def handler(hook_input, context):
     registered_brief = state.get("compact.brief_file", "")
     is_self = bool(state.get("compact.self")) and bool(registered_brief) and Path(registered_brief).exists()
 
-    # Record pre-compaction snapshot
-    state["compact.start"] = now
-    # Keep a self-registered brief; otherwise clear any stale brief from a prior cycle.
-    state["compact.brief_file"] = registered_brief if is_self else ""
-    state["compact.end"] = ""  # clear previous end
-
-    # Snapshot pre-compaction metrics from existing state
-    state["compact.pre_ctx_pct"] = state.get("context.used_pct", "")
-    state["compact.pre_tokens"] = state.get("context.tokens", "")
-    state["compact.pre_turns"] = state.get("transcript.turns", "")
-    state["compact.pre_msgs"] = state.get("transcript.messages", "")
-
-    state["updated_at"] = now
-    write_state(state_path, state)
+    # Record pre-compaction snapshot — targeted write through the bridge (todo_0495).
+    # pre_* values come from the union read above; the brief_file is preserved for a
+    # self-compaction, else cleared.
+    write_session_state(session_dir, tracking_id, {
+        "compact.start": now,
+        "compact.brief_file": registered_brief if is_self else "",
+        "compact.end": "",  # clear previous end
+        "compact.pre_ctx_pct": state.get("context.used_pct", ""),
+        "compact.pre_tokens": state.get("context.tokens", ""),
+        "compact.pre_turns": state.get("transcript.turns", ""),
+        "compact.pre_msgs": state.get("transcript.messages", ""),
+        "updated_at": now,
+    })
 
     # Self-compaction: the AI already wrote + registered its own brief. Skip the
     # async condenser dispatch — PostCompact will stage the registered brief.
@@ -116,11 +97,10 @@ def handler(hook_input, context):
         proc.wait(timeout=30)  # auto_brief.py should return quickly (it dispatches)
 
         if proc.returncode == 0:
-            # Re-read state — auto_brief.py may have written compact.brief_file
-            state = read_state(state_path)
-            state["compact.brief_pending"] = True
-            state["updated_at"] = datetime.now().isoformat()
-            write_state(state_path, state)
+            write_session_state(session_dir, tracking_id, {
+                "compact.brief_pending": True,
+                "updated_at": datetime.now().isoformat(),
+            })
             return HookResult.allow(f"compact.start set, auto-brief dispatched")
         elif proc.returncode == 1:
             # No idle condenser — notify user

@@ -30,6 +30,7 @@ AI_ROOT = Path(os.environ.get("AI_ROOT") or (Path.home() / "AI" / "ai_root"))
 GUIDANCE_CLI = AI_ROOT / "ai_general" / "scripts" / "context_files" / "guidance_cli.py"
 
 DEFAULT_MAX_CHARS = 200_000
+_RELOAD_PREFIX = "50_reload__"
 
 
 def _resolve_via_guidance(name, tracking_id):
@@ -51,8 +52,23 @@ def _resolve_via_guidance(name, tracking_id):
         # inject that error string as content (that was the brief-load bug: the old
         # guard only checked "[Not found" and missed "[Trait not found …]"). Any
         # first-line bracketed "… not found …" ⇒ unresolved ⇒ fall back to raw path.
-        first_line = out.split("\n", 1)[0].lower()
-        looks_unresolved = first_line.startswith("[") and "not found" in first_line
+        lines = [line.strip().lower() for line in out.splitlines() if line.strip()]
+        # guidance_cli may return either a direct bracketed error as the first line
+        # or a markdown heading followed by the bracketed error, e.g.
+        #   # Prism
+        #   [Not found. Use get_knowledge_topics to browse.]
+        # Treat either form as unresolved so .ref path fallback stays graceful.
+        first_error_line = None
+        for line in lines:
+            if line.startswith("#"):
+                continue
+            first_error_line = line
+            break
+        looks_unresolved = bool(
+            first_error_line
+            and first_error_line.startswith("[")
+            and "not found" in first_error_line
+        )
         if out and not looks_unresolved:
             return out
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
@@ -119,6 +135,16 @@ def resolve_entry(entry, tracking_id):
                 "  The brief will then load on your next turn."
             ).format(iv=iv, prompt=prompt, brief=brief)
             return notice, "catch-up brief instruction"
+        # A self-authored brief pins an EXACT file (register_self_brief.py sets
+        # pin_path). That path is authoritative — read it directly. Resolving by
+        # name through guidance can hit a DIFFERENT registered context of the same
+        # name (a session named "Prism" collided with a guidance doc named "Prism"),
+        # loading the wrong brief. Only fall back to name resolution if the pinned
+        # file is gone.
+        if ref.get("pin_path"):
+            content, resolved = _read_file(ref.get("path", ""))
+            if content is not None:
+                return content, "{} (pinned path)".format(resolved)
         name = ref.get("name", "")
         content = _resolve_via_guidance(name, tracking_id)
         if content:
@@ -127,23 +153,105 @@ def resolve_entry(entry, tracking_id):
     return _read_file(entry)
 
 
-def _record_loaded(session_dir, tracking_id, name, source):
-    """Record a raw-file load in session state. (.ref loads are recorded by
-    guidance itself, so this only covers raw files.)"""
-    state_path = Path(session_dir) / "{}_state.json".format(tracking_id)
+def record_loaded_context(session_dir, tracking_id, name, ctype, source,
+                          path=None, durable=True):
+    """Record ONE loaded context item in the session's kv ``loaded_context`` list.
+
+    The SINGLE capture path for every load channel — SessionStart globals/platform/
+    roles, the context_to_load/ drain (.ref AND raw), and dynamic guidance callers
+    that use this helper — so a session's state reflects everything captured through
+    those paths (todo_0617 area C). Previously only raw drain entries were recorded,
+    so most context was invisible to state.
+
+    De-dups on ``(type, name)``: re-loading the same item REPLACES its entry (refreshed
+    ``loaded_at``/``source``) instead of appending a duplicate — so post-compaction
+    reload (area D) is idempotent. ``durable`` marks context that should be
+    re-established after /compact; transient notices (inbox / catch-up-brief) pass
+    ``durable=False`` so D can skip them. ``path`` is a re-stageable identity (a file
+    path or a guidance name) for D. Best-effort; never raises (a state-write failure
+    must never break a hook).
+    """
     try:
-        state = json.loads(state_path.read_text()) if state_path.exists() else {}
-        loaded = state.get("loaded_context", [])
+        from uai_toolkit.hooks.common.lib_session_state_union import read_union, write_session_state
+        loaded = read_union(session_dir, tracking_id).get("loaded_context", [])
         if not isinstance(loaded, list):
             loaded = []
-        loaded.append({"name": name, "source": source, "loaded_at": datetime.now().isoformat()})
-        state["loaded_context"] = loaded
-        state["updated_at"] = datetime.now().isoformat()
-        tmp = state_path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(state, indent=2))
-        tmp.rename(state_path)
-    except (OSError, json.JSONDecodeError):
+        key = (ctype, name)
+        loaded = [e for e in loaded
+                  if not (isinstance(e, dict) and (e.get("type"), e.get("name")) == key)]
+        loaded.append({
+            "name": name, "type": ctype, "source": source, "path": path,
+            "durable": bool(durable), "loaded_at": datetime.now().isoformat(),
+        })
+        write_session_state(session_dir, tracking_id, {
+            "loaded_context": loaded,
+            "updated_at": datetime.now().isoformat(),
+        })
+    except Exception:
         pass
+
+
+def _classify_entry(entry):
+    """Classify a context_to_load/ inbox entry for loaded_context recording.
+
+    Returns ``(ctype, durable, ident)``:
+    - persistent raw link -> ("raw", True, <resolved target path>)
+    - copied raw file     -> ("raw", False, None)  # consumed from the inbox
+    - transient notice    -> ("notice", False, None)  # inbox / catch-up-brief: do NOT reload
+    - durable .ref doc    -> (<ref type>, True, <pin_path|name|path>)  # e.g. "brief","bundle"
+    The ident is a re-stageable handle area D uses to reconstruct the load.
+    """
+    if entry.suffix != ".ref":
+        # drain() unlinks the inbox entry after delivery. A symlink's resolved
+        # target survives and can be re-staged after compaction; a copied raw file
+        # does not, so it must not claim to be durable with a dead inbox path.
+        if entry.is_symlink():
+            try:
+                resolved = entry.resolve(strict=True)
+                if resolved.is_file():
+                    return "raw", True, str(resolved)
+            except OSError:
+                pass
+        return "raw", False, None
+    try:
+        ref = json.loads(entry.read_text())
+    except (OSError, json.JSONDecodeError):
+        return "ref", True, None
+    rtype = ref.get("type", "ref")
+    if rtype in ("inbox", "catchup_brief"):
+        return "notice", False, None
+    # Preserve the identity that resolve_entry() actually used: pinned refs are
+    # path-authoritative; ordinary named refs resolve through guidance first and
+    # use path only as fallback. Reversing that order would reload different
+    # content after compaction.
+    if ref.get("pin_path") and ref.get("path"):
+        ident = ref.get("path")
+    else:
+        ident = ref.get("name") or ref.get("path")
+    return rtype, True, ident
+
+
+def _entry_record_name(entry):
+    """Stable loaded_context name for an inbox entry.
+
+    A .ref's semantic ``name`` must win over its queue filename. Area D prefixes
+    reload filenames (``50_reload__...``); recording the stem would defeat
+    de-duplication and append a new loaded_context entry on every compaction.
+    """
+    if entry.suffix == ".ref":
+        try:
+            ref = json.loads(entry.read_text())
+            name = ref.get("name")
+            if name:
+                return str(name)
+        except (OSError, json.JSONDecodeError):
+            pass
+    return entry.stem
+
+
+def _record_loaded(session_dir, tracking_id, name, source):
+    """Back-compat shim (raw-file load). Prefer record_loaded_context() directly."""
+    record_loaded_context(session_dir, tracking_id, name, "raw", source, path=name)
 
 
 def drain(session_dir, tracking_id, max_chars=DEFAULT_MAX_CHARS):
@@ -162,7 +270,15 @@ def drain(session_dir, tracking_id, max_chars=DEFAULT_MAX_CHARS):
 
     delivered = []
     total = 0
-    for entry in sorted(inbox.iterdir()):
+    # PostCompact durable reloads must drain AFTER any already-staged brief or
+    # catch-up instruction. Filename-only ordering cannot guarantee that (a brief
+    # named ``Prism.ref`` sorts after ``50_reload__...``), so reload entries get an
+    # explicit second priority bucket while preserving normal lexical order inside
+    # each bucket.
+    for entry in sorted(
+        inbox.iterdir(),
+        key=lambda p: (p.name.startswith(_RELOAD_PREFIX), p.name),
+    ):
         if not (entry.is_file() or entry.is_symlink()):
             continue
         content, source = resolve_entry(entry, tracking_id)
@@ -176,8 +292,12 @@ def drain(session_dir, tracking_id, max_chars=DEFAULT_MAX_CHARS):
             break  # leave the rest for the next delivery
         delivered.append((entry.stem, content, source))
         total += len(content)
-        if entry.suffix != ".ref":
-            _record_loaded(session_dir, tracking_id, entry.name, source)
+        # Capture EVERY delivered load in kv state — .ref and raw alike (area C).
+        # Transient notices (inbox / catch-up-brief) are recorded durable=False so
+        # post-compaction reload (area D) skips them.
+        ctype, durable, ident = _classify_entry(entry)
+        record_loaded_context(session_dir, tracking_id, _entry_record_name(entry), ctype, source,
+                              path=ident, durable=durable)
         try:
             entry.unlink()
         except OSError:

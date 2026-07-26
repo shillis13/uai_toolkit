@@ -1,0 +1,16 @@
+name: Chat History Pipeline & Ingestion
+description: >
+  Chat History Pipeline & Ingestion — bundle assembled from the todo_0319 grouping pass.
+_registry:
+  id: chat_history_pipeline_ingestion
+  name: Chat History Pipeline & Ingestion
+  status: active
+  version: 1.0.0
+
+context_files:
+  how_tos:
+    - ai_context_files/instructions/how_tos/protocols/protocol_chat_pipeline
+    - ai_context_files/instructions/how_tos/workflow_export_recent_chats
+  specs:
+    - ai_context_files/knowledge/specs/spec_artifact_extraction
+    - ai_context_files/knowledge/specs/spec_chat_history_indexer

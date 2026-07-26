@@ -201,7 +201,7 @@ export default function BottomPanel({ activeSessionId }: BottomPanelProps): JSX.
   };
 
   // ── Recent error bar — most recent error from main + renderer ──
-  const [lastError, setLastError] = useState<{ ts: string; source: string; session: string; message: string } | null>(null);
+  const [lastError, setLastError] = useState<{ ts: string; source: string; session: string; level?: 'error' | 'warn'; message: string } | null>(null);
   useEffect(() => {
     const poll = async () => {
       try { setLastError(await window.uai.getLastError?.() || null); } catch { /* ignore */ }
@@ -332,9 +332,9 @@ export default function BottomPanel({ activeSessionId }: BottomPanelProps): JSX.
 
   const recentErrorBar = lastError ? (
     <div
-      className="bottom-panel-error-bar"
+      className={`bottom-panel-error-bar${lastError.level === 'warn' ? ' bottom-panel-error-bar-warn' : ''}`}
       onClick={() => openToTab('error_log')}
-      title="Click to open the Errors log"
+      title={`Click to open the ${lastError.level === 'warn' ? 'Errors log (warning)' : 'Errors log'}`}
     >
       <span className="bottom-panel-error-icon">{'⚠'}</span>
       <span className="bottom-panel-error-source">{lastError.source}</span>
@@ -846,7 +846,7 @@ function SystemMonitorTab({ onOpenTab }: { onOpenTab?: (tabId: string) => void }
   const [expanded, setExpanded] = useState<string | null>(null);
   const [volumes, setVolumes] = useState<SysVolume[] | null>(null);
   const [boots, setBoots] = useState<Array<{ when: string }> | null>(null);
-  const [recentErrors, setRecentErrors] = useState<Array<{ ts: string; source: string; session: string; message: string }> | null>(null);
+  const [recentErrors, setRecentErrors] = useState<Array<{ ts: string; source: string; session: string; level?: 'error' | 'warn'; message: string }> | null>(null);
 
   useEffect(() => {
     const load = async () => {
@@ -1044,10 +1044,11 @@ function SystemMonitorTab({ onOpenTab }: { onOpenTab?: (tabId: string) => void }
                 {recentErrors.map((e, i) => (
                   <button
                     key={i}
-                    className="monitor-error-row"
-                    title={`${e.source} · ${e.session || 'unknown'}\n${e.message}\n\nClick to open the Errors log`}
+                    className={`monitor-error-row${e.level === 'warn' ? ' monitor-error-row-warn' : ''}`}
+                    title={`${(e.level || 'error').toUpperCase()} · ${e.source} · ${e.session || 'unknown'}\n${e.message}\n\nClick to open the Errors log`}
                     onClick={() => onOpenTab?.('error_log')}
                   >
+                    <span className="monitor-error-lvl">{(e.level || 'error').toUpperCase()}</span>
                     <span className="monitor-error-src">{e.source}</span>
                     <span className="monitor-error-msg">{e.message}</span>
                   </button>

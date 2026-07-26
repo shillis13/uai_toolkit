@@ -29,13 +29,12 @@ import DOMPurify from 'dompurify';
 import ProjectDetailView from './ProjectDetailView';
 import ProjectEditor from './ProjectEditor';
 import SessionWorkView from './SessionWorkView';
-import TeamDetailView from './TeamDetailView';
 import WebAIPane from './WebAIPane';
 import ContextMgrPane from './ContextMgrPane';
 import TodoManagerPane from './TodoManagerPane';
 import TaskManagerPane from './TaskManagerPane';
 import type { AnyCard } from '@uai/shared/cards';
-import { isSessionCard, isProjectCard, isTeamCard } from '@uai/shared/cards';
+import { isSessionCard, isProjectCard } from '@uai/shared/cards';
 import StandaloneTerminal from './StandaloneTerminal';
 import SessionStoreMgrPane from './SessionStoreMgrPane';
 import ScheduledTasksPane from './ScheduledTasksPane';
@@ -408,11 +407,13 @@ interface TabContentPaneProps {
   memorexEnabled?: boolean;
   transcriptOpen?: boolean;
   onCloseTranscript?: () => void;
+  /** False while a mounted session tab is hidden behind another workspace tab. */
+  active?: boolean;
   /** Chat|Work view — lifted to Workspace so the toggle can live in the title bar. */
   subtab?: 'chat' | 'work';
 }
 
-function SessionContent({ tab, memorexEnabled, transcriptOpen, onCloseTranscript, subtab = 'chat' }: { tab: Tab; memorexEnabled?: boolean; transcriptOpen?: boolean; onCloseTranscript?: () => void; subtab?: 'chat' | 'work' }): JSX.Element {
+function SessionContent({ tab, memorexEnabled, transcriptOpen, onCloseTranscript, subtab = 'chat', active = true }: { tab: Tab; memorexEnabled?: boolean; transcriptOpen?: boolean; onCloseTranscript?: () => void; subtab?: 'chat' | 'work'; active?: boolean }): JSX.Element {
   const { getSession } = useSessionStore();
   const { appState, updateAppState } = useAppStateStore();
   const session = getSession(tab.targetId);
@@ -436,10 +437,10 @@ function SessionContent({ tab, memorexEnabled, transcriptOpen, onCloseTranscript
   // lives in the SessionTitleBar; `subtab` is passed down from Workspace.
 
   useViewport('entity_view', () => ({
-    visible: true,
+    visible: active,
     label: `session: ${session?.display_name || tab.targetId}`,
     children: ['session_pane', 'context_panel'],
-  }));
+  }), active);
 
   if (!session) {
     return (
@@ -462,7 +463,7 @@ function SessionContent({ tab, memorexEnabled, transcriptOpen, onCloseTranscript
           <p>No terminal session available.</p>
         </div>
       </div>
-      <ContextPanel activeSessionId={session.tracking_id} />
+      <ContextPanel activeSessionId={session.tracking_id} active={active} />
     </div>
   ) : !isActive ? (
     <div className="entity-view-row">
@@ -479,16 +480,17 @@ function SessionContent({ tab, memorexEnabled, transcriptOpen, onCloseTranscript
           />
         </div>
       </div>
-      <ContextPanel activeSessionId={session.tracking_id} />
+      <ContextPanel activeSessionId={session.tracking_id} active={active} />
     </div>
   ) : (
     <div className="entity-view-row">
       <div className="entity-view-content">
-        <SessionPane key={session.tracking_id} session={session} memorexEnabled={memorexEnabled} />
+        <SessionPane key={session.tracking_id} session={session} memorexEnabled={memorexEnabled} active={active && effectiveSubtab === 'chat'} />
         <PromptBox
           sessionId={session.tracking_id}
           sessionName={session.display_name || session.tracking_id}
           cliSessionId={session.cli_session_id}
+          active={active && effectiveSubtab === 'chat'}
         />
       </div>
       {(() => {
@@ -513,7 +515,7 @@ function SessionContent({ tab, memorexEnabled, transcriptOpen, onCloseTranscript
           />
         );
       })()}
-      <ContextPanel activeSessionId={session.tracking_id} />
+      <ContextPanel activeSessionId={session.tracking_id} active={active} />
     </div>
   );
 
@@ -678,24 +680,11 @@ function FolderContent({ tab }: { tab: Tab }): JSX.Element {
   const [filterText, setFilterText] = useState('');
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; sessionId: string } | null>(null);
   const [sessionFilter, setSessionFilter] = useState<FolderFilter>(DEFAULT_FOLDER_FILTER);
-  const [filterDrawerOpen, setFilterDrawerOpen] = useState(false);
-  const filterBtnRef = useRef<HTMLButtonElement>(null);
-  const filterPopoverRef = useRef<HTMLDivElement>(null);
+  // todo_0325: the filter is a persistent bar under the title bar, open by default;
+  // the Filters button toggles it. (No outside-click/Escape auto-dismiss — a bar,
+  // not a popover.)
+  const [filterDrawerOpen, setFilterDrawerOpen] = useState(true);
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set());
-
-  // Close the filter dropdown on outside click / Escape.
-  useEffect(() => {
-    if (!filterDrawerOpen) return;
-    const onDown = (e: MouseEvent) => {
-      const t = e.target as Node;
-      if (filterBtnRef.current?.contains(t) || filterPopoverRef.current?.contains(t)) return;
-      setFilterDrawerOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setFilterDrawerOpen(false); };
-    document.addEventListener('mousedown', onDown);
-    document.addEventListener('keydown', onKey);
-    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey); };
-  }, [filterDrawerOpen]);
 
   const toggleSection = useCallback((section: string) => {
     setCollapsedSections(prev => {
@@ -786,7 +775,6 @@ function FolderContent({ tab }: { tab: Tab }): JSX.Element {
           </select>
           <div className="filter-drawer-anchor">
             <button
-              ref={filterBtnRef}
               className={`folder-filter-toggle${activeSessionFilterCount > 0 ? ' active' : ''}`}
               onClick={() => setFilterDrawerOpen(v => !v)}
             >
@@ -796,29 +784,13 @@ function FolderContent({ tab }: { tab: Tab }): JSX.Element {
         </div>,
         portalTarget
       )}
-      {/* Filter dropdown — portaled to body so it isn't clipped by the title-bar
-          row and can wrap to show all controls regardless of pane width. */}
-      {filterDrawerOpen && (() => {
-        const r = filterBtnRef.current?.getBoundingClientRect();
-        const top = r ? r.bottom + 4 : 80;
-        // Open to the RIGHT from the Filters button: anchor the panel's LEFT edge
-        // to the button so it grows rightward/downward, not leftward across the
-        // left panel. Clamp so the fixed-width panel never runs off the window.
-        const PANEL_W = 300;
-        const left = r
-          ? Math.max(8, Math.min(r.left, window.innerWidth - PANEL_W - 8))
-          : 8;
-        return createPortal(
-          <div
-            ref={filterPopoverRef}
-            className="filter-drawer-popover"
-            style={{ position: 'fixed', top, left, width: PANEL_W, zIndex: 10000 }}
-          >
-            <InlineFilterPills filter={sessionFilter} onFilterChange={setSessionFilter} />
-          </div>,
-          document.body,
-        );
-      })()}
+      {/* Filter bar — a persistent bar directly under the title bar, in normal flow
+          (todo_0325). Toggled by the Filters button; open by default. */}
+      {filterDrawerOpen && (
+        <div className="folder-filter-bar">
+          <InlineFilterPills filter={sessionFilter} onFilterChange={setSessionFilter} />
+        </div>
+      )}
       <div className={viewMode === 'grid' ? 'folder-content-grid folder-content-sections' : 'folder-content-list folder-content-sections'}>
         {/* Subfolders section */}
         {subfolders.length > 0 && (
@@ -1871,26 +1843,6 @@ function ProjectContent({ tab }: { tab: Tab }): JSX.Element {
   );
 }
 
-function TeamContent({ tab }: { tab: Tab }): JSX.Element {
-  const cardStore = useCardStore();
-  const team = cardStore.teams.find(t => t.entity_id === `team:${tab.targetId}` || t.entity_id === tab.targetId);
-
-  if (!team) {
-    return (
-      <div className="workspace-placeholder">
-        <h3>Team not found</h3>
-        <p>{tab.targetId}</p>
-      </div>
-    );
-  }
-
-  return (
-    <div className="team-content">
-      <TeamDetailView team={team} />
-    </div>
-  );
-}
-
 // Conventional viewport ids for app-tab panes — so describeViewport() can reach
 // each Mgr. A pane appears in the tree only once it registers a useViewport
 // reporter under its id; until then the node resolves as not-visible. work_mgr
@@ -1955,10 +1907,10 @@ function AppContent({ tab }: { tab: Tab }): JSX.Element {
   }
 }
 
-export default function TabContentPane({ tab, memorexEnabled, transcriptOpen, onCloseTranscript, subtab }: TabContentPaneProps): JSX.Element {
+export default function TabContentPane({ tab, memorexEnabled, transcriptOpen, onCloseTranscript, subtab, active = true }: TabContentPaneProps): JSX.Element {
   switch (tab.type) {
     case 'session':
-      return <SessionContent tab={tab} memorexEnabled={memorexEnabled} transcriptOpen={transcriptOpen} onCloseTranscript={onCloseTranscript} subtab={subtab} />;
+      return <SessionContent tab={tab} memorexEnabled={memorexEnabled} transcriptOpen={transcriptOpen} onCloseTranscript={onCloseTranscript} subtab={subtab} active={active} />;
     case 'folder':
       return <FolderContent tab={tab} />;
     case 'terminal':

@@ -106,6 +106,8 @@ export interface RecentError {
   ts: string;
   source: string;   // 'main' | 'renderer' | 'scaffolding' | 'command'
   session: string;
+  level: 'error' | 'warn';   // carried so the status bar colors by the SAME level
+                             // the Error Log shows (todo_0674) — not always red.
   message: string;
 }
 const recentErrors: RecentError[] = [];
@@ -248,7 +250,7 @@ export function logError(
   }
 
   // 3. Recent-errors ring buffer for the status bar
-  recentErrors.push({ ts, source, session, message: shortMsg });
+  recentErrors.push({ ts, source, session, level, message: shortMsg });
   if (recentErrors.length > RECENT_ERRORS_MAX) recentErrors.shift();
 
   if (level === 'error') errorCount++;

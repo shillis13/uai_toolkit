@@ -158,14 +158,51 @@ def _diagnose_session_reference(identifier: str) -> dict:
 def _resolve_session(identifier: str) -> dict | None:
     """Resolve any session identifier via SessionStore.
 
-    Accepts URIs (uai://session/<id>) or raw identifiers.
-    Tries tracking_id, terminal_session, cli_uuid (exact match).
+    Accepts URIs (uai://session/<id>) or raw identifiers. First tries the store's
+    exact resolver (tracking_id, terminal_session, cli_uuid). If that misses, falls
+    back to a DISPLAY-NAME search — preferring a LIVE record when several sessions
+    have shared the name over time — so an op addressed by display name (e.g.
+    `get-status Noctis`) reaches the running session, not a stale namesake (todo_0278).
     Returns the session dict or None.
     """
     try:
-        return _get_store().resolve(_normalize_identifier(identifier))
+        store = _get_store()
     except Exception:
         return None
+    ident = _normalize_identifier(identifier)
+    try:
+        hit = store.resolve(ident)
+        if hit:
+            return hit
+    except Exception:
+        pass
+    # Display-name fallback — resolve() doesn't match on display name.
+    try:
+        matches = store.list(filters={"display_name": ident})
+    except Exception:
+        return None
+    # SessionStore.list field filters are substring matches for UI search. Routing
+    # must stay exact, like store.resolve(), or a short prefix could reach the
+    # wrong display name.
+    matches = [m for m in matches if m.get("display_name") == ident]
+    if not matches:
+        return None
+    if len(matches) == 1:
+        return matches[0]
+    # Name collision: prefer the record with a LIVE terminal (authoritative probe),
+    # so a live session always wins over an exited namesake.
+    try:
+        live_probe = store._get_live_terminal_sessions()
+        live = [m for m in matches if store._session_is_live(m, live_probe)]
+        if len(live) == 1:
+            return live[0]
+        if live:
+            matches = live                       # multiple live namesakes — narrow first
+    except Exception:
+        pass
+    # Still ambiguous: prefer a stored-active record, else the first match.
+    active = [m for m in matches if m.get("status") == "active"]
+    return active[0] if active else matches[0]
 
 
 def _resolve_terminal_name(identifier: str) -> str:
@@ -784,7 +821,8 @@ def _print_geometry(report: list[dict]) -> None:
 
 
 def read_terminal(session_name: str, full: bool = False, substrate: str | None = None,
-                   raw: bool = False, styled: bool = False) -> str:
+                   raw: bool = False, styled: bool = False,
+                   lines: int | None = None) -> str:
     """Read current terminal screen content, cleaned for parsing.
 
     Args:
@@ -795,11 +833,19 @@ def read_terminal(session_name: str, full: bool = False, substrate: str | None =
     """
     session_name = _resolve_terminal_name(session_name)
     sub = _resolve_substrate_for_session(session_name, substrate)
-    if full:
+    if full or lines is not None:
         try:
-            text = sub.dump_screen(session_name, full=True, plain_text=not styled)
+            text = sub.dump_screen(
+                session_name,
+                full=full,
+                lines=lines,
+                plain_text=not styled,
+            )
         except TypeError:
-            text = sub.dump_screen(session_name, plain_text=not styled)
+            try:
+                text = sub.dump_screen(session_name, full=full, plain_text=not styled)
+            except TypeError:
+                text = sub.dump_screen(session_name, plain_text=not styled)
     else:
         text = sub.dump_screen(session_name, plain_text=not styled)
 
@@ -1564,6 +1610,7 @@ Use 'session_ops <command> --help' for full details on each command.""",
     p_read = sub.add_parser("read-terminal", help="Read terminal screen content")
     p_read.add_argument("session_name")
     p_read.add_argument("--full", action="store_true", help="Include scrollback")
+    p_read.add_argument("--lines", type=int, help="Scrollback rows before the current screen to capture (1-50000)")
     p_read.add_argument("--json", action="store_true", help="Output as JSON object with content and line count")
     p_read.add_argument("--raw", action="store_true", help="Alias for text output (default)")
     p_read.add_argument("--no-clean", action="store_true", help="Skip text cleaning (return raw terminal dump)")
@@ -1660,7 +1707,8 @@ Use 'session_ops <command> --help' for full details on each command.""",
             text = read_terminal(args.session_name, full=args.full,
                                  substrate=getattr(args, 'substrate', None),
                                  raw=getattr(args, 'no_clean', False),
-                                 styled=getattr(args, 'styled', False))
+                                 styled=getattr(args, 'styled', False),
+                                 lines=getattr(args, 'lines', None))
             if getattr(args, 'json', False):
                 print(json.dumps({"content": text, "lines": len(text.split('\n'))},
                                  ensure_ascii=False))

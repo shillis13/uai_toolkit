@@ -1,0 +1,35 @@
+name: Developer Workflow - Git, Testing & Automation
+description: >
+  Developer Workflow - Git, Testing & Automation — bundle assembled from the todo_0319 grouping pass.
+_registry:
+  id: developer_workflow_git_testing_automation
+  name: Developer Workflow - Git, Testing & Automation
+  status: active
+  version: 1.0.0
+
+context_files:
+  how_tos:
+    - ai_context_files/instructions/how_tos/instr_audit_system
+    - ai_context_files/instructions/how_tos/instr_background_app_automation
+    - ai_context_files/instructions/how_tos/instr_git_guardian_development
+    - ai_context_files/instructions/how_tos/instr_git_guardian_role
+    - ai_context_files/instructions/how_tos/instr_testing
+    - ai_context_files/instructions/how_tos/instr_km_scripting
+    - ai_context_files/instructions/how_tos/instr_self_verify_uai_cdp
+    - ai_context_files/instructions/how_tos/instr_use_existing_chat_pipeline
+    - ai_context_files/instructions/how_tos/instr_devtools_element_picker
+    - ai_context_files/instructions/how_tos/instr_test_instance_hidden
+    - ai_context_files/instructions/how_tos/instr_test_instance_multi
+    - ai_context_files/instructions/how_tos/instr_search_dont_guess
+    - ai_context_files/instructions/how_tos/instr_identity_verification
+  schemas:
+    - ai_context_files/knowledge/schemas/schema_scheduled_task
+  specs:
+    - ai_context_files/knowledge/specs/spec_js_analysis_playbook
+  rules:
+    - ai_context_files/instructions/rules/rules_build_after_every_change
+    - ai_context_files/instructions/rules/rules_deploy_gate_is_build_not_wip
+    - ai_context_files/instructions/rules/rules_version_bump_build_increment_default
+    - ai_context_files/instructions/rules/rules_version_on_deploy
+    - ai_context_files/instructions/rules/rules_python_compat
+    - ai_context_files/instructions/rules/rules_snapshot_colocate_with_source

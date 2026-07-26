@@ -92,6 +92,9 @@ def handler(hook_input, context):
         sections.append(f"--- Global Context: {name} ---\n{content}\n--- End: {name} ---")
         total_chars += len(content)
         loaded_names.append(f"global/{name}")
+        lib_context_load.record_loaded_context(
+            session_dir, tracking_id, name, "global", "SessionStart/globals",
+            path=str(globals_dir / name))
 
     # 2. Platform-specific context files
     platform = _get_platform()
@@ -103,6 +106,9 @@ def handler(hook_input, context):
             sections.append(f"--- Platform Context ({platform}): {name} ---\n{content}\n--- End: {name} ---")
             total_chars += len(content)
             loaded_names.append(f"platform/{name}")
+            lib_context_load.record_loaded_context(
+                session_dir, tracking_id, name, "platform",
+                f"SessionStart/platform/{platform}", path=str(platform_dir / name))
 
     # 3. Roles from session store (skip 'assistant' — implicit base role)
     _sm = AI_GENERAL / "scripts" / "session_mgmt"
@@ -121,6 +127,9 @@ def handler(hook_input, context):
                         sections.append(f"--- Role: {role} ---\n{content}\n--- End Role: {role} ---")
                         total_chars += len(content)
                         loaded_names.append(f"role/{role}")
+                        lib_context_load.record_loaded_context(
+                            session_dir, tracking_id, role, "role",
+                            "SessionStart/roles", path=None)
     except Exception:
         pass
 

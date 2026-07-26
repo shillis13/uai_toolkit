@@ -1,0 +1,18 @@
+name: Team Developer
+description: 'A developer working within a team: implements assigned work, coordinates
+  with peers, and communicates status. Individual dev role + team_member (Team-Member
+  operating instructions flow in via team_member).'
+
+roles:
+  - ai_profiles/roles/assistant
+  - ai_profiles/roles/worker
+  - ai_profiles/roles/dev
+  - ai_profiles/roles/team_member
+
+_registry:
+  id: team_developer
+  name: Team Developer
+  status: active
+  version: 1.0.0
+  created: '2026-07-25'
+  updated: '2026-07-25'

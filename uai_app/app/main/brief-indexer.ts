@@ -63,12 +63,23 @@ function parseYamlFrontmatter(content: string): BriefMeta {
   return meta;
 }
 
+/**
+ * Standing rule: never traverse archive folders. Archived material (superseded
+ * briefs, offloaded transcripts, …) lives in `archive` / `_archive` / `archived`
+ * dirs and must not surface in live listings. Matches case-insensitively, with or
+ * without a leading underscore.
+ */
+export function isArchiveDirName(name: string): boolean {
+  return /^_?archived?$/i.test(name);
+}
+
 function collectYamlFiles(dir: string, relPrefix: string = ''): Array<{ filePath: string; relDir: string; file: string }> {
   const results: Array<{ filePath: string; relDir: string; file: string }> = [];
   if (!fs.existsSync(dir)) return results;
 
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     if (entry.name.startsWith('.')) continue;
+    if (entry.isDirectory() && isArchiveDirName(entry.name)) continue;  // never traverse archives
     const fullPath = path.join(dir, entry.name);
     if (entry.isDirectory()) {
       results.push(...collectYamlFiles(fullPath, relPrefix ? `${relPrefix}/${entry.name}` : entry.name));

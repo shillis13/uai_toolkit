@@ -1,0 +1,15 @@
+name: Frontend & UX Standards
+description: 'PianoMan''s UI/UX standards: bold background colors, overshoot visual
+  adjustments, stable button placement, pills only for stable sets, chevron sizes,
+  visual documentation.'
+
+context_files:
+  ux:
+    - ai_context_files/instructions/ux/ux_more_colors_means_bold_backgrounds
+    - ai_context_files/instructions/ux/ux_pills_only_for_stable_sets
+    - ai_context_files/instructions/ux/ux_uai_chevron_sizes
+    - ai_context_files/instructions/ux/ux_button_placement_mouse_travel
+    - ai_context_files/instructions/ux/ux_human_ui_polish
+    - ai_context_files/instructions/ux/ux_overshoot_visual_adjustments
+    - ai_context_files/instructions/ux/ux_visual_documentation
+    - ai_context_files/instructions/ux/ux_visual_companion

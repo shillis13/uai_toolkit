@@ -31,7 +31,9 @@ def handler(hook_input, context):
     # Everything below fails open — a feed problem must never block the prompt.
     try:
         from uai_toolkit.coordination import feed_lib
-        from uai_toolkit.session_mgmt.store import SessionStore
+        # store.py was renamed session_key_values.py (SessionStore -> SessionKeyValues)
+        # on 2026-07-17; old name removed 2026-07-21. Alias keeps usage below unchanged.
+        from uai_toolkit.session_mgmt.session_key_values import SessionKeyValues as SessionStore
 
         key = f"feed.index.{CHANNEL}"
         store = SessionStore(tracking_id=context.tracking_id,

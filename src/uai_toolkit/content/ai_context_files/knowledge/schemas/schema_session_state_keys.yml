@@ -46,6 +46,25 @@ reserved_keys:
     example: "$AI_ROOT"
     dedicated_tool: null
 
+  - key: loaded_context
+    type: list
+    writer: hook
+    description: >
+      Every context item the session has loaded — at startup (globals/platform/roles)
+      OR dynamically via the context_to_load/ drain (.ref + raw). One capture path:
+      lib_context_load.record_loaded_context. Enables "what does this session have
+      loaded?" (observability), post-compaction reload (area D), and unload (area E).
+      todo_0617 area C.
+    example: '[{"name":"pianoman_collaboration","type":"bundle","source":"SessionStart/globals","path":"...","durable":true,"loaded_at":"2026-07-21T23:30:00"}]'
+    dedicated_tool: null
+    notes: >
+      Entry shape {name, type, source, path, durable, loaded_at}. De-duped on
+      (type, name) — re-loading refreshes rather than appends. type in
+      {global, platform, role, raw, notice, <ref-type e.g. brief/bundle/knowledge>}.
+      durable=false marks transient notices (inbox / catch-up-brief) and consumed raw
+      copies with no persistent source; those must NOT be reloaded after /compact.
+      Written best-effort by hooks (trusted, validate=False).
+
   # --- env.* — Seeded from OS environment at launch ---
   - key: env.AI_TRACKING_ID
     type: str
@@ -91,6 +110,38 @@ reserved_keys:
     example: "Nightwatch"
     dedicated_tool: null
 
+  # session.* runtime keys written by hooks/scaffolding (registry catch-up, todo_0495)
+  - key: session.activity_state
+    type: str
+    writer: hook
+    description: Live activity state (idle/responding/working/blocked/exited)
+    example: responding
+    dedicated_tool: null
+  - key: session.activity_state_at
+    type: str
+    writer: hook
+    description: ISO8601 timestamp of the last activity_state change
+    example: "2026-07-18T17:07:26"
+    dedicated_tool: null
+  - key: session.last_activity
+    type: str
+    writer: hook
+    description: ISO8601 timestamp of the session's last recorded activity
+    example: "2026-07-18T17:07:26"
+    dedicated_tool: null
+  - key: session.start_history
+    type: list
+    writer: hook
+    description: Append-only list of session start/resume timestamps
+    example: '["2026-07-18T12:00:00"]'
+    dedicated_tool: null
+  - key: session.working_dir
+    type: str
+    writer: hook
+    description: Working directory captured at the last Stop
+    example: "$AI_ROOT/ai_general"
+    dedicated_tool: null
+
   # --- compact.* — Compaction lifecycle ---
   - key: compact.auto_brief
     type: bool
@@ -99,6 +150,14 @@ reserved_keys:
     example: true
     dedicated_tool: null
     notes: Defaults to true if not set
+
+  - key: compact.reload_context
+    type: bool
+    writer: ai_via_mcp_or_config
+    description: Whether PostCompact re-stages durable loaded_context entries
+    example: true
+    dedicated_tool: null
+    notes: Defaults to true if not set; false is the per-session Area-D opt-out
 
   - key: compact.start
     type: str
@@ -156,6 +215,40 @@ reserved_keys:
     example: 2500
     dedicated_tool: null
 
+  - key: compact.auto_self_pct
+    type: int
+    writer: ai_via_mcp
+    description: Context % at which auto-self-compact fires (0 = disabled)
+    example: 85
+    dedicated_tool: null
+    notes: Set via set-self-compact-threshold skill; read by Stop/08_auto_self_compact hook
+
+  # compact.* runtime keys written by hooks (registry catch-up, todo_0495)
+  - key: compact.self
+    type: bool
+    writer: hook
+    description: A self-compact is currently in progress
+    example: true
+    dedicated_tool: null
+  - key: compact.self_triggered
+    type: bool
+    writer: hook
+    description: Self-compact already triggered this cycle (once-per-cycle guard)
+    example: true
+    dedicated_tool: null
+  - key: compact.warning_pct
+    type: int
+    writer: hook
+    description: Context % at which the self-compact warning was last emitted
+    example: 80
+    dedicated_tool: null
+  - key: compact.deferred
+    type: dict
+    writer: hook
+    description: Deferred self-compact state (set by deferred_self_compact)
+    example: '{"armed": true}'
+    dedicated_tool: null
+
   # --- context.* — Context window usage, cached by hook ---
   - key: context.used_pct
     type: int
@@ -184,6 +277,107 @@ reserved_keys:
     description: ISO8601 timestamp of last context cache update
     example: "2026-04-26T01:30:00-04:00"
     dedicated_tool: sessions_get_ctx_used
+
+  # --- context.* auto-offload config — set by the set-auto-offload skill (todo_0495) ---
+  - key: context.auto_offload_pct
+    type: int
+    writer: ai_via_mcp
+    description: Context % at which auto-offload fires (0 = disabled; opt-in, default off)
+    example: 78
+    dedicated_tool: null
+    notes: Set via set-auto-offload skill; read by Stop/09_auto_offload hook
+  - key: context.offload_warn_pct
+    type: int
+    writer: ai_via_mcp
+    description: Context % for the first auto-offload warning
+    example: 70
+    dedicated_tool: null
+  - key: context.offload_warn2_pct
+    type: int
+    writer: ai_via_mcp
+    description: Context % for the second (louder) auto-offload warning
+    example: 82
+    dedicated_tool: null
+  - key: context.offload_otc_min
+    type: int
+    writer: ai_via_mcp
+    description: Offloadable-tool-call floor in TOKENS before offload is worthwhile
+    example: 20000
+    dedicated_tool: null
+
+  # context.* runtime keys written by hooks (registry catch-up, todo_0495)
+  - key: context.input_tokens
+    type: int
+    writer: hook
+    description: Input token count at the last Stop
+    example: 120000
+    dedicated_tool: null
+  - key: context.output_tokens
+    type: int
+    writer: hook
+    description: Output token count at the last Stop
+    example: 8000
+    dedicated_tool: null
+  - key: context.cache_creation_tokens
+    type: int
+    writer: hook
+    description: Cache-creation token count
+    example: 40000
+    dedicated_tool: null
+  - key: context.cache_read_tokens
+    type: int
+    writer: hook
+    description: Cache-read token count
+    example: 150000
+    dedicated_tool: null
+  - key: context.window_size
+    type: int
+    writer: hook
+    description: Model context window size in tokens
+    example: 1000000
+    dedicated_tool: null
+  - key: context.memory_mb
+    type: int
+    writer: hook
+    description: Process memory footprint in MB
+    example: 512
+    dedicated_tool: null
+  - key: context.otc_tokens
+    type: int
+    writer: hook
+    description: Cached offloadable-tool-call token estimate
+    example: 30000
+    dedicated_tool: null
+  - key: context.otc_computed_at
+    type: str
+    writer: hook
+    description: Epoch/ISO time the otc estimate was last computed
+    example: "1752866846.7"
+    dedicated_tool: null
+  - key: context.otc_at_pct
+    type: int
+    writer: hook
+    description: Context % at which the otc estimate was last computed
+    example: 62
+    dedicated_tool: null
+  - key: context.offload_warned_level
+    type: int
+    writer: hook
+    description: Highest auto-offload warning level already emitted this cycle
+    example: 1
+    dedicated_tool: null
+  - key: context.design_md
+    type: list
+    writer: hook
+    description: Directories whose DESIGN.md has been read this session
+    example: '["scripts/session_mgmt"]'
+    dedicated_tool: null
+  - key: context.readme
+    type: list
+    writer: hook
+    description: Directories whose README has been read this session
+    example: '["data/hooks"]'
+    dedicated_tool: null
 
   # --- loaded.* — Documents and data the session has read ---
   - key: loaded.docs
@@ -283,6 +477,12 @@ reserved_keys:
     writer: hook
     description: 7-day rate limit reset time (Unix epoch)
     example: 1778522400
+    dedicated_tool: null
+  - key: usage.last_reporter
+    type: str
+    writer: hook
+    description: Tracking ID of the session that last wrote the shared usage snapshot
+    example: "20260621_121002_16b176f5_cla"
     dedicated_tool: null
 
   # --- conversation.* — Properties of the chat ---

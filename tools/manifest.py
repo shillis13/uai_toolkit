@@ -59,6 +59,15 @@ APP_TEXT_SUFFIXES = CONTENT_TEXT_SUFFIXES | {".ts", ".tsx", ".js", ".jsx", ".mjs
 # `mcp.` so the PyPI MCP SDK imports (`from mcp.server`, `from mcp.types`) are
 # left untouched. `{PKG}` is substituted with the entry's mcp package when set.
 IMPORT_REWRITES = [
+    # Source scripts may prepend their scripts directory when run in-place. In
+    # the installed package, the same fallback points at ``uai_toolkit/`` and
+    # makes its ``mcp`` subpackage shadow the third-party MCP SDK. Preserve an
+    # explicitly supplied AI_SCRIPTS override, but do not synthesize a package-
+    # root fallback: package imports already resolve without it.
+    (
+        r'^sys\.path\.insert\(0, os\.environ\.get\("AI_SCRIPTS"\) or str\(Path\(__file__\)\.resolve\(\)\.parents\[1\]\)\)$',
+        '_ai_scripts = os.environ.get("AI_SCRIPTS")\nif _ai_scripts:\n    sys.path.insert(0, _ai_scripts)',
+    ),
     (r"\bfrom common_utils\.", "from uai_toolkit.common_utils."),
     (r"\bfrom utils\.standard_colors\b", "from uai_toolkit.common_utils.standard_colors"),
     # text_utils + calc (pylib) vendored 2026-07-26: bare sibling / package imports -> toolkit form.
@@ -189,6 +198,7 @@ MODULES = [
     {"dest": "jsonl/platform_adapters/claude.py",     "source": "ai:jsonl/platform_adapters/claude.py",        "kind": "clean"},
     {"dest": "jsonl/platform_adapters/codex.py",      "source": "ai:jsonl/platform_adapters/codex.py",         "kind": "clean"},
     {"dest": "jsonl/platform_adapters/gemini.py",     "source": "ai:jsonl/platform_adapters/gemini.py",        "kind": "clean"},
+    {"dest": "jsonl/platform_adapters/grok.py",       "source": "ai:jsonl/platform_adapters/grok.py",          "kind": "clean"},
     # read_jsonl ported FAITHFULLY (2026-07-07): was curated/trimmed (archive+engram
     # amputated -858 lines); now clean+complete with its deps ported alongside, so
     # it round-trips. (PianoMan: minimize curation, port faithfully.)

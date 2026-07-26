@@ -53,7 +53,9 @@ from uai_toolkit.common_utils.lib_logging import configure_logging, get_logger
 import yaml
 
 # Shared color library
-sys.path.insert(0, os.environ.get("AI_SCRIPTS") or str(Path(__file__).resolve().parents[1]))
+_ai_scripts = os.environ.get("AI_SCRIPTS")
+if _ai_scripts:
+    sys.path.insert(0, _ai_scripts)
 from uai_toolkit.common_utils.standard_colors import c, success, error, warn, info, dim, bold, heading, format_help, colors_enabled
 
 

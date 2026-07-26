@@ -1,0 +1,24 @@
+name: Doc & Writing Standards
+description: >
+  Doc & Writing Standards — bundle assembled from the todo_0319 grouping pass.
+_registry:
+  id: doc_writing_standards
+  name: Doc & Writing Standards
+  status: active
+  version: 1.0.0
+
+context_files:
+  rules:
+    - ai_context_files/instructions/rules/rules_development
+    - ai_context_files/instructions/rules/rules_file_conventions
+    - ai_context_files/instructions/rules/rules_writing
+    - ai_context_files/instructions/rules/rules_define_terms_before_use
+    - ai_context_files/instructions/rules/rules_capitalize_glossary_terms
+    - ai_context_files/instructions/rules/rules_include_file_paths
+    - ai_context_files/instructions/rules/rules_timestamp_display
+    - ai_context_files/instructions/rules/rules_reference_todos_by_id
+    - ai_context_files/instructions/rules/rules_todo_trailer_and_status_notes
+    - ai_context_files/instructions/rules/rules_file_naming_convention
+  templates:
+    - ai_context_files/instructions/templates/doc_audit_remediate_template
+    - ai_context_files/instructions/templates/doc_audit_scan_template

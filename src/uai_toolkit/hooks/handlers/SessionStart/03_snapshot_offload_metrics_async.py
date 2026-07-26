@@ -53,21 +53,14 @@ def handler(hook_input, context):
         snap["archive_blocks"] = a["blocks"]
         snap["archive_orig_bytes"] = a["orig_bytes"]
 
-    state_path = Path(context.session_dir) / f"{context.tracking_id}_state.json"
-    state = {}
-    if state_path.exists():
-        try:
-            state = json.loads(state_path.read_text())
-        except (json.JSONDecodeError, OSError):
-            pass
-    state["metrics.snapshot"] = snap
-    state["updated_at"] = datetime.now().isoformat()
-    try:
-        tmp = state_path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(state, indent=2))
-        tmp.rename(state_path)
-    except OSError as e:
-        return HookResult.skip(f"state write failed: {e}")
+    # Targeted write through the bridge (enrolled → canonical, else legacy). This
+    # hook sets a fresh snapshot; it does not depend on prior state (todo_0495).
+    from uai_toolkit.hooks.common.lib_session_state_union import write_session_state
+    if not write_session_state(context.session_dir, context.tracking_id, {
+        "metrics.snapshot": snap,
+        "updated_at": datetime.now().isoformat(),
+    }):
+        return HookResult.skip("state write failed")
 
     return HookResult.allow(
         f"snapshot[{source or 'start'}] jsonl:{snap['jsonl_bytes']}B "

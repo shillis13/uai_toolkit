@@ -56,6 +56,8 @@ function sessionToCard(s: Session): SessionCard {
     activity_state: s.activity_state,
     context_percent: s.context_percent,
     exchange_count: s.exchange_count,
+    restart_count: s.start_history?.length ?? 0,
+    transcript_bytes: s.transcript_bytes ?? null,
     pinned: s.pinned,
     notes: s.notes,
     prompt_block: s.prompt_block ?? null,
@@ -100,12 +102,11 @@ function hydrateContainers(data: ContainerStoreData, target: Map<string, AnyCard
 
 export async function bootstrap(): Promise<void> {
   try {
-    const [snapshot, containerData, projects, briefs, teams] = await Promise.all([
+    const [snapshot, containerData, projects, briefs] = await Promise.all([
       window.uai.bootstrap(),
       window.uai.containers.list(),
       window.uai.projects.list(),
       window.uai.briefs.list(),
-      window.uai.teams.list(),
     ]);
 
     cards = new Map();
@@ -127,10 +128,6 @@ export async function bootstrap(): Promise<void> {
       cards.set(brief.entity_id, brief);
     }
 
-    for (const team of teams) {
-      cards.set(team.entity_id, team);
-    }
-
     initialized = true;
     notify();
   } catch {
@@ -141,12 +138,11 @@ export async function bootstrap(): Promise<void> {
 
 async function refresh(): Promise<void> {
   try {
-    const [sessions, containerData, projects, briefs, teams] = await Promise.all([
+    const [sessions, containerData, projects, briefs] = await Promise.all([
       window.uai.sessions.list(),
       window.uai.containers.list(),
       window.uai.projects.list(),
       window.uai.briefs.list(),
-      window.uai.teams.list(),
     ]);
 
     const newCards = new Map<string, AnyCard>();
@@ -166,10 +162,6 @@ async function refresh(): Promise<void> {
 
     for (const brief of briefs) {
       newCards.set(brief.entity_id, brief);
-    }
-
-    for (const team of teams) {
-      newCards.set(team.entity_id, team);
     }
 
     cards = newCards;

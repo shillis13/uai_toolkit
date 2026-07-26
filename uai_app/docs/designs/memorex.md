@@ -1,7 +1,7 @@
 # Memorex — Design & Specification
 
 **Status:** Living document. Part 1–4 describe the *current* implementation (verified against
-code, June 2026). Part 5 is a *proposal* for a standalone, reusable, cross-platform version.
+code, July 2026). Part 5 is a *proposal* for a standalone, reusable, cross-platform version.
 Statements are tagged **[impl]** (in code today) or **[proposed]** (design intent) where it
 could be ambiguous.
 
@@ -9,44 +9,53 @@ could be ambiguous.
 
 - **Memorex** — the live, in-place formatting overlay that turns a CLI agent's raw terminal
   output into a styled, sectioned transcript view *without* replacing the live terminal.
-- **Overlay / cover** — the DOM element drawn on top of the xterm.js terminal that holds the
-  formatted content. It covers the *settled* region of the screen; the bottom (live) region
-  shows through to the raw terminal.
+- **Overlay / cover** — the continuous DOM scroll surface drawn over xterm.js. It contains both
+  settled Transcript cards and provisional terminal-derived cards for the in-progress bottom.
+  It is full-height while idle, but yields the bounded rows from an active verb through the
+  prompt/status so the real terminal animation remains visible.
+- **Transcript** — the structured JSONL-derived message list produced by `read_jsonl.py`. It is
+  authoritative for completed message order, boundaries, type, and prose.
+- **Settled message** — a complete message that has appeared in Transcript. Its Memorex card is
+  rendered from Transcript even if the terminal copy was split, merged, duplicated, or damaged.
 - **Marker** — a line whose **first character (column 0)** is non-whitespace. All agent response
   text is indented into a 2-space margin, so anything in the margin is a structural marker
   (response, tool, thinking, verb line, prompt boundary, etc.).
 - **Verb line** — the spinner the CLI shows while working/thinking, e.g. `✻ Crystallizing… (33s)`
   (active) or `✻ Churned for 3m 38s` (completed). It is a *type* of marker.
-- **Live region / live tail** — the bottom portion of the screen from the verb line down
-  (verb line, task list, prompt, status bar). It stays raw because it's still changing.
-- **Boundary (`contentEnd`)** — the line index dividing formatted overlay content (above) from
-  the live region (below). It is the lowest (most recent) verb line.
-- **Section** — a contiguous run of lines of one type (a User block, a Claude response, a Tool
-  call+result, a Thinking block), rendered as one collapsible card.
+- **Live region / live tail** — a persistent FIFO of provisional terminal-derived cards attached
+  below the last settled Transcript card. They are formatted immediately from opening markers and
+  updated as output grows.
+  Verb lines, task lists, prompts, decisions, and status rows remain plain terminal chrome.
+- **Ordinal settlement** — when Transcript appends one card, that card replaces the first
+  provisional card by position. If no provisional exists, it simply appends to the settled tail.
+  Content and type do not participate in this decision.
+- **Section** — one settled Transcript message rendered as a collapsible card. A matching
+  `tool_use` + `tool_result` pair shares one folded tool card.
 - **CDP** — Chrome DevTools Protocol; the debug channel (port 9226) used to inspect the running
-  renderer.
+  renderer. `window.__memorex` is the active-session shortcut;
+  `window.__memorexSessions[trackingId]` addresses mounted-hidden sessions exactly because display
+  names are not unique.
 
 ---
 
 ## 1. Purpose & Philosophy
 
 Memorex makes a running CLI agent session readable — colored, sectioned, collapsible — while
-preserving the exact live terminal underneath for interaction. Two foundational decisions shape
-everything:
+preserving the exact live terminal underneath for interaction. Three decisions shape everything:
 
-1. **Format from the terminal text, not the JSONL transcript.** [impl] An earlier attempt drove
-   formatting from `read_jsonl`/Transcript (the structured conversation log). It was abandoned for
-   the *live* view because the JSONL lags the terminal by too much — it's written after a message
-   completes, so the actively-streaming portion isn't there yet. Scraping the terminal is
-   immediate. It also keeps Memorex **portable**: it depends only on terminal output, not on any
-   particular agent's log format.
-2. **Overlay, don't replace.** [impl] The live terminal remains fully functional; Memorex draws a
-   cover over the settled region only. The live tail (spinner, prompt, interactive menus) shows
-   through raw so the user can still navigate/type.
+1. **Transcript owns settled messages.** [impl] JSONL lags streaming output, but once a complete
+   message is recorded it is more reliable than terminal scrape boundaries. Every settled prose
+   card therefore renders directly from Transcript. Terminal marker loss, duplicate redraws,
+   split blocks, and merged blocks cannot corrupt settled prose.
+2. **Terminal owns only what Transcript cannot supply.** [impl] The terminal supplies the
+   still-streaming provisional cards and compact folded tool presentation.
+3. **Formatted all the way.** [impl] Message content remains one formatted scroll surface; there
+   is no separate raw message pane. While a thinking verb is active, only the bounded terminal
+   chrome from that verb through the prompt/status remains uncovered and live.
 
-The one place the JSONL is still read is **cosmetic metadata** (see §2.6): message numbers and
-timestamps injected into section headers. It never drives formatting; if it fails, you only lose
-the `#`/timestamp garnish.
+There is no terminal-card-to-Transcript content matching, type matching, anchor, count
+reconciliation, or confidence gate. Settlement consumes the persistent provisional FIFO one card
+at a time; it never slices a fresh terminal snapshot by the full Transcript count.
 
 ---
 
@@ -55,38 +64,68 @@ the `#`/timestamp garnish.
 File: `packages/renderer-ui/src/components/TerminalFormatOverlay.tsx`
 Rendered by: `TerminalPane.tsx` (which passes `enabled={memorexEnabled}`).
 
-### 2.1 The refresh loop
+### 2.1 The two update paths
 
-- A timer calls `refresh()` every **1s** when the tab is active (`POLL_ACTIVE_MS`), 5s when
-  backgrounded (`POLL_BACKGROUND_MS`).
-- `refresh()` captures the terminal via `window.uai.terminal.captureScrollback(sessionName, 50000)`
-  → IPC → `session_ops.py read-terminal <sessionName> --full --styled`. **`sessionName` is the
-  session's `terminal_session` field** (e.g. "Anvil"), not the tracking_id. If capture fails
-  (`!ok || !text`), `refresh()` bails — leaving no cover (this is the failure mode behind
-  "Memorex on but nothing formatted"; see §4).
-- If the captured text is unchanged since last poll, it returns early (no rebuild).
+- A timer calls `refresh()` every **1s** for the active session and every **5s** for mounted-hidden
+  session tabs. Keeping session panes mounted preserves Memorex state and scroll position across
+  tab switches.
+- The first `refresh()` captures up to 50,000 tmux history rows; later refreshes capture a
+  2,000-row tail. The path is
+  `window.uai.terminal.captureScrollback()` → IPC →
+  `session_ops.py read-terminal <sessionName> --lines 50000 --styled`. This is a bounded snapshot,
+  not a true terminal delta: terminal rows can be rewritten or reflowed and tmux supplies no stable
+  row ID. Only the unfinished terminal turn is eligible to create provisional cards: the region
+  after the latest completed verb line, with the newest submitted user marker as fallback when that
+  line is unavailable. This bounds creation without placing the settled seam—Transcript still owns
+  that. Consecutive snapshots of this small region are compared only to detect terminal
+  opening-marker appends and updates; they are never aligned to Transcript. Repeated marker context
+  is anchored at its newest occurrence, and a suffix marker already present earlier in the same
+  snapshot is treated as terminal repaint output rather than another provisional card. If a truly
+  repeated live message is indistinguishable from a repaint, it waits for Transcript settlement
+  instead of being shown twice. **`sessionName` is
+  the session's `terminal_session` field** (e.g. "Anvil"), not the tracking_id. If capture fails,
+  `refresh()` leaves the existing cover unchanged.
+- The main-process `TranscriptCacheService` watches each pooled JSONL file. A real file change
+  reparses the canonical structured Transcript and sends `transcript:updated`. The watcher delay
+  is `runtime.transcriptRefreshDebounceMs` in `ai_general/data/memorex/palette.json` (environment override:
+  `UAI_TRANSCRIPT_REFRESH_DEBOUNCE_MS`) and currently defaults to **0ms**. Events arriving during
+  a parse queue another metadata/read pass rather than being discarded. Every terminal poll also
+  reads the warm cache, which verifies JSONL size+mtime and repairs a missed watcher event.
+- Renderer work is revision-based. If neither terminal text nor Transcript revision changed,
+  Memorex skips DOM work. TranscriptViewer reuses unchanged message objects and sanitized Markdown.
+  Both renderers use a load generation so an older async read cannot overwrite a newer session or
+  Transcript revision. Memorex serializes and coalesces overlapping refresh requests; one capture
+  cannot race another capture and append the same provisional twice.
 
 ### 2.2 Pipeline
 
 ```
-captureScrollback (raw terminal text, ANSI preserved)
-   → split into lines
-   → findPromptAreaStart()      locate the prompt block near the bottom
-   → findContentEnd()           locate the live boundary (lowest verb line)
-   → slice [0 .. contentEnd)    = formatted content; [contentEnd ..] = live tail
-   → strip [/PRIVATE] thinking blocks
-   → groupIntoSections()        runs of one type → Section groups
-   → renderSectionDom()         build collapsible, colored DOM into the cover
-   → set cover height           = visibleHeight − (liveTailLines × cellHeight)
+JSONL append
+   → shared TranscriptCacheService
+   → read_jsonl.py structured messages
+   → buildSettledTranscriptBlocks()
+   → append/replace only changed DOM cards
+
+terminal capture (ANSI preserved)
+   → locate prompt/status/decision chrome
+   → bound provisional creation to the unfinished terminal turn
+   → group that turn's message lines into ordered terminal cards
+   → compare with the prior terminal-only snapshot
+   → update the current provisional and append cards for new opening markers
+   → read Transcript; each appended Transcript card consumes one provisional FIFO head
+   → use compact terminal rendering for settled tool cards
+   → render only the visible/nearby card window with measured spacers
 ```
 
-### 2.3 The Marker model — the core rule
+When Transcript is unavailable, the existing terminal marker grouping remains a fallback rather
+than blanking the overlay.
+
+### 2.3 The terminal Marker model
 
 **A line is a Marker iff its first character (column 0) is non-whitespace.** All agent response
 text is rendered into a **2-space left margin**; anything sitting in that margin is structural.
-This rule is exceptionless — even the prompt-boundary rules (`──────…`) are markers (they start at
-column 0). [impl: `classifyLine()` keys off column-0 glyphs; continuation/body lines start with
-whitespace and classify as `cont`.]
+This remains the rule for prompt/live-tail geometry, folded terminal tools, and the no-Transcript
+fallback. It no longer decides settled prose boundaries once Transcript is available.
 
 Markers are then **sub-typed by glyph** (Claude CLI):
 
@@ -111,10 +150,10 @@ handled in the same `classifyLine`.
 - `^\w+…$` → **tool** (tool-in-progress: `⏺ Exploring…`)
 - otherwise → **assistant** (prose response)
 
-### 2.5 Verb line & boundary detection — the spec
+### 2.5 Verb-line and terminal-chrome detection
 
-The verb line is the spinner; it is the **live boundary**. Rules (per PianoMan's spec, the
-authority for this component):
+The verb line is the spinner. It is rendered as plain terminal chrome and is never a message card
+or a settled/live boundary. Its classification rules remain precise:
 
 - **Active form:** `<glyph> <gerund phrase>…` — a marker glyph, a gerund phrase (one word OR
   several: `✻ Crystallizing…`, `✻ Writing spec and plan…`), then an ellipsis at the **phrase end**.
@@ -133,29 +172,11 @@ authority for this component):
   - The ellipsis is **stable**, not animated — it does not cycle `.`→`..`→`…`. The active form's
     discriminator is the gerund-tied ellipsis, full stop.
 - **Completed form:** `<glyph> <word> for <N>[hms]` — e.g. `✻ Churned for 3m 38s` (Claude) or
-  `─ Worked for 2m 26s ───` (Codex). [impl: `/^\S\s+\S+\s+for\s+\d+\s*[hms]/`] **Completed verb
-  lines are valid boundaries** (a finished response's marker is where the live tail begins).
+  `─ Worked for 2m 26s ───` (Codex). [impl: `/^\S\s+\S+\s+for\s+\d+\s*[hms]/`]
 - **Codex active form:** `<glyph> Working (<N>s · esc to interrupt)` — Codex's live thinking line
   (glyph animates `•`→`◦`→…). [impl: `/^\S\s+Working\s*\(\d/`] The `Working (<digit>` discriminates
   it from Codex tool calls (`• Ran…`, `• Called…`, `• Updated…`) and the status line. (Added
   2026-07-04 — the Codex thinking line was going undetected and collapsing into content.)
-- **Boundary = the lowest (most recent) verb line _within the live tail_**, active OR completed.
-  `findContentEnd` scans upward from the prompt and returns the first (lowest) verb line; everything
-  below it is live, the line above it is the last formatted line. [impl]
-- **The verb line must be NEAR the prompt (the live tail is small).** Completed verb lines persist
-  in scrollback — a settled buffer routinely holds several (e.g. `✻ Brewed for 4m`, `✻ Sautéed for
-  16m`, … one per finished sub-step). If the scan is unbounded it will latch onto a **stale** verb
-  line from a previous turn that the current turn's streaming content has pushed far above the
-  viewport; then `totalLines − contentEnd ≥ visibleRows`, the live region fills the screen, and the
-  cover collapses to 0 — **the whole overlay blanks until the turn ends.** This is the failure that
-  manifests "during active response, no formatting at all" (root-caused 2026-06-18).
-  - **Rule:** the scan is bounded to a **live-tail window** just above the prompt
-    (`LIVE_TAIL_MAX_LINES`, clamped so the boundary stays within the lower viewport). A verb line
-    farther up than that is treated as stale and ignored. [impl]
-  - **No verb line in the window ⇒ fall back to `promptStart`** (stop one above the prompt's top
-    separator). This is the SAFE direction: the overlay covers the full visible region (formats a
-    little of the still-settling tail) rather than blanking. Blanking is never acceptable; over-
-    covering by a few lines is.
 - **Permission/decision prompts replace the prompt block.** [impl, 2026-07-06] A Claude Code
   interactive decision (tool-permission "Do you want to proceed?", plan approval) removes the
   `──── ❯ ────` block while it waits for an answer — no separators, and the session is idle so no
@@ -165,8 +186,8 @@ authority for this component):
   decision option `❯` sits at **column 1** (the dialog's structural lines are indented one space).
   `findDecisionAreaStart` anchors on the lowest col-1 `❯ N.` numbered option, walks up through
   col-1 lines (question/warning) + interspersed blanks to the dialog top (requiring ≥1 letter-
-  starting col-1 line), and returns it as `promptStart` so the dialog stays in the raw live tail.
-  The dialog **disappears once answered**, so it needs only this live-region treatment — no
+  starting col-1 line), and returns it as `promptStart` so the dialog stays in the terminal-chrome
+  block at the bottom of the formatted surface. The dialog **disappears once answered**, so it needs only this plain-chrome treatment — no
   settled-section type. `classifyLine` is deliberately left column-0-only (the broader col-0-or-1
   marker rule is a bigger change, reserved for when exceptions accumulate).
 - The verb line's glyph **animates** through an open-ended set (✻ ✽ ✳ · ✢ and others) to look
@@ -177,39 +198,102 @@ authority for this component):
   and/or **sticky classification** (once a line is a marker, a later blanked frame must not demote
   it). Neither is fully implemented today; the current code requires a non-whitespace column 0.
 
-### 2.6 Cover geometry (why it can collapse)
+### 2.6 Persistent card chain and cover geometry [impl]
+
+Memorex maintains one persistent message-card chain:
 
 ```
-cellHeight   = visibleHeight / term.rows
-visibleRows  = term.rows
-liveAreaLines = min(totalLines − contentEnd, visibleRows)   // clamped to the viewport
-coverHeight   = max(0, visibleHeight − liveAreaLines × cellHeight)
+settled Transcript: DM0 <- DM1 <- ... <- DMn
+provisional terminal:                         <- Pn+1 <- Pn+2 <- ...
 ```
 
-The clamp to `visibleRows` exists because `totalLines` spans the whole scrollback (hundreds of
-lines) while the cover only overlays the visible viewport — without the clamp, a long live tail
-drove `coverHeight` to 0 and the overlay vanished. Even with it, if the boundary is wrong (e.g. a
-false verb-line match far up the buffer) the live region fills the viewport and the cover collapses
-to 0 — which is exactly how the §4 bugs manifested visually.
+Terminal snapshots have only terminal-to-terminal meaning. After the initial baseline, a new
+opening marker appends a provisional card and later rows update the current provisional. The full
+Transcript count is never applied to a bounded terminal tail. When Transcript appends Tn+1:
 
-### 2.7 Transcript metadata garnish (the only JSONL crossover) [impl]
+```
+DMn <- Pn+1 <- Pn+2   --Tn+1-->   DMn <- Tn+1 <- Pn+2
+```
 
-`refreshTranscriptCache()` (polls every 10s) calls `window.uai.transcript.read(sessionName,
-sessionId, 'structured')` (→ `read_jsonl.py`), and `matchSectionsToTranscript()` aligns those
-messages to the terminal-derived sections to inject two cosmetic fields into section headers: the
-**message number** (`#686`) and a **timestamp**. This never affects markers, sectioning, colors, or
-the boundary. If it fails, formatting is unaffected.
+Tn+1 replaces the first provisional by position, with no content/type comparison. If there is no
+provisional, Tn+1 simply appends as the new settled tail. Tool-result updates replace their existing
+settled tool card and do not consume another provisional. Settled cards therefore always equal the
+Transcript in order; terminal split/merge/drop/dup drift is confined to the provisional FIFO and
+self-heals as later Transcript cards settle it.
 
-### 2.8 Section rendering, collapse, sticky type
+Refresh deliberately ingests the terminal snapshot before reading a changed Transcript cache. This
+preserves the real causal order (stream first, completed JSONL record second) even when the zero-delay
+file watcher fires before the regular terminal poll. Transcript reads are not deferred until terminal
+output pauses: a continuously streaming response must continue settling completed cards. A lost
+terminal-only snapshot anchor resets the scrape baseline but never rebuilds or discards the persistent
+chain.
 
-- `groupIntoSections()` collapses runs of one type into `Section` groups; each renders as a card
-  with a colored left border + label (`SECTION_COLORS`/`SECTION_BG` by type).
+The initial capture and later repaint comparisons are also bounded to the unfinished terminal
+turn. The cold snapshot establishes a baseline without creating cards; a tail that changes or a
+new opening marker then creates the live provisional. This prevents already-settled cards from
+earlier in an active turn from becoming provisionals on mount. Completed verb summaries close
+terminal turns for this create-side purpose and are excluded from terminal chrome; only the current
+active verb line and its task rows may appear there.
+When Transcript advances, the terminal opening fingerprints consumed from the FIFO remain suppressed
+for the rest of that terminal turn. This prevents a post-settlement terminal repaint from recreating
+the just-settled tail as an orphan provisional. If an explicit completed-turn marker is present and
+the unfinished terminal region is empty, each provisional is removed when Transcript reaches that
+FIFO position; any still-unproven remainder is removed after a short bounded JSONL-lag grace. This
+closure rule is the only time terminal state may discard provisionals: it bounds missed-watcher/race
+accumulation without comparing terminal text to Transcript text.
+This does **not** make a verb line the settled/live card seam—Transcript remains the sole authority
+for whether a message is settled.
+
+Tool rendering is a presentation carve-out. A settled tool call/result occupies one Transcript card.
+Memorex may identity-check a compact folded terminal tool card and use those lines for display, but
+that check does not affect settlement. If no valid compact view exists, the Transcript fallback stays
+folded and reports a result line count rather than injecting a large raw result.
+
+The cover has terminal-screen height while idle or closed. While a thinking verb is active, its
+visible xterm row becomes the cover's bottom boundary; the real animated verb, task rows, prompt,
+and status remain visible below it rather than being copied into a static chrome card. Visible-row
+geometry discounts capture padding beyond the actual xterm viewport. The old permanent raw-xterm
+message pane and history-reveal toggle remain removed.
+
+### 2.7 Transcript authority and shared cache [impl]
+
+`refreshTranscriptCache()` reads the warm main-process cache, subscribes to
+`transcript:updated`, and performs the size+mtime verification during the existing terminal poll;
+there is no second independent timer. `flattenStructuredTranscript()`
+preserves the Transcript's message numbering, including skipped local-only records, then
+`buildSettledTranscriptBlocks()` builds the settled DOM model:
+
+- user, injected, assistant, and thinking: one card per Transcript message, exact Transcript text;
+- tool call + matching result: one folded card keyed by `tool_call_id`;
+- message `type` owns the category (so a transport-level `role: user` tool result remains a tool);
+- local-only session/command records are counted for Transcript numbering but are not rendered;
+- message number, turn number, type, and timestamp: taken directly from Transcript.
+
+The cache pool is keyed by resolved JSONL path and keeps aliases for tracking ID, CLI UUID, or
+session name. That prevents Memorex and TranscriptViewer from launching separate complete parses
+of the same file. Actual file changes still pass through the canonical `read_jsonl.py` full parse;
+`readRecords()` is the explicit seam for a future safe tail parser.
+
+### 2.8 Section rendering, collapse, and incremental updates
+
+- Transcript block keys (`transcript:<firstMsgId>`) and provisional keys (`provisional:<id>`) are
+  stable. A newly appended Transcript card replaces the provisional FIFO head without per-card
+  content pairing;
+- cards inserted or updated when Transcript replaces streamed raw text briefly brighten and fade
+  over 1.2 seconds; initial history load does not animate;
+- the visual indicator never delays Transcript authority or keeps duplicate raw text on screen;
+  `tool_result` changes only its existing tool card; filter/collapse actions intentionally rebuild.
+- Each card has a content revision. The renderer keeps measured heights and mounts only the cards
+  intersecting the viewport plus two viewports of overscan. Top/bottom spacers preserve the full
+  scroll range, and unchanged hidden cards contribute no DOM nodes.
 - Thinking body text is rendered by stripping ANSI and forcing `THINKING_TEXT_COLOR` (`#e3ccff`),
   because Claude renders thinking dim-grey via ANSI which would otherwise override the intended
   color. [impl]
 - Tool/thinking sections are collapsible (per-section), with expand/collapse-all-of-type filters.
-- **Sticky class** [impl, partial]: `stickyClassRef` keeps a `⏺` line classified as `tool` across
-  polls even as streaming changes its content, keyed on the first ~60 chars of stripped text.
+  The selected type default applies equally to settled and provisional cards. A live tool retains
+  its compact terminal text as its content source but remains collapsed when Tools is collapsed.
+- `groupIntoSections()` and `stickyClassRef` remain only for terminal fallback and folded-tool
+  extraction. They do not segment settled prose when Transcript is available.
 
 ### 2.9 Platform marker tables [impl]
 
@@ -226,7 +310,8 @@ all mutations flow through the command bus), Memorex is **partially conformant**
 
 - **Model (read): present.** Registers viewport node `memorex_view` whose `state` is the full
   `window.__memorex` object (`sessionId`, `platform`, `enabled`, `boundaries` {totalLines,
-  promptStart, contentEnd, liveAreaLines, coverHeightPx, cellHeightPx, termRows}, `sectionCount`,
+  promptStart, settledTranscriptCardCount, terminalCardCount, firstLiveCardOrdinal,
+  liveCardCount, coverHeightPx, cellHeightPx, termRows}, `sectionCount`,
   `firstLiveTerminalLine`, `boundaryZone`). Also exposed via IPC `uai:memorex:state`.
 - **Controller (actions): absent.** No `executeCommand`/command-bus usage. Toggling Memorex
   on/off is local React state (`memorexEnabled` on `TerminalPane`, described as "local state
@@ -255,10 +340,16 @@ external agent can both read state and drive it.
 - **Edited the wrong renderer.** A now-deleted second component (`MemorexView.tsx`, dead code) had
   its own `.memorex-block-*` styling; a brightness change was made there and had no effect.
   **Fix:** deleted the dead component; `TerminalFormatOverlay` is the sole renderer.
+- **Per-corruption terminal repair.** The prior reconciler independently matched terminal-derived
+  cards to Transcript records, then accumulated special handling for dropped heads, duplicates,
+  merged cards, and gated full replacement. It could still preserve a wrong terminal boundary.
+  **Fix:** invert ownership. Transcript owns a persistent settled chain; terminal opening markers
+  append a persistent provisional FIFO; each new Transcript card replaces the FIFO head by position.
 
 **Meta-lesson:** the marker/verb-line rules are precise and empirically derived (column-0 = marker;
 ellipsis tied to gerund; completed counts). Loosening them — matching glyphs anywhere, ellipsis
-anywhere — caused ~90% of Memorex defects. Follow the spec exactly.
+anywhere — caused most geometry defects. Those rules still protect prompt/live-tail geometry, but
+terminal markers are not reliable enough to own settled message boundaries.
 
 ---
 
@@ -272,22 +363,24 @@ configurable**, running on **Windows, macOS, and Linux**.
 A small, dependency-light **library** with three clean seams:
 
 ```
-            ┌──────────────────────────────────────────────┐
-  terminal  │  INPUT          CORE              OUTPUT      │  render target
-  text  ───▶│  adapter  ─▶  formatter  ─▶  view model / DOM │─▶ (DOM, or
-  stream    │  (capture)   (pure, config) (renderer-agnostic)│   serialized)
-            └──────────────────────────────────────────────┘
-                              ▲
+ transcript ─┐
+             ▼
+       ┌────────────────────────────────────────────────────┐
+       │ INPUT ADAPTERS   RECONCILER             OUTPUT     │
+       │ structured log ─▶ settled blocks ─┐               │
+       │ terminal stream ▶ terminal cards ─┴▶ view model ──▶│ DOM/serialized
+       └────────────────────────────────────────────────────┘
+                                  ▲
                          config (markers, colors, rules)
 ```
 
-- **Input adapter** — supplies raw terminal text (ANSI-preserving) on demand or as a stream. The
-  core never talks to the OS. Adapters: tmux (`capture-pane`) on mac/Linux; ConPTY / Windows
-  Terminal / WezTerm / a PTY lib on Windows; or a plain string for testing. This isolates the only
-  OS-specific part.
-- **Core formatter** — **pure function(s)**: `(text, config) → ViewModel`. No DOM, no OS, no app
-  deps. Contains the marker rule, sub-typing, boundary detection, sectioning. Fully unit-testable
-  with string fixtures.
+- **Input adapters** — one supplies structured completed messages; another supplies raw terminal
+  text (ANSI-preserving) on demand or as a stream. The core never talks to the OS or a vendor log
+  directly. Transcript adapters can target Claude Code, Codex, or later platforms. Terminal
+  adapters can target tmux, ConPTY, Windows Terminal, WezTerm, or a test string.
+- **Core reconciler** — pure functions:
+  `(transcriptBlocks, terminalLines, config) → ViewModel`. No DOM, OS, or app dependencies. It
+  owns normalized block construction and the persistent settled/provisional reducer.
 - **Output / renderer** — turns the ViewModel into a target: a DOM overlay (as today), or a
   serialized structure (JSON/HTML) for other hosts. Renderer-swappable.
 
@@ -303,13 +396,13 @@ A `MemorexConfig` object, no code changes needed to retarget a new CLI:
   glyphPolicy: "residual" }` — the structural rules, not a glyph list.
 - **`styles`** — per-type color/background/border/label/opacity (e.g. thinking text color). The
   current `SECTION_COLORS`/`SECTION_BG`/`THINKING_TEXT_COLOR` become config entries.
-- **`boundary`** — `{ rule: "lowest-verb-line", stickyMarkers: true }`.
+- **`settlement`** — `{ rule: "persistent-provisional-fifo" }`.
 - **`platforms`** — named bundles of the above for claude/codex/gemini, selectable at runtime.
 
 ### 5.3 Cross-platform considerations
 
-- **Capture** is the only OS-specific seam — confined to input adapters. The formatter and config
-  are pure and portable.
+- **Capture and structured-log decoding** are adapter seams. Reconciliation and rendering remain
+  pure and portable.
 - **Glyph/Unicode**: markers are multi-byte glyphs; the core must operate on Unicode code points
   (not bytes) and tolerate terminal width/encoding differences. Windows terminals may substitute or
   render glyphs differently — hence `glyphPolicy: "residual"` (structure over enumeration) travels
@@ -323,24 +416,25 @@ A `MemorexConfig` object, no code changes needed to retarget a new CLI:
 
 ```
 const mx = createMemorex({ platform: 'claude', styles: {...}, marginWidth: 2 });
-const view = mx.format(rawTerminalText);      // pure → ViewModel
+const view = mx.reconcile(messages, rawTerminalText); // persistent-chain ViewModel
 mx.renderTo(domNode, view);                   // or: JSON.stringify(view)
-mx.on('boundaryChange' | 'sections', cb);     // events for hosts
+mx.on('settledCountChange' | 'sections', cb); // events for hosts
 ```
 
 ### 5.5 Migration path
 
-1. Extract the pure functions (`classifyLine`, `groupIntoSections`, `findContentEnd`,
-   `findPromptAreaStart`, ANSI parsing) out of `TerminalFormatOverlay.tsx` into a standalone,
-   app-free package with a `MemorexConfig`.
+1. Move the existing pure transcript block builder and persistent-chain reducer into a
+   standalone package, then extract prompt/status geometry from
+   `TerminalFormatOverlay.tsx`.
 2. Replace the hardcoded glyph/color constants with config defaults (claude/codex/gemini bundles).
-3. Re-host the current overlay on top of the extracted core (UAI becomes one consumer).
-4. Add the command-bus action surface (§3 gap) at the UAI-host layer, not the core.
-5. Add a Windows input adapter; validate glyph handling on all three OSes with string fixtures +
+3. Define a normalized completed-message adapter contract and implement Claude Code and Codex.
+4. Re-host the current overlay on top of the extracted core (UAI becomes one consumer).
+5. Add the command-bus action surface (§3 gap) at the UAI-host layer, not the core.
+6. Add a Windows terminal adapter; validate glyph handling on all three OSes with string fixtures +
    live capture.
 
 ### 5.6 Stability constraint
 
-Memorex has been stable in production; the user is (rightly) protective of it. The extraction
-should be **behavior-preserving** — port the exact rules in §2.5, with the pure-function tests
-locking current behavior before any refactor.
+The extraction must preserve the ownership split: Transcript for settled messages, terminal for
+live output and folded tools. Port the exact §2.5 fallback rules and §2.6 forward walk with
+pure-function tests before changing behavior.

@@ -22,6 +22,10 @@ import { executeCommand } from '../utils/execute-command';
 import { ViewportRegistry } from '../viewport';
 import type { ViewportNode } from '@contracts/viewport';
 import { useSessionStore } from '../stores/session-store';
+import { useCardStore, useAppStateStore } from '../stores';
+import { buildAssigneeOptions, ASSIGNEE_GROUPS } from '../utils/assignee-options';
+import { buildParentOptions } from '../utils/parent-options';
+import type { WorkItem } from './WorkMgrPane';
 import { useMention, MentionPopover, makeRecipientSource } from './mention';
 import CaptureComponentPicker from './CaptureComponentPicker';
 
@@ -143,6 +147,27 @@ export default function NoteDialog({
   // What to create on submit — a note, a todo, or both. Create Note defaults on.
   const [createNote, setCreateNote] = useState(true);
   const [createTodo, setCreateTodo] = useState(false);
+  // Assign the spun-off todo to a worker right from the dialog (todo_0525).
+  // '' = leave unassigned. URI is a session/project/team uai:// URI.
+  const [todoAssignee, setTodoAssignee] = useState('');
+  // Parent for the spun-off todo (todo_0649). '' = top level. Candidate parents are
+  // fetched lazily when the user opts to also create a todo.
+  const [todoParent, setTodoParent] = useState('');
+  const [parentTodos, setParentTodos] = useState<WorkItem[]>([]);
+  useEffect(() => {
+    if (!createTodo) return;
+    let alive = true;
+    window.uai.todos.list(false)
+      .then((ts) => {
+        // buildParentOptions only reads id/parent/rel_path/title; normalize the IPC
+        // shape (assigned is optional there) to WorkItem for the type checker.
+        if (alive) setParentTodos(ts.map((t) => ({ ...t, assigned: t.assigned ?? [] })) as WorkItem[]);
+      })
+      .catch(() => {
+        if (alive) setParentTodos([]);
+      });
+    return () => { alive = false; };
+  }, [createTodo]);
   // Ask-Hamilton compose (todo_0539): a general compose-to-session(s) dialog that
   // merely defaults its addressee to Hamilton. Delivery = message (inbox, async,
   // reply-expected) or prompt (injected to act now). Addressees multi-select.
@@ -166,6 +191,19 @@ export default function NoteDialog({
   // no picker — the @notify on submit still fired, but the user had to spell the
   // name exactly. The popover resolves against live sessions.
   const { sessions } = useSessionStore();
+  // Grouped worker options for the "assign this todo" dropdown (todo_0525).
+  const cardStore = useCardStore();
+  const { appState } = useAppStateStore();
+  const openTabIds = useMemo(
+    () => new Set((appState.tabs || []).map((tab: any) => tab.targetId)),
+    [appState.tabs],
+  );
+  const assigneeOptions = useMemo(
+    () => buildAssigneeOptions({
+      projects: cardStore.projects, teams: cardStore.teams, sessions, openTabIds,
+    }),
+    [cardStore.projects, cardStore.teams, sessions, openTabIds],
+  );
   const bodyRef = useRef<HTMLTextAreaElement>(null);
   const mentionTargets = useMemo(
     // Only ACTIVE (running) sessions — the list was full of stale sessions that
@@ -216,6 +254,8 @@ export default function NoteDialog({
     // Create Note on, Create todo off.
     setCreateNote(true);
     setCreateTodo(false);
+    setTodoAssignee('');
+    setTodoParent('');
   } else if (!isOpen && prevOpen) {
     setPrevOpen(false);
   }
@@ -401,13 +441,18 @@ export default function NoteDialog({
     // the body into the todo's notes.md; links to the note when one was created.
     if (createTodo && !asDraft) {
       const todoName = (title.trim() || text.trim().split('\n')[0] || 'Untitled').slice(0, 80);
-      const created = await executeCommand<{ out: string }>('todo.create', { name: todoName }, { onFailure: 'log' });
-      const todoId = (created.data?.out || '').match(/Created:\s*(todo_\d+\S*)/)?.[1];
+      const extra = todoParent ? ['--parent', todoParent] : [];   // todo_0649
+      const created = await executeCommand<{ out: string }>('todo.create', { name: todoName, extra }, { onFailure: 'log' });
+      const todoId = (created.data?.out || '').match(/Created:\s*(todo_\d+(?:_[a-z0-9_]+)?)/i)?.[1];
       if (todoId) {
         const backref = noteId ? `\n\n— converted from ${noteId}\n` : '\n';
         await executeCommand('todo.writeNotes',
           { id: todoId, content: `${text.trim()}${backref}` }, { onFailure: 'log' });
         if (noteId) await executeCommand('note.linkTodo', { id: noteId, todo: todoId }, { onFailure: 'log' });
+        // Assign the new todo to the chosen worker, if one was picked (todo_0525).
+        if (todoAssignee.trim()) {
+          await executeCommand('todo.assign', { id: todoId, uri: todoAssignee.trim() }, { onFailure: 'log' });
+        }
       }
     }
 
@@ -731,6 +776,44 @@ export default function NoteDialog({
               {checkboxRow('For Hamilton', forHamilton, setForHamilton)}
               {checkboxRow('Create Note', createNote, setCreateNote)}
               {checkboxRow('Create todo', createTodo, setCreateTodo)}
+            </div>
+          )}
+
+          {/* Assign the spun-off todo to a worker from the dialog (todo_0525). */}
+          {createTodo && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <label style={{ fontSize: 12, color: 'var(--text-sec)' }}>Assign todo to</label>
+              <select
+                value={todoAssignee}
+                onChange={(e) => setTodoAssignee(e.target.value)}
+                style={{ fontSize: 12, padding: '3px 8px', background: 'var(--bg-deep)', color: 'var(--text)', border: '1px solid var(--border-strong)', borderRadius: 4, minWidth: 200 }}
+              >
+                <option value="">Unassigned</option>
+                {ASSIGNEE_GROUPS.map((grp) => {
+                  const opts = assigneeOptions.filter((o) => o.grp === grp);
+                  return opts.length ? (
+                    <optgroup key={grp} label={grp}>
+                      {opts.map((o) => <option key={o.uri} value={o.uri}>{o.label}</option>)}
+                    </optgroup>
+                  ) : null;
+                })}
+              </select>
+            </div>
+          )}
+
+          {/* Parent for the spun-off todo (todo_0649) — same hierarchical option list
+              (buildParentOptions) as the Work-Mgr parent dropdowns. */}
+          {createTodo && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <label style={{ fontSize: 12, color: 'var(--text-sec)' }}>Parent todo</label>
+              <select
+                value={todoParent}
+                onChange={(e) => setTodoParent(e.target.value)}
+                style={{ fontSize: 12, padding: '3px 8px', background: 'var(--bg-deep)', color: 'var(--text)', border: '1px solid var(--border-strong)', borderRadius: 4, minWidth: 200 }}
+              >
+                <option value="">— none (top level) —</option>
+                {buildParentOptions(parentTodos, new Set())}
+              </select>
             </div>
           )}
 

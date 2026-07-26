@@ -11,12 +11,15 @@
 
 import { Fragment, useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
+import ResumeForkDialog from './ResumeForkDialog';
+import BriefsDialog, { type BriefsMode } from './BriefsDialog';
 import { useViewport } from '../viewport';
 import { useSessionStore, useAppStateStore, useCardStore } from '../stores';
 import { useFolderStore } from '../stores/folder-store';
 import { useActionContext } from '../context';
 import { useToast } from './Toast';
 import { useContextMenuDismiss } from '../hooks/use-context-menu-dismiss';
+import { useClampToViewport, useSubmenuAutoFlip } from '../hooks/use-clamp-to-viewport';
 import { executeCommand } from '../utils/execute-command';
 import { promptBlockChip } from '../utils/prompt-block';
 import { CardListView } from './cards';
@@ -24,7 +27,7 @@ import { FolderTree } from './folders/FolderTree';
 import { Breadcrumbs } from './folders/Breadcrumbs';
 import { FolderContextMenu } from './folders/FolderContextMenu';
 import SessionContextMenu from './SessionContextMenu';
-import ContextTab from './ContextTab';
+import AddContextPicker from './AddContextPicker';
 import type { Session } from '@uai/shared/types';
 import type { AnyCard, SessionCard } from '@uai/shared/cards';
 import { isSessionCard } from '@uai/shared/cards';
@@ -233,6 +236,9 @@ function ContextMenu({ x, y, session, onClose, onRename, toastFn, folders }: {
 }): JSX.Element {
   const menuRef = useRef<HTMLDivElement>(null);
   const [showFolderSubmenu, setShowFolderSubmenu] = useState(false);
+  useClampToViewport(menuRef, true, [x, y, showFolderSubmenu]);
+  // Keep the card menu's cascading submenus (Move to Folder ▶) on-screen (todo_0547).
+  useSubmenuAutoFlip(menuRef, true, [x, y, showFolderSubmenu]);
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -575,11 +581,11 @@ function NewCustomSessionDialog({ x, y, onClose, toastFn, aiRoot }: {
               className="nav-custom-session-context-toggle"
               onClick={() => setContextExpanded(v => !v)}
             >
-              Add Context {contextExpanded ? '\u25BE' : '\u25B8'}
+              Add Context{selectedContext.length ? ` (${selectedContext.length})` : ''} {contextExpanded ? '\u25BE' : '\u25B8'}
             </button>
             {contextExpanded && (
-              <div className="nav-custom-session-context-body" style={{ maxHeight: '300px', overflowY: 'auto' }}>
-                <ContextTab sessionTrackingId={null} discoveryMode={true} onSelectionChange={setSelectedContext} />
+              <div className="nav-custom-session-context-body">
+                <AddContextPicker selected={selectedContext} onChange={setSelectedContext} height={240} />
               </div>
             )}
           </div>
@@ -880,7 +886,12 @@ export default function Navigator({ onSelectSession, activeSessionId }: Navigato
   const [currentFolderId, setCurrentFolderId] = useState<string>('all_sessions');
   const [showNewMenu, setShowNewMenu] = useState(false);
   const newBtnRef = useRef<HTMLButtonElement>(null);
+  // Keep the [+ New] menu's cascading submenus (Briefs ▶) on-screen (todo_0547).
+  const newMenuRef = useRef<HTMLDivElement>(null);
+  useSubmenuAutoFlip(newMenuRef, showNewMenu, [showNewMenu]);
   const [customSessionDialog, setCustomSessionDialog] = useState<{ x: number; y: number } | null>(null);
+  const [showResumeFork, setShowResumeFork] = useState(false);
+  const [briefsDialog, setBriefsDialog] = useState<BriefsMode | null>(null);
 
   // Dismiss new session menu on click-away
   useEffect(() => {
@@ -1084,10 +1095,24 @@ export default function Navigator({ onSelectSession, activeSessionId }: Navigato
 
   useViewport('session_navigator', () => ({
     visible: true,
-    label: `${activeTab} tab`,
+    label: `Navigator — ${activeTab} tab`,
     state: {
       activeTab,
+      // Which tabs are actually available (feature-gated).
+      availableTabs: [
+        'sessions',
+        ...(showProjectsTeams ? ['projects'] : []),
+        ...(showWebUis ? ['webuis'] : []),
+        ...(showGames ? ['apps'] : []),
+        'news',
+      ],
       visibleCards: filteredSessionCards.length,
+      // Sort + which folder is in view + the two session-section collapse states.
+      sortField,
+      sortDirection,
+      currentFolderId,
+      activeSectionCollapsed,
+      stoppedSectionCollapsed,
       filterActive: countActiveFilters(filter) > 0,
       filterPlatforms: Array.from(filter.platform),
       filterStatuses: Array.from(filter.status),
@@ -1160,7 +1185,7 @@ export default function Navigator({ onSelectSession, activeSessionId }: Navigato
             + New
           </button>
           {showNewMenu && createPortal((
-            <div className="context-menu" style={{ position: 'fixed', top: (newBtnRef.current?.getBoundingClientRect().bottom ?? 80) + 2, left: newBtnRef.current?.getBoundingClientRect().left ?? 8, zIndex: 10000, minWidth: '200px' }}>
+            <div ref={newMenuRef} className="context-menu" style={{ position: 'fixed', top: (newBtnRef.current?.getBoundingClientRect().bottom ?? 80) + 2, left: newBtnRef.current?.getBoundingClientRect().left ?? 8, zIndex: 10000, minWidth: '200px' }}>
               {/* Section 1: Sessions */}
               <div className="context-menu-header" style={{ padding: '4px 10px', fontSize: '10px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Sessions</div>
               <button className="context-menu-item" style={{ borderLeft: '3px solid var(--accent-orange)' }} onClick={() => { createSession('claude_cli'); setShowNewMenu(false); }}><span style={{ marginRight: '6px', color: 'var(--accent-orange)' }}>{'\u2731'}</span>Claude CLI</button>
@@ -1169,39 +1194,20 @@ export default function Navigator({ onSelectSession, activeSessionId }: Navigato
               <button className="context-menu-item" style={{ borderLeft: '3px solid #4285f4' }} onClick={() => { createSession('antigravity_cli'); setShowNewMenu(false); }}><span style={{ marginRight: '6px', color: '#4285f4' }}>{'\u25C8'}</span>Antigravity CLI</button>
               <div className="context-menu-separator" />
               {/* Section 2: Resume / Fork, Briefs, Custom */}
-              <div className="context-menu-item submenu-trigger">
-                Resume / Fork {'\u25B6'}
-                <div className="context-submenu">
-                  {sessions.filter(s => s.process_status !== 'running').slice(0, 15).map(s => (
-                    <button key={`resume-${s.tracking_id}`} className="context-menu-item" onClick={() => {
-                      executeCommand('session.resume', { trackingId: s.tracking_id }, { onFailure: 'toast', toastFn: showToast });
-                      setShowNewMenu(false);
-                    }}>{s.display_name || s.tracking_id}</button>
-                  ))}
-                  {sessions.filter(s => s.process_status !== 'running').length === 0 && (
-                    <div className="context-menu-item" style={{ color: 'var(--text-muted)', cursor: 'default' }}>No stopped sessions</div>
-                  )}
-                </div>
-              </div>
+              <button className="context-menu-item" onClick={() => { setShowResumeFork(true); setShowNewMenu(false); }}>Resume / Fork ...</button>
               <div className="context-menu-item submenu-trigger">
                 Briefs {'\u25B6'}
                 <div className="context-submenu">
-                  {cardStore.briefs.slice(0, 15).map(b => (
-                    <button key={b.entity_id} className="context-menu-item" onClick={() => {
-                      executeCommand('workspace.tabs.open', { type: 'brief', targetId: b.entity_id.split(':')[1], label: b.display_name });
-                      setShowNewMenu(false);
-                    }}>{b.display_name}</button>
-                  ))}
-                  {cardStore.briefs.length === 0 && (
-                    <div className="context-menu-item" style={{ color: 'var(--text-muted)', cursor: 'default' }}>No briefs</div>
-                  )}
+                  <button className="context-menu-item" onClick={() => { setBriefsDialog('create'); setShowNewMenu(false); }}>Create brief from session ...</button>
+                  <button className="context-menu-item" onClick={() => { setBriefsDialog('launch'); setShowNewMenu(false); }}>Launch new session from brief(s) ...</button>
+                  <button className="context-menu-item" onClick={() => { setBriefsDialog('load'); setShowNewMenu(false); }}>Load brief into session ...</button>
                 </div>
               </div>
               <button className="context-menu-item" onClick={(e) => {
                 const rect = (e.target as HTMLElement).getBoundingClientRect();
                 setCustomSessionDialog({ x: rect.left, y: rect.bottom + 4 });
                 setShowNewMenu(false);
-              }}>Custom...</button>
+              }}>New custom session...</button>
               <div className="context-menu-separator" />
               {/* Section 3: Terminal */}
               <button className="context-menu-item" onClick={() => {
@@ -1352,6 +1358,15 @@ export default function Navigator({ onSelectSession, activeSessionId }: Navigato
           aiRoot={aiRoot}
         />
       )}
+
+      {showResumeFork && (
+        <ResumeForkDialog onClose={() => setShowResumeFork(false)} toastFn={showToast} />
+      )}
+
+      {briefsDialog && (
+        <BriefsDialog mode={briefsDialog} onClose={() => setBriefsDialog(null)} toastFn={showToast} />
+      )}
+
 
       </div>{/* end nav-tab-content */}
     </div>

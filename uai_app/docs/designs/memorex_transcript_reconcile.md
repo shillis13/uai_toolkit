@@ -1,7 +1,61 @@
-# Memorex ⟷ Transcript Reconcile — Design (DRAFT, under review)
+# Memorex ⟷ Transcript Reconcile — Historical Design and Superseding Decision
 
-**Status:** ⏸️ **PARKED — monitoring** (decided with PianoMan 2026-07-11, after Codex Review 1
-and the walkthrough). Not being implemented. See §9 for why and the resume trigger.
+**Status:** **SUPERSEDED and implemented in source, 2026-07-20.**
+
+The parked per-section repair design below is retained as history. It is **not** the current
+algorithm. Current authority is:
+
+- `docs/designs/memorex.md`, especially §§1, 2.2, 2.6–2.8;
+- `packages/renderer-ui/src/components/DESIGN.md`, constraints 6–9;
+- `packages/renderer-ui/src/components/memorex-transcript.ts`.
+
+## Current decision: invert ownership
+
+Transcript owns every settled message boundary and all settled prose. The terminal owns the
+still-streaming formatted tail, prompt/status/decision areas, and folded tool presentation. Memorex no
+longer independently matches each terminal-derived card to a Transcript message, calculates a
+confidence score, or repairs corruption one shape at a time.
+
+The current PM decision is a persistent ordinal card chain:
+
+1. Transcript cards form the persistent settled chain `DM0 <- ... <- DMn`.
+2. Terminal opening markers append a persistent provisional FIFO below that tail:
+   `DMn <- Pn+1 <- Pn+2`.
+3. When Transcript appends Tn+1, it replaces the first provisional by position:
+   `DMn <- Tn+1 <- Pn+2`. If no provisional exists, Tn+1 simply appends.
+4. A fresh bounded terminal snapshot is never sliced by the full Transcript count. Consecutive
+   terminal snapshots only update/append the terminal's own persistent provisional state. Creation
+   is bounded to the unfinished terminal turn after the latest completed verb summary (newest
+   submitted user marker fallback). Repeated context anchors at its newest occurrence; a suffix
+   marker already present earlier in the same terminal snapshot is repaint output, not another
+   provisional. A cold snapshot establishes a baseline and creates no cards until its tail changes
+   or a later marker opens. A fingerprint consumed by settlement stays suppressed for the rest of
+   that terminal turn, preventing a repaint from recreating the just-settled card. An explicit
+   completed-turn marker plus an empty unfinished region drains each provisional when Transcript
+   reaches its expected FIFO position, then drains any remainder after a short bounded lag grace.
+   Historical completed verb summaries do not render as terminal chrome.
+5. Do not use content matching, type matching, anchors, confidence, or terminal-vs-Transcript count
+   repair. Terminal merge/split/drop/dup drift is accepted in the provisional FIFO and cannot alter
+   the settled Transcript chain.
+6. Tool calls/results count in Transcript order and share one folded card. Identity matching may
+   select a compact terminal tool rendering, but it never affects settlement.
+7. Message type owns category classification. Local-only session identity, resume, and slash-command
+   records retain their Transcript number but do not create Memorex cards.
+8. Message content remains one formatted scroll surface. While a thinking verb is active, the cover
+   yields only the bounded real-terminal rows from that animated verb through task/prompt/status
+   chrome; idle and completed turns use the full-height cover. This geometry exception does not
+   participate in ordinal settlement.
+
+Performance work is part of the implementation: Memorex and TranscriptViewer share one
+canonical-path-keyed main-process Transcript cache; unchanged DOM cards and sanitized Transcript
+messages are reused. The canonical JSONL parser still performs a complete parse on an actual file
+change; `TranscriptCacheService.readRecords()` is the isolated seam for future safe tail parsing.
+
+---
+
+# Historical parked design — rejected
+
+The remainder records the July 11 design and review that the inversion replaced.
 
 The Codex review + walkthrough surfaced that this reconcile is *downstream insurance for an
 upstream problem*: bad terminal redraws (not a Memorex bug). The dominant trigger is

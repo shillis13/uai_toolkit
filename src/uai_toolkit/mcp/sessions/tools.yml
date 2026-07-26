@@ -195,6 +195,25 @@ tools:
     required:
     - group
     - id
+- name: sched_task_reinstall
+  description: 'Force-reload exactly ONE group''s launchd agents, leaving every other group untouched. Unlike sched_task_install
+    (which reconciles the whole set and skips unchanged agents), this boots out and re-bootstraps every job in the named group
+    even if unchanged, and removes any of its agents whose job was deleted/disabled. Use it to kick a single group after editing
+    its YAML directly, or to recover one wedged group without churning the fleet.'
+  handler: sched_task_reinstall
+  module: sched_tasks
+  inputSchema:
+    type: object
+    properties:
+      group:
+        type: string
+        description: Task group name = one YAML file in data/scheduled_tasks/. Holds related jobs (e.g. 'sysmon', 'news_scan').
+      dry_run:
+        type: boolean
+        default: false
+        description: If true, report which agents would be reloaded/removed without changing anything.
+    required:
+    - group
 - name: sched_task_run
   description: Run a job's command immediately, once, in the foreground and wait for it (synchronous). Does NOT affect the
     schedule. Use to test a task or trigger an ad-hoc run. Output/exit status are returned.
@@ -1073,4 +1092,78 @@ tools:
       note:
         type: string
         description: Free-text note. Always allowed; REQUIRED if reasons is empty (a fully custom reason).
+      checklist:
+        type: object
+        description: PREFERRED. Your end-of-turn self-review. Answer every field explicitly (no defaults).
+        additionalProperties: false
+        properties:
+          addressed_prompt:
+            type: boolean
+            description: Did your response address what the prompt actually asked?
+          logical:
+            type: boolean
+            description: Were your responses logical and internally consistent?
+          claims_verified:
+            type: boolean
+            description: Are your factual claims verified / evidence-backed, not just asserted?
+          did_what_i_said:
+            type: boolean
+            description: Did you do everything you said you would this turn (nothing said-but-skipped)?
+          work_finished:
+            type: boolean
+            description: Is all work you touched finished and saved/committed (nothing half-done)?
+          errors_handled:
+            type: boolean
+            description: Were any errors this turn resolved or flagged (none silently dropped)?
+          asking_needless_question:
+            type: boolean
+            description: Are you asking the user something you could answer or move forward without?
+          want_to_revisit:
+            type: boolean
+            description: Do you want a chance to re-think or revise your response before ending?
+          more_work_now:
+            type: boolean
+            description: Is there more work you can start right now without new input?
+          waiting_on:
+            type: string
+            description: If waiting on a person/response/dependency, what? Empty string if not waiting.
+          told_to_stop:
+            type: boolean
+            description: Were you told to stop at this point?
+          want_break:
+            type: boolean
+            description: Do you want to pause / take a break?
+          want_switch:
+            type: boolean
+            description: Would you rather switch to different work?
+          start_next_now:
+            type: boolean
+            description: Should the next turn start immediately?
+          schedule_next_min:
+            type: integer
+            description: Schedule the next turn in N minutes (0 = do not schedule).
+          note_to_user:
+            type: string
+            description: A note to send PianoMan now, or empty string.
+          note_to_hamilton:
+            type: string
+            description: A note to send Hamilton now, or empty string.
+        required:
+        - addressed_prompt
+        - logical
+        - claims_verified
+        - did_what_i_said
+        - work_finished
+        - errors_handled
+        - asking_needless_question
+        - want_to_revisit
+        - more_work_now
+        - waiting_on
+        - told_to_stop
+        - want_break
+        - want_switch
+        - start_next_now
+        - schedule_next_min
+        - note_to_user
+        - note_to_hamilton
     required: []

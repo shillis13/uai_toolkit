@@ -1,0 +1,17 @@
+name: Design & Decision Methods
+description: >
+  Design & Decision Methods — bundle assembled from the todo_0319 grouping pass.
+_registry:
+  id: design_decision_methods
+  name: Design & Decision Methods
+  status: active
+  version: 1.0.0
+
+context_files:
+  how_tos:
+    - ai_context_files/instructions/how_tos/instr_decomposition
+    - ai_context_files/instructions/how_tos/instr_tradeoff_analysis
+  perspectives:
+    - ai_context_files/instructions/perspectives/perspective_architectural_thinking
+  templates:
+    - ai_context_files/instructions/templates/architecture_decision_record

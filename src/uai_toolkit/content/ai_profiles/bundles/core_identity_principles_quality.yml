@@ -1,0 +1,36 @@
+name: Core - Identity, Principles & Quality
+description: >
+  Core - Identity, Principles & Quality — bundle assembled from the todo_0319 grouping pass.
+_registry:
+  id: core_identity_principles_quality
+  name: Core - Identity, Principles & Quality
+  status: active
+  version: 1.0.0
+
+context_files:
+  how_tos:
+    - ai_context_files/instructions/how_tos/spec_quality_gate_hierarchy
+  perspectives:
+    - ai_context_files/instructions/perspectives/perspective_operating_principles
+    - ai_context_files/instructions/perspectives/perspective_verify_with_real_execution
+    - ai_context_files/instructions/perspectives/perspective_every_declarative_needs_evidence
+    - ai_context_files/instructions/perspectives/perspective_definitive_negatives_need_sourcing
+    - ai_context_files/instructions/perspectives/perspective_label_inference_vs_fact
+    - ai_context_files/instructions/perspectives/perspective_dont_conclude_before_verifying
+    - ai_context_files/instructions/perspectives/perspective_no_fabricated_premises
+    - ai_context_files/instructions/perspectives/perspective_measure_before_claiming_reclaim
+    - ai_context_files/instructions/perspectives/perspective_diagnose_before_executing
+    - ai_context_files/instructions/perspectives/perspective_explain_root_cause
+    - ai_context_files/instructions/perspectives/perspective_iterate_filters_not_search_space
+    - ai_context_files/instructions/perspectives/perspective_progress_not_rushing
+  specs:
+    - ai_context_files/knowledge/specs/spec_session_identity
+    - ai_context_files/knowledge/specs/spec_session_state_store
+  rules:
+    - ai_context_files/instructions/rules/rules_never_destructive_on_siblings
+    - ai_context_files/instructions/rules/rules_no_mass_fleet_actions_from_single_diagnosis
+    - ai_context_files/instructions/rules/rules_communicate_during_critical_ops
+    - ai_context_files/instructions/rules/rules_no_code_ownership
+    - ai_context_files/instructions/rules/rules_no_silent_alternate_flows
+    - ai_context_files/instructions/rules/rules_model_switching
+    - ai_context_files/instructions/rules/rules_dont_kill_user_app

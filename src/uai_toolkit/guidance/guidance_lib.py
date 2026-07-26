@@ -41,7 +41,9 @@ from uai_toolkit.context_files.context_mgr import ContextIndex  # noqa: E402
 
 # === Path configuration ===
 
-sys.path.insert(0, os.environ.get("AI_SCRIPTS") or str(Path(__file__).resolve().parents[1]))
+_ai_scripts = os.environ.get("AI_SCRIPTS")
+if _ai_scripts:
+    sys.path.insert(0, _ai_scripts)
 from uai_toolkit.paths import AI_ROOT  # noqa: E402
 AI_GENERAL = AI_ROOT / "ai_general"
 TRAITS_DIR = AI_GENERAL / "ai_context_files"  # was the ai_traits symlink (now removed)
@@ -54,9 +56,11 @@ CONTEXT_DB_PATH = AI_GENERAL / "data" / "context.db"
 DB_PATH = CONTEXT_DB_PATH
 
 # Kinds that compose others vs. leaf content kinds (mirrors context_mgr).
-COMPOSITION_KINDS = frozenset({"role", "profile", "skill", "global"})
+# ``bundle`` = curated content-set; ``profile`` retired but kept inert (see
+# context_mgr COMPOSITION_KINDS — full removal is a disproportionate refactor).
+COMPOSITION_KINDS = frozenset({"role", "bundle", "profile", "skill", "global"})
 ALL_KINDS = frozenset({"brief", "memory", "knowledge", "instruction",
-                       "role", "profile", "skill", "global"})
+                       "role", "bundle", "profile", "skill", "global"})
 
 
 # === Database access ===
@@ -206,6 +210,7 @@ def _ref_to_id(ref: str) -> Optional[str]:
         ("instruction", "ai_context_files/instructions/"),
         ("instruction", "ai_context_files/platforms/"),
         ("global", "ai_profiles/globals/"),
+        ("bundle", "ai_profiles/bundles/"),
         ("skill", "ai_profiles/skills/"),
         ("role", "ai_profiles/roles/"),
     )

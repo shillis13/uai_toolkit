@@ -22,6 +22,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "common"))
 from uai_toolkit.hooks.common.lib_hook_base import run_hook, HookResult
+from uai_toolkit.hooks.common.lib_session_state_union import read_union   # union read: see MCP-set bounce.auto (todo_0495)
 
 # .../ai_general/data/hooks/Stop/this -> parents[3] = ai_general
 _BOUNCE = Path(__file__).resolve().parents[3] / "scripts" / "session_bounce"
@@ -31,13 +32,10 @@ def handler(hook_input, context):
     if not context.tracking_id or not context.session_dir:
         return HookResult.skip("no session identity")
 
-    state_path = Path(context.session_dir) / f"{context.tracking_id}_state.json"
-    state = {}
-    if state_path.exists():
-        try:
-            state = json.loads(state_path.read_text())
-        except (json.JSONDecodeError, OSError):
-            pass
+    # Union read so an MCP-set bounce.auto (which lands in the canonical accessor
+    # file) is seen alongside the hook-written metrics.resume in the legacy file
+    # (todo_0495). This hook doesn't write state back, so no absorption concern.
+    state = read_union(context.session_dir, context.tracking_id)
 
     if not state.get("bounce.auto"):
         return HookResult.skip("bounce.auto not enabled")

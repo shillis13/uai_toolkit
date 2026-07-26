@@ -17,7 +17,7 @@ import type {
   Tag,
   EntityRelationship,
 } from '@uai/shared/types';
-import type { ContainerStoreData, ProjectCard, TeamCard, BriefCard } from '@uai/shared/cards';
+import type { ContainerStoreData, ProjectCard, BriefCard } from '@uai/shared/cards';
 
 interface ActivityLogEntry {
   ts: string;
@@ -146,9 +146,6 @@ interface UaiApi {
   projects: {
     list(): Promise<ProjectCard[]>;
   };
-  teams: {
-    list(): Promise<TeamCard[]>;
-  };
   briefs: {
     list(): Promise<BriefCard[]>;
     create(sessionIds: string | string[], opts: {
@@ -180,11 +177,15 @@ interface UaiApi {
     read(limit?: number): Promise<FeedEntry[]>;
   };
   logError(payload: { message: string; stack?: string; session?: string; level?: 'error' | 'warn' }): Promise<{ ok: boolean }>;
-  getRecentErrors(limit?: number): Promise<Array<{ ts: string; source: string; session: string; message: string }>>;
-  getLastError(): Promise<{ ts: string; source: string; session: string; message: string } | null>;
+  getVersion(): Promise<string>;
+  getRecentErrors(limit?: number): Promise<Array<{ ts: string; source: string; session: string; level: 'error' | 'warn'; message: string }>>;
+  getLastError(): Promise<{ ts: string; source: string; session: string; level: 'error' | 'warn'; message: string } | null>;
   clearErrors(): Promise<{ ok: boolean }>;
   transcript: {
     read(zellijSession: string, cliSessionId: string | undefined, format: string): Promise<{ ok: boolean; days?: unknown[]; error?: string; uuid?: string; format?: string; path?: string }>;
+    stat(cliSessionId: string | undefined): Promise<{ ok: boolean; size?: number; mtimeMs?: number; path?: string; error?: string }>;
+    getCached(ref: string | undefined): Promise<{ ok: boolean; days?: unknown[]; error?: string; path?: string; cached?: boolean; revision?: string }>;
+    onUpdated(cb: (ref: string) => void): () => void;
   };
   comms: {
     queueList(sessionTrackingId: string): Promise<unknown[]>;
@@ -341,6 +342,7 @@ interface UaiApi {
     deleteGroup(group: string): Promise<{ ok: boolean; error?: string }>;
     deleteJob(group: string, jobId: string): Promise<{ ok: boolean; error?: string }>;
     install(): Promise<{ ok: boolean; error?: string }>;
+    reinstallGroup(group: string): Promise<{ ok: boolean; error?: string }>;
     dryRun(): Promise<{ ok: boolean; preview: string; error?: string }>;
     bootstrap(): Promise<{ ok: boolean; error?: string }>;
     runJob(group: string, jobId: string): Promise<{ ok: boolean; exitCode: number; stdout: string; stderr: string; error?: string }>;

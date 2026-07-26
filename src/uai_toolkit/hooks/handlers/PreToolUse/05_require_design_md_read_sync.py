@@ -67,13 +67,8 @@ def _record_governed_read(session_dir: str, tracking_id: str, state_prefix: str,
     if not session_dir or not tracking_id:
         return
 
-    state_path = Path(session_dir) / f"{tracking_id}_state.json"
-    state = {}
-    if state_path.exists():
-        try:
-            state = json.loads(state_path.read_text())
-        except (json.JSONDecodeError, OSError):
-            pass
+    from uai_toolkit.hooks.common.lib_session_state_union import read_union, write_session_state
+    state = read_union(session_dir, tracking_id)
 
     reads_key = f"{state_prefix}.reads"
     dirs_key = f"{state_prefix}.dirs"
@@ -91,16 +86,12 @@ def _record_governed_read(session_dir: str, tracking_id: str, state_prefix: str,
             "read_at": datetime.now().isoformat(),
         })
 
-    state[reads_key] = reads
-    state[dirs_key] = [r["dir"] for r in reads if isinstance(r, dict)]
-    state["updated_at"] = datetime.now().isoformat()
-
-    try:
-        tmp = state_path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(state, indent=2))
-        tmp.rename(state_path)
-    except OSError:
-        pass
+    # Targeted write through the bridge (todo_0495).
+    write_session_state(session_dir, tracking_id, {
+        reads_key: reads,
+        dirs_key: [r["dir"] for r in reads if isinstance(r, dict)],
+        "updated_at": datetime.now().isoformat(),
+    })
 
 
 def handler(hook_input, context):

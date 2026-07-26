@@ -63,6 +63,26 @@ def _read_state(session_dir, tid):
         return {}
 
 
+_HOOK_COMMON = GEN / "data" / "hooks" / "common"
+
+
+def _read_union_state(session_dir, tid):
+    """UNION read (canonical accessor file OVER the legacy hooks' file; todo_0495).
+    Both config (bounce.auto / bounce.auto_recommend, may be MCP-set) and the
+    runtime flags (bounce.armed / bounce.scheduled) are read through this union and
+    written through `_set` (the shared bridge → locked canonical accessor for
+    enrolled/flipped sessions, legacy otherwise), so reads and writes stay on the
+    same store in every phase. Falls back to the legacy-only read if the shared
+    helper can't be imported (launchd env) — never fails."""
+    try:
+        if str(_HOOK_COMMON) not in sys.path:
+            sys.path.insert(0, str(_HOOK_COMMON))
+        from uai_toolkit.hooks.common.lib_session_state_union import read_union
+        return read_union(session_dir, tid)
+    except Exception:
+        return _read_state(session_dir, tid)
+
+
 def _write_state(session_dir, tid, state):
     p = _state_path(session_dir, tid)
     try:
@@ -74,9 +94,18 @@ def _write_state(session_dir, tid, state):
 
 
 def _set(session_dir, tid, **kw):
-    st = _read_state(session_dir, tid)
-    st.update(kw)
-    _write_state(session_dir, tid, st)
+    """Persist runtime flags through the shared bridge (enrolled → locked canonical
+    accessor, else legacy; todo_0495). Legacy RMW fallback if the bridge can't be
+    imported (launchd env) — never fails."""
+    try:
+        if str(_HOOK_COMMON) not in sys.path:
+            sys.path.insert(0, str(_HOOK_COMMON))
+        from uai_toolkit.hooks.common.lib_session_state_union import write_session_state
+        write_session_state(session_dir, tid, kw)
+    except Exception:
+        st = _read_state(session_dir, tid)
+        st.update(kw)
+        _write_state(session_dir, tid, st)
 
 
 def _activity_idle_secs(session_dir):
@@ -100,12 +129,15 @@ def _activity_idle_secs(session_dir):
 
 
 def _recommend(session_dir, tid):
-    m = _read_state(session_dir, tid).get("metrics.resume") or {}
+    # metrics.resume is written by Stop/04 through the bridge → canonical for
+    # enrolled sessions, so read via the union (todo_0495).
+    m = _read_union_state(session_dir, tid).get("metrics.resume") or {}
     return m.get("recommend"), int(m.get("sheddable_tokens") or 0), m.get("used_pct")
 
 
 def _bounce_tiers(session_dir, tid):
-    return set(_read_state(session_dir, tid).get("bounce.auto_recommend") or RECOMMEND_BOUNCE)
+    # config (may be MCP-set → canonical); union read
+    return set(_read_union_state(session_dir, tid).get("bounce.auto_recommend") or RECOMMEND_BOUNCE)
 
 
 def _arm(tid, session_dir, in_=RESCHEDULE_IN):
@@ -124,7 +156,7 @@ def reconcile_from_stop(session_dir, tid, recommend) -> str:
     """Called by Stop/10_auto_bounce. Arm on transition INTO a bounce recommendation,
     cancel on transition OUT — touching launchd only on transitions (no churn).
     Returns a short status string for the hook log."""
-    st = _read_state(session_dir, tid)
+    st = _read_union_state(session_dir, tid)   # config (bounce.auto/*) may be MCP-set → canonical
     if not st.get("bounce.auto"):
         if st.get("bounce.armed"):
             cancel(tid)
@@ -163,7 +195,7 @@ def main():
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args()
     tid, session_dir = a.tid, a.session_dir
-    st = _read_state(session_dir, tid)
+    st = _read_union_state(session_dir, tid)   # config (bounce.auto/*) may be MCP-set → canonical
 
     if not st.get("bounce.auto"):
         _set(session_dir, tid, **{"bounce.armed": False})

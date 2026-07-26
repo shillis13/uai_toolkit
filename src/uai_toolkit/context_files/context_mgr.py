@@ -55,7 +55,9 @@ except ImportError:  # pragma: no cover - yaml is available in the workspace
     yaml = None
 
 # AI_ROOT resolution (via the shared path resolver).
-sys.path.insert(0, os.environ.get("AI_SCRIPTS") or str(Path(__file__).resolve().parents[1]))
+_ai_scripts = os.environ.get("AI_SCRIPTS")
+if _ai_scripts:
+    sys.path.insert(0, _ai_scripts)
 from uai_toolkit.paths import AI_ROOT  # noqa: E402
 
 SCHEMA_VERSION = 1
@@ -63,16 +65,23 @@ SCHEMA_VERSION = 1
 DB_PATH = AI_ROOT / "ai_general" / "data" / "context.db"
 
 # Kinds that bundle/compose other items (vs. leaf content kinds).
-COMPOSITION_KINDS = frozenset({"role", "profile", "skill", "global"})
+# ``bundle`` = a curated content-set (the pure leaf-set composition kind).
+# ``profile`` is RETIRED — a session carries roles + bundles directly and no
+# active profile items remain — but the kind is kept as an inert vestige: it has
+# no live files, yet the classifier/move/index paths (and their extensive test
+# coverage of profile→role composition) still reference it, and removing it
+# fully is a disproportionate refactor for a kind that is already empty.
+COMPOSITION_KINDS = frozenset({"role", "bundle", "profile", "skill", "global"})
 LEAF_KINDS = frozenset({"brief", "memory", "knowledge", "instruction"})
 
 # Derived ``loader`` per kind — how a bundle is delivered into a session.
-# Bundles differ only by doorway: role via MCP (``knowledge_get_*``), skill via
-# a /command, global always-on; a profile is an MCP-loaded bundle of roles, so
-# it shares ``mcp``. Leaf content kinds have no loader (a bundle pulls them in),
-# so they map to None. Computed from ``kind`` — NOT a schema column.
+# Bundles differ only by doorway: role/bundle via MCP (``knowledge_get_*``),
+# skill via a /command, global always-on; a profile (retired) shared ``mcp``.
+# Leaf content kinds have no loader (a bundle pulls them in), so they map to
+# None. Computed from ``kind`` — NOT a schema column.
 _LOADER_BY_KIND = {
     "role": "mcp",
+    "bundle": "mcp",
     "profile": "mcp",
     "skill": "command",
     "global": "auto",
@@ -103,8 +112,9 @@ def _orphan_severity(kind: Optional[str]) -> str:
     """Return the orphan severity (low|warn) for a leaf kind (default warn)."""
     return _ORPHAN_SEVERITY.get(kind, "warn")
 
-# Content-file extensions we index (excludes .json/.txt/.DS_Store noise).
-_CONTENT_EXTS = frozenset({".md", ".yml", ".yaml"})
+# Content-file extensions we index. .json is included for JSON Schema files
+# (knowledge/schemas/*.json) that bundles reference; .txt/.DS_Store stay excluded.
+_CONTENT_EXTS = frozenset({".md", ".yml", ".yaml", ".json"})
 
 # Source layout: (kind, path relative to ai_general). Reference strings in
 # composition files use these same prefixes (extension-less), so the same
@@ -116,6 +126,7 @@ _REF_PREFIXES = (
     # platforms map to instruction by default (no platform leaf-kind yet).
     ("instruction", "ai_context_files/platforms"),
     ("global", "ai_profiles/globals"),
+    ("bundle", "ai_profiles/bundles"),
     ("skill", "ai_profiles/skills"),
     ("role", "ai_profiles/roles"),
 )
@@ -303,6 +314,7 @@ class ContextIndex:
             (self._ai_general / "ai_context_files" / "instructions", True),
             (self._ai_general / "ai_context_files" / "platforms", True),
             (self._ai_general / "ai_profiles" / "globals", True),
+            (self._ai_general / "ai_profiles" / "bundles", True),
             (self._ai_general / "ai_profiles" / "skills", True),
             (self._ai_general / "ai_profiles" / "roles", True),
             (self._ai_general / "data" / "session_briefs", True),
@@ -322,7 +334,8 @@ class ContextIndex:
 
         # Profiles: top-level *.yml in ai_profiles (subdirs are roles/skills/
         # globals handled separately). Archived (_archive/) profiles are NOT
-        # indexed.
+        # indexed. (``profile`` is retired — no live files remain — but the scan
+        # stays so any lingering profile round-trips through the index cleanly.)
         prof_dir = self._ai_general / "ai_profiles"
         if prof_dir.exists():
             for f in sorted(prof_dir.glob("*.yml")):
@@ -423,13 +436,16 @@ class ContextIndex:
         for kind, prefix in _REF_PREFIXES:
             pfx = prefix + "/"
             if rel_posix.startswith(pfx):
+                # README/DESIGN are directory docs, not indexable content items.
+                if rel.stem.lower() in ("readme", "design"):
+                    return None
                 return (kind, _strip_ext(rel_posix[len(pfx):]))
 
         # Top-level ai_profiles/*.yml → profile (subdirs roles/skills/globals/
         # platforms are excluded above). The ``_archive/`` subtree of
         # ai_profiles holds archived profiles: keep the ``_archive/`` segment in
         # the name (id ``profile:_archive/solo``) so reindex reclassifies it as
-        # archived rather than losing it.
+        # archived rather than losing it. (``profile`` is retired but kept inert.)
         if rel.suffix == ".yml":
             parent = rel.parent.as_posix()
             if parent == "ai_profiles":
@@ -1172,66 +1188,94 @@ class ContextIndex:
         "instruction": "ai_context_files/instructions",
     }
 
+    # Composition kinds `create` can author as a flat <name>.yml skeleton
+    # (name + description) in their ai_profiles dir. References are added later
+    # via `link` — the skeleton carries no context_files key.
+    _COMPOSITION_CREATE_BASE = {
+        "bundle": "ai_profiles/bundles",
+        "role": "ai_profiles/roles",
+        "skill": "ai_profiles/skills",
+        "global": "ai_profiles/globals",
+    }
+
     def _resolve_by(self, by: Optional[str]) -> str:
         """Resolve the ``changed_by`` actor: explicit ``by`` > env > 'unknown'."""
         if by:
             return by
         return os.environ.get("AI_TRACKING_ID") or "unknown"
 
+    def _category_dirs(self, kind: str) -> set:
+        """Existing category sub-directories for a leaf kind (excludes _/. dirs)."""
+        base = self.ai_root / "ai_general" / self._AUTHORING_BASE[kind]
+        if not base.is_dir():
+            return set()
+        return {
+            d.name for d in base.iterdir()
+            if d.is_dir() and not d.name.startswith(("_", "."))
+        }
+
+    def list_categories(self, kind: str) -> dict:
+        """List existing category sub-dirs for a leaf kind (for the create UI)."""
+        if kind not in self._AUTHORING_KINDS:
+            return {
+                "ok": False,
+                "error": "categories are a leaf-kind concept; kind must be one of {}".format(
+                    sorted(self._AUTHORING_KINDS)
+                ),
+            }
+        return {"ok": True, "kind": kind, "categories": sorted(self._category_dirs(kind))}
+
     def create(
         self,
         kind: str,
         title: str,
-        category: str,
+        category: Optional[str] = None,
         *,
         name: Optional[str] = None,
+        description: Optional[str] = None,
+        new_category: bool = False,
         by: Optional[str] = None,
         dry_run: bool = False,
     ) -> dict:
-        """Create a context-file stub (knowledge|instruction) and index it.
+        """Create a context-file OR composition stub and index it.
 
-        Derives a ``name`` slug from ``title`` when not given, computes the path
-        under the kind's category dir (relative to ``ai_root``), and — unless it
-        would collide with an existing file or item id — writes a minimal stub
-        (YAML frontmatter with ``title`` + a body heading), inserts the item
-        row, and records a ``changelog`` op="create" row through the single
-        write path.
-
-        Validates inputs: ``kind`` in {knowledge, instruction}; ``title``
-        non-empty; ``category`` and derived ``name`` are safe slugs (no path
-        traversal / absolute paths).
+        Leaf kinds (knowledge|instruction) write a ``.md`` stub (frontmatter
+        ``title`` + a body heading) under the kind's ``category`` dir.
+        Composition kinds (bundle|role|skill|global) write a flat
+        ``<name>.yml`` skeleton (``name`` + ``description``) in the kind's
+        ai_profiles dir; references are added later via ``link`` (the skeleton
+        carries no ``context_files`` key). Either way, a collision with an
+        existing file or item id is rejected, and ``dry_run`` returns the
+        planned id/path without writing.
 
         Args:
-            kind: ``knowledge`` or ``instruction``.
-            title: human title; non-empty.
-            category: category sub-directory (a safe slug).
+            kind: leaf (knowledge|instruction) or composition
+                (bundle|role|skill|global).
+            title: human title / display name; non-empty.
+            category: category sub-directory — required for leaves, ignored for
+                compositions.
             name: optional explicit slug (overrides the title-derived slug).
+            description: composition-only one-line description (defaults to the
+                title).
             by: actor for the changelog (defaults to $AI_TRACKING_ID/unknown).
-            dry_run: compute + return the planned id/path WITHOUT writing the
-                file or the row.
+            dry_run: compute the planned id/path WITHOUT writing.
 
         Returns:
             ``{ok: True, id, path, dry_run}`` on success, else
             ``{ok: False, error, dry_run}``.
         """
-        if kind not in self._AUTHORING_KINDS:
+        is_leaf = kind in self._AUTHORING_KINDS
+        is_comp = kind in self._COMPOSITION_CREATE_BASE
+        if not (is_leaf or is_comp):
+            allowed = sorted(self._AUTHORING_KINDS | set(self._COMPOSITION_CREATE_BASE))
             return {
                 "ok": False,
-                "error": "kind must be one of {} (got {!r})".format(
-                    sorted(self._AUTHORING_KINDS), kind
-                ),
+                "error": "kind must be one of {} (got {!r})".format(allowed, kind),
                 "dry_run": dry_run,
             }
         title = (title or "").strip()
         if not title:
             return {"ok": False, "error": "title must be non-empty", "dry_run": dry_run}
-
-        if not _is_safe_slug(category):
-            return {
-                "ok": False,
-                "error": "category {!r} is not a safe slug".format(category),
-                "dry_run": dry_run,
-            }
 
         slug = name if name is not None else _slugify(title)
         if not _is_safe_slug(slug):
@@ -1241,9 +1285,42 @@ class ContextIndex:
                 "dry_run": dry_run,
             }
 
-        rel_name = "{}/{}".format(category, slug)
-        item_id = "{}:{}".format(kind, rel_name)
-        rel_path = "{}/{}/{}.md".format(self._AUTHORING_BASE[kind], category, slug)
+        if is_leaf:
+            if not _is_safe_slug(category or ""):
+                return {
+                    "ok": False,
+                    "error": "category {!r} is not a safe slug".format(category),
+                    "dry_run": dry_run,
+                }
+            # A new category must be DELIBERATE — reject an unknown one unless
+            # new_category is set, so a typo or near-duplicate term can't silently
+            # spawn a category dir.
+            if not new_category and category not in self._category_dirs(kind):
+                return {
+                    "ok": False,
+                    "error": "category {!r} does not exist for {} (existing: {}); "
+                             "pass new_category=true (--new-category) to create it "
+                             "deliberately".format(
+                                 category, kind, sorted(self._category_dirs(kind))
+                             ),
+                    "dry_run": dry_run,
+                    "unknown_category": True,
+                }
+            item_id = "{}:{}/{}".format(kind, category, slug)
+            rel_path = "{}/{}/{}.md".format(self._AUTHORING_BASE[kind], category, slug)
+            # YAML-safe frontmatter: serialize the title line through yaml so a
+            # title with ':' '#' quotes or a leading '-' stays valid.
+            stub = "---\n{}\n---\n\n# {}\n".format(_yaml_title_line(title), title)
+        else:
+            import yaml as _yaml
+            item_id = "{}:{}".format(kind, slug)
+            rel_path = "{}/{}.yml".format(self._COMPOSITION_CREATE_BASE[kind], slug)
+            desc = (description or "").strip() or title
+            stub = _yaml.safe_dump(
+                {"name": title, "description": desc},
+                default_flow_style=False, sort_keys=False, allow_unicode=True,
+            )
+
         rel_to_root = "ai_general/{}".format(rel_path)
         abs_path = self.ai_root / rel_to_root
 
@@ -1268,13 +1345,6 @@ class ContextIndex:
         if dry_run:
             return {"ok": True, "id": item_id, "path": rel_to_root, "dry_run": True}
 
-        # YAML-safe frontmatter: a title with ':' '#' quotes or a leading '-'
-        # would produce invalid/misparsed YAML if written raw, so serialize the
-        # title line through yaml (plain scalars stay unquoted, special-char
-        # titles get correctly quoted/escaped). The body heading is markdown,
-        # so the raw title is fine there.
-        title_line = _yaml_title_line(title)
-        stub = "---\n{}\n---\n\n# {}\n".format(title_line, title)
         # Atomic exclusive create: never clobber a file that appeared between the
         # collision check above and now (TOCTOU-safe).
         try:
@@ -2519,7 +2589,7 @@ def _yaml_title_line(title: str) -> str:
 
 
 def _strip_ext(name: str) -> str:
-    for ext in (".md", ".yml", ".yaml"):
+    for ext in (".md", ".yml", ".yaml", ".json"):
         if name.endswith(ext):
             return name[: -len(ext)]
     return name
@@ -3099,7 +3169,7 @@ def _first_paragraph(text: str) -> Optional[str]:
 # ``--help`` and bad values are rejected before any work runs.
 _KIND_CHOICES = [
     "brief", "memory", "knowledge", "instruction",
-    "role", "profile", "skill", "global",
+    "role", "bundle", "profile", "skill", "global",
 ]
 _STATUS_CHOICES = ["active", "archived", "all"]
 _SCOPE_CHOICES = ["global"]
@@ -3345,16 +3415,37 @@ def _build_parser():
                     "records a changelog row. Rejects collisions. --dry-run "
                     "computes the planned id/path without writing.",
     )
-    sp.add_argument("--kind", choices=["knowledge", "instruction"], required=True,
-                    help="context-file kind to create.")
-    sp.add_argument("--title", required=True, help="human title (non-empty).")
-    sp.add_argument("--category", required=True,
-                    help="category sub-directory (a safe slug).")
+    sp.add_argument("--kind",
+                    choices=["knowledge", "instruction", "bundle", "role", "skill", "global"],
+                    required=True,
+                    help="leaf (knowledge|instruction) or composition "
+                         "(bundle|role|skill|global) kind to create.")
+    sp.add_argument("--title", required=True, help="human title / display name (non-empty).")
+    sp.add_argument("--category",
+                    help="category sub-directory (required for leaf kinds; "
+                         "ignored for compositions).")
     sp.add_argument("--name", help="explicit slug (overrides title-derived).")
+    sp.add_argument("--description",
+                    help="composition-only one-line description (defaults to the title).")
+    sp.add_argument("--new-category", action="store_true",
+                    help="leaf-only: deliberately create a NEW category dir "
+                         "(an unknown category is rejected without this).")
     sp.add_argument("--by", help="actor recorded in the changelog "
                                  "(default: $AI_TRACKING_ID or 'unknown').")
     sp.add_argument("--dry-run", action="store_true",
                     help="compute the planned id/path without writing.")
+    _add_format_args(sp)
+
+    sp = sub.add_parser(
+        "categories",
+        help="list existing category sub-dirs for a leaf kind (knowledge|instruction).",
+        description="List the existing category sub-directories under a leaf "
+                    "kind's dir — the valid categories a new context file may be "
+                    "created into (creating a NEW category needs `create "
+                    "--new-category`).",
+    )
+    sp.add_argument("--kind", choices=["knowledge", "instruction"], required=True,
+                    help="leaf kind whose categories to list.")
     _add_format_args(sp)
 
     sp = sub.add_parser(
@@ -3782,8 +3873,11 @@ def _dispatch(idx: "ContextIndex", args):
     if cmd == "create":
         return idx.create(
             kind=args.kind, title=args.title, category=args.category,
-            name=args.name, by=args.by, dry_run=args.dry_run,
+            name=args.name, description=args.description,
+            new_category=args.new_category, by=args.by, dry_run=args.dry_run,
         )
+    if cmd == "categories":
+        return idx.list_categories(args.kind)
     if cmd == "update":
         content = args.content
         if content is None:
@@ -3826,7 +3920,7 @@ _REPL_FLAGS = [
 ]
 _REPL_KINDS = [
     "brief", "memory", "knowledge", "instruction",
-    "role", "profile", "skill", "global",
+    "role", "bundle", "skill", "global",
 ]
 _REPL_COMPLETER_WORDS = _REPL_VERBS + _REPL_FLAGS + _REPL_KINDS
 

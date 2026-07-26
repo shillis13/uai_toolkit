@@ -14,6 +14,7 @@ import { useFolderStore } from '../stores/folder-store';
 import { useToast } from './Toast';
 import { useViewport } from '../viewport';
 import { useContextMenuDismiss } from '../hooks/use-context-menu-dismiss';
+import { useClampToViewport, useSubmenuAutoFlip } from '../hooks/use-clamp-to-viewport';
 import { executeCommand } from '../utils/execute-command';
 import type { Session } from '@uai/shared/types';
 import BriefDialog from './BriefDialog';
@@ -61,6 +62,11 @@ export default function SessionContextMenu({
   const cardStore = useCardStore();
   const folderStore = useFolderStore();
   const menuRef = useRef<HTMLDivElement>(null);
+  // Keep the menu on-screen for tabs near the right/bottom edge.
+  useClampToViewport(menuRef, true, [x, y]);
+  // Keep CASCADING submenus on-screen too (todo_0547) — right-edge tab → submenu
+  // was opening off the right edge. Flips submenus toward the available space.
+  useSubmenuAutoFlip(menuRef, true, [x, y]);
 
   const isRunning = session.process_status === 'running';
   const isStopped = !isRunning;

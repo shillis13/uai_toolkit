@@ -1,0 +1,15 @@
+name: Workspace Architecture
+description: >
+  Workspace Architecture — bundle assembled from the todo_0319 grouping pass.
+_registry:
+  id: workspace_architecture
+  name: Workspace Architecture
+  status: active
+  version: 1.0.0
+
+context_files:
+  architecture:
+    - ai_context_files/knowledge/architecture/arch_ai_root_architecture_overview
+    - ai_context_files/knowledge/architecture/arch_entity_model
+    - ai_context_files/knowledge/architecture/arch_memory_context_library
+    - ai_context_files/knowledge/architecture/arch_traits_profiles_registry

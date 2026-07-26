@@ -12,7 +12,7 @@
  * disabled with a note — read side is live now.
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { SessionCard } from '@uai/shared/cards';
 import { trackingIdFrom } from './SessionLink';
 import { executeCommand } from '../utils/execute-command';
@@ -82,10 +82,18 @@ interface ProjectCommsDetailProps {
   teamSize: number;
 }
 
+// PianoMan's comms identity — he's a participant in these conversations, so
+// replies posted from the app go out under his name.
+const PIANOMAN_SENDER = 'piano_man';
+
 export default function ProjectCommsDetail({ conversations, loading, selectedId, teamSize }: ProjectCommsDetailProps): JSX.Element {
   const conv = conversations.find(c => c.id === selectedId) || null;
   const [detail, setDetail] = useState<{ messages?: Array<Record<string, any>>; deliveries?: Array<Record<string, any>> } | null>(null);
   const [draft, setDraft] = useState('');
+  const [sending, setSending] = useState(false);
+  const [sendErr, setSendErr] = useState<string | null>(null);
+  const selectedIdRef = useRef(selectedId);
+  selectedIdRef.current = selectedId;
 
   useEffect(() => {
     if (!selectedId) { setDetail(null); return; }
@@ -93,9 +101,58 @@ export default function ProjectCommsDetail({ conversations, loading, selectedId,
     window.uai.comms.conversation(selectedId)
       .then(d => { if (alive) setDetail(d as any); })
       .catch(() => { if (alive) setDetail(null); });
-    setDraft('');
+    setDraft(''); setSendErr(null);
     return () => { alive = false; };
   }, [selectedId]);
+
+  // Reply into the conversation as PianoMan — threads onto the latest message so it
+  // lands in this conversation. Reloads the thread on success.
+  const send = async () => {
+    const text = draft.trim();
+    const msgs = detail?.messages || [];
+    // Optimistic replies use local-only IDs until the read index catches up.
+    // Never use one as the next reply anchor or a rapid second reply would target
+    // a message ID the backend cannot resolve.
+    const last = [...msgs].reverse().find(m => !m?._optimistic && m?.id);
+    if (!text || !last?.id || sending) return;
+    setSending(true); setSendErr(null);
+    try {
+      const res = await window.uai.comms.reply(String(last.id), PIANOMAN_SENDER, text);
+      if (res?.ok) {
+        setDraft('');
+        // Show the reply instantly (optimistic stub), then reconcile against the
+        // read index. messaging_mgr now writes the reply to comms_index before
+        // returning (todo_0593), so a reload DOES reflect it — the reload replaces
+        // the stub with the real message (real id, reply_to, read-state) and lets
+        // a rapid follow-up reply anchor on it instead of skipping the stub.
+        setDetail(d => ({
+          ...(d || {}),
+          messages: [...((d?.messages) || []), {
+            id: `local_${String(last.id)}_${((d?.messages) || []).length}`,
+            from: PIANOMAN_SENDER, body: text, created_at: new Date().toISOString(), delivery: 'message', _optimistic: true,
+          }],
+        }));
+        if (selectedId) {
+          try {
+            // Keep `sending` true until the real indexed row is back. This closes
+            // the small window where a rapid second submit could still anchor on
+            // the previous real message while the optimistic stub was unresolved.
+            const refreshed = await window.uai.comms.conversation(selectedId);
+            if (selectedIdRef.current === selectedId) setDetail(refreshed as any);
+          } catch {
+            // Keep the optimistic stub if the reload fails. The next send skips
+            // local-only IDs and therefore still targets a resolvable message.
+          }
+        }
+      } else {
+        setSendErr(res?.error || 'Send failed.');
+      }
+    } catch (e) {
+      setSendErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSending(false);
+    }
+  };
 
   if (loading) return <div className="pe-detail-body"><div className="pe-note">Loading conversations…</div></div>;
 
@@ -155,16 +212,20 @@ export default function ProjectCommsDetail({ conversations, loading, selectedId,
             {detail && (detail.messages || []).length === 0 && <div className="pe-note">No messages.</div>}
           </div>
           <div className="pe-inject">
-            <span className="pe-inject-to">reply</span>
+            <span className="pe-inject-to" title="Replies post as PianoMan">reply</span>
             <input
               className="pe-inject-field"
-              placeholder="Posting routes through the updated send-path (Throughline) — read side is live"
+              placeholder={(detail?.messages || []).length === 0 ? 'No message to reply to yet' : 'Reply as PianoMan… (Enter to send)'}
               value={draft}
-              disabled
+              disabled={sending || (detail?.messages || []).length === 0}
               onChange={e => setDraft(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }}
             />
-            <button className="pe-inject-send" disabled>Send</button>
+            <button className="pe-inject-send" disabled={sending || !draft.trim() || (detail?.messages || []).length === 0} onClick={send}>
+              {sending ? 'Sending…' : 'Send'}
+            </button>
           </div>
+          {sendErr && <div className="pe-note" style={{ color: 'var(--accent-orange)' }}>⚠ {sendErr}</div>}
         </>
       )}
     </div>

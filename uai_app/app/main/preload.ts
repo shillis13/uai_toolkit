@@ -24,7 +24,7 @@ import type {
   Tag,
   EntityRelationship,
 } from '@uai/shared/types';
-import type { ContainerStoreData, ProjectCard, TeamCard, BriefCard } from '@uai/shared/cards';
+import type { ContainerStoreData, ProjectCard, BriefCard } from '@uai/shared/cards';
 import type { QueueEntry, InboxMessage } from '@uai/shared/types';
 
 // ── Scheduled Tasks types ─────────────────────────────────────────────────
@@ -306,10 +306,10 @@ const uaiApi = {
       ipcRenderer.invoke(IPC.PROJECT_LIST),
   },
 
-  // ── Teams ────────────────────────────────────────────────────────────
-  teams: {
-    list: (): Promise<TeamCard[]> =>
-      ipcRenderer.invoke(IPC.TEAM_LIST),
+  // ── Hidden entities (Restore-hidden UI) ──────────────────────────────
+  entities: {
+    listHidden: (): Promise<ProjectCard[]> =>
+      ipcRenderer.invoke('uai:entities:listHidden'),
   },
 
   // ── Briefs ──────────────────────────────────────────────────────────
@@ -426,6 +426,12 @@ const uaiApi = {
   context: {
     run: (verb: string, args?: string[]): Promise<{ ok: boolean; data?: any; error?: string }> =>
       ipcRenderer.invoke('uai:context:run', verb, args),
+  },
+
+  // ── Role context — apply a role's context to its assigned member's session ──
+  roleContext: {
+    apply: (member: string, context: string): Promise<{ ok: boolean; member?: string; context?: string; count?: number; staged?: string[]; error?: string }> =>
+      ipcRenderer.invoke('uai:roleContext:apply', member, context),
   },
   gitFileView: {
     read: (dir: string, since?: string, until?: string): Promise<any> =>
@@ -568,6 +574,20 @@ const uaiApi = {
   transcript: {
     read: (zellijSession: string, cliSessionId: string | undefined, format: string): Promise<{ ok: boolean; days?: unknown[]; error?: string; uuid?: string; format?: string; path?: string }> =>
       ipcRenderer.invoke('transcript:read', zellijSession, cliSessionId, format),
+    // Cheap change-check: locate the session file and return its size + mtime so the
+    // overlay can skip the full re-read when nothing was appended.
+    stat: (cliSessionId: string | undefined): Promise<{ ok: boolean; size?: number; mtimeMs?: number; path?: string; error?: string }> =>
+      ipcRenderer.invoke('transcript:stat', cliSessionId),
+    // Warm, cross-tab cached read from the main-process pool (accepts any id/name).
+    getCached: (ref: string | undefined): Promise<{ ok: boolean; days?: unknown[]; error?: string; path?: string; cached?: boolean; revision?: string }> =>
+      ipcRenderer.invoke('transcript:getCached', ref),
+    // Subscribe to file-watcher updates: cb(ref) fires when a pooled session's
+    // transcript file actually changes (replaces the 10s poll). Returns an unsubscribe.
+    onUpdated: (cb: (ref: string) => void): (() => void) => {
+      const h = (_e: unknown, ref: string) => cb(ref);
+      ipcRenderer.on('transcript:updated', h);
+      return () => ipcRenderer.removeListener('transcript:updated', h);
+    },
     history: (cliSessionId: string): Promise<{ ok: boolean; messages: Array<{ role: string; content: string; timestamp?: string }>; error?: string }> =>
       ipcRenderer.invoke('transcript:history', cliSessionId),
   },
@@ -613,6 +633,8 @@ const uaiApi = {
       ipcRenderer.invoke('uai:scheduledTasks:deleteJob', group, jobId),
     install: (): Promise<MutationResult> =>
       ipcRenderer.invoke('uai:scheduledTasks:install'),
+    reinstallGroup: (group: string): Promise<MutationResult> =>
+      ipcRenderer.invoke('uai:scheduledTasks:reinstall', group),
     dryRun: (): Promise<{ ok: boolean; preview: string; error?: string }> =>
       ipcRenderer.invoke('uai:scheduledTasks:dryRun'),
     runJob: (group: string, jobId: string): Promise<RunJobResult> =>
@@ -790,9 +812,9 @@ const uaiApiWithVersion = {
   // ── Error reporting + recent errors ─────────────────────────────────
   logError: (payload: { message: string; stack?: string; session?: string; level?: 'error' | 'warn' }): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke('uai:logError', payload),
-  getRecentErrors: (limit?: number): Promise<Array<{ ts: string; source: string; session: string; message: string }>> =>
+  getRecentErrors: (limit?: number): Promise<Array<{ ts: string; source: string; session: string; level: 'error' | 'warn'; message: string }>> =>
     ipcRenderer.invoke('uai:getRecentErrors', limit),
-  getLastError: (): Promise<{ ts: string; source: string; session: string; message: string } | null> =>
+  getLastError: (): Promise<{ ts: string; source: string; session: string; level: 'error' | 'warn'; message: string } | null> =>
     ipcRenderer.invoke('uai:getLastError'),
   clearErrors: (): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke('uai:clearErrors'),

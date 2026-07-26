@@ -400,8 +400,20 @@ export function deleteInboxMessage(sessionTrackingId: string, messageId: string)
 /** Reply to a message via messaging.py reply. `from` is the inbox owner. */
 export async function replyToMessage(messageId: string, from: string, content: string): Promise<{ ok: boolean; error?: string }> {
   const args = [getMessagingScript(), 'reply', '--id', messageId, '--from', from, '--content', content];
+  // v2 messaging: --from is IGNORED — the sender is the TRUSTED $AI_TRACKING_ID.
+  // Like sendMessage, the UAI authenticates AS the user by setting AI_TRACKING_ID
+  // to `from` for this subprocess (was missing, so app replies posted as the wrong
+  // identity — the core reason the Comms reply box was unusable).
+  const replyEnv = { ...process.env, AI_TRACKING_ID: from, PATH: shellPath() };
   return new Promise((resolve) => {
-    execFileCb('python3', args, { maxBuffer: 1024 * 1024, timeout: 10000 }, (error, _stdout, stderr) => {
+    execFileCb('python3', args, { maxBuffer: 1024 * 1024, timeout: 10000, env: replyEnv }, (error, stdout, stderr) => {
+      const out = (stdout || '').trim();
+      if (out) {
+        try {
+          const parsed = JSON.parse(out);
+          if (parsed && parsed.success === false) { resolve({ ok: false, error: parsed.error || 'reply failed' }); return; }
+        } catch { /* not json — fall through */ }
+      }
       resolve(error ? { ok: false, error: stderr?.trim() || error.message } : { ok: true });
     });
   });

@@ -13,6 +13,8 @@ responsibilities:
 context_files:
   processes:
   - ai_context_files/instructions/how_tos/instr_federated_memory
+  how_tos:
+  - ai_context_files/instructions/how_tos/instr_team_membership
 _registry:
   id: team_member
   name: Team Member

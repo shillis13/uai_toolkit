@@ -20,16 +20,11 @@ context_files:
   - path: ai_context_files/knowledge/architecture/arch_ai_root_architecture_overview
     purpose: System-level structural understanding
   procedures:
-  - path: ai_context_files/instructions/rules/rules_file_conventions
-    purpose: File naming, versioning, symlink conventions
-  - path: ai_context_files/instructions/rules/rules_development
-    purpose: Coding standards
-  - path: ai_context_files/instructions/how_tos/instr_activity_logging
-    purpose: Log before acting — enables interruption recovery
   - path: ai_context_files/instructions/how_tos/instr_feedback
     purpose: How to log observations, suggestions, issues
-  - path: ai_context_files/instructions/how_tos/instr_todo
-    purpose: How to create TODOs for discovered work
+  - path: ai_context_files/instructions/how_tos/instr_federated_memory
+  - path: ai_context_files/instructions/how_tos/instr_memory_slot_protocol
+  - path: ai_context_files/instructions/how_tos/instr_operational_handoff
   knowledge_specs:
   - path: ai_context_files/instructions/rules/rules_response_footer
     purpose: Response footer format — MUST include on every response
@@ -40,3 +35,9 @@ _registry:
   version: 1.0.0
   created: '2026-04-15'
   updated: '2026-04-15'
+
+roles:
+  - ai_profiles/bundles/cli_environment_onboarding
+  - ai_profiles/bundles/tooling_mcp_log_reference
+  - ai_profiles/bundles/working_memory
+  - ai_profiles/bundles/ontology_glossary_workspace_map

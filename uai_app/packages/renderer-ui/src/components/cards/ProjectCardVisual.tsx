@@ -22,9 +22,13 @@ export default function ProjectCardVisual({ card }: ProjectCardVisualProps): JSX
   return (
     <div className="card-meta">
       {card.branch && <span className="card-branch">{card.branch}</span>}
-      <span className="card-badge" style={{ color: STATUS_COLORS[card.git_status] || STATUS_COLORS.unknown }}>
-        {card.git_status}
-      </span>
+      {/* Only show a git badge when it says something (todo_0623 #7.2 — an "unknown"
+          badge with a border was distracting and wasteful). */}
+      {card.git_status && card.git_status !== 'unknown' && (
+        <span className="card-badge" style={{ color: STATUS_COLORS[card.git_status] || STATUS_COLORS.unknown }}>
+          {card.git_status}
+        </span>
+      )}
       {card.session_count != null && card.session_count > 0 && (
         <span className="card-count">{card.session_count} sessions</span>
       )}

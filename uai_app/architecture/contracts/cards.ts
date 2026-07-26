@@ -57,6 +57,11 @@ export interface SessionCard extends BaseCard {
   activity_state?: string;
   context_percent?: number | null;
   exchange_count?: number;
+  /** Number of times this session has been restarted (start_history length).
+      Read-only display of externally-owned session state. */
+  restart_count?: number;
+  /** Size in bytes of the session's JSONL transcript. Read-only display. */
+  transcript_bytes?: number | null;
   pinned?: boolean;
   notes?: string | null;
   // Prompt-block state (read-only) — drives the 🔒 chip. Structurally matches
@@ -100,6 +105,31 @@ export interface ProjectCard extends BaseCard {
 
   /** @deprecated Use entity_relationships for assignment. Always empty. */
   assigned_ais: string[];
+
+  /**
+   * Team role assignments read from the registry `role_assignments:` block —
+   * role name (e.g. "lead", "reviewer") → the member name(s) filling it.
+   * Absent/empty for projects and for teams that declare no roles. Read-only
+   * display of external registry data (principle #6); mutations route through
+   * the command bus to the registry, never owned by the app.
+   */
+  role_assignments?: Record<string, string[]>;
+
+  /**
+   * Context reference(s) attached to each role, from the registry `role_contexts:`
+   * block — role name → the context composition(s)/file(s) a session loads when it
+   * assumes that role. Optional; a role can exist with no context. Same read-only,
+   * registry-owned semantics as role_assignments (principle #6).
+   */
+  role_contexts?: Record<string, string[]>;
+
+  /**
+   * Playbook folders — top-level directory names under the project's working_dir
+   * that make up its Playbook (from the registry `playbook:` list). The Playbook
+   * aspect shows a tree of just these; the Workspace aspect shows everything else.
+   * Projects only; empty/absent for teams.
+   */
+  playbook?: string[];
 }
 
 export interface TeamCard extends BaseCard {

@@ -2,7 +2,7 @@
 """SessionStart hook — keep the session's start history complete and current.
 
 On each genuine (re)start, rebuild `session.start_history` in the per-session state
-file ({session_dir}/{tracking_id}_state.json) as the union of:
+store (canonical over legacy via read_union) as the union of:
 
   - the history already recorded (prior plain --resume starts leave no transcript
     marker, so they must be preserved),
@@ -42,19 +42,17 @@ def handler(hook_input, context):
         return HookResult.skip(f"source={source} is a continuation, not a start")
 
     try:
-        import json
         from uai_toolkit.session_mgmt import session_starts
+        from uai_toolkit.hooks.common.lib_session_state_union import read_union
 
-        state_path = Path(context.session_dir) / f"{context.tracking_id}_state.json"
+        # UNION read (canonical over legacy): write_start_history routes through the
+        # bridge, so a flipped session's history lives in the canonical file — read
+        # it back the same way or the merge would drop post-flip entries (todo_0495).
         existing = []
-        if state_path.exists():
-            try:
-                _st = json.loads(state_path.read_text())
-                _e = _st.get("session.start_history")
-                if isinstance(_e, list):
-                    existing = _e
-            except (json.JSONDecodeError, OSError):
-                existing = []
+        _st = read_union(context.session_dir, context.tracking_id)
+        _e = _st.get("session.start_history")
+        if isinstance(_e, list):
+            existing = _e
 
         # Transcript(s) for this session — the SessionStart payload carries the path.
         tpaths = []

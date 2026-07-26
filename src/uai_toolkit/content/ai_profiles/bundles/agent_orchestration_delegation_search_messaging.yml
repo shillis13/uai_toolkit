@@ -1,0 +1,17 @@
+name: Agent Orchestration, Delegation, Search & Messaging
+description: >
+  Agent Orchestration, Delegation, Search & Messaging — bundle assembled from the todo_0319 grouping pass.
+_registry:
+  id: agent_orchestration_delegation_search_messaging
+  name: Agent Orchestration, Delegation, Search & Messaging
+  status: active
+  version: 1.0.0
+
+context_files:
+  how_tos:
+    - ai_context_files/instructions/how_tos/instr_cli_delegation
+    - ai_context_files/instructions/how_tos/instr_history_search
+    - ai_context_files/instructions/how_tos/instr_multi_agent_recursive_tree_prompt_readme
+  specs:
+    - ai_context_files/knowledge/specs/spec_ai_message_sender
+    - ai_context_files/knowledge/specs/spec_parallel_query_dispatcher

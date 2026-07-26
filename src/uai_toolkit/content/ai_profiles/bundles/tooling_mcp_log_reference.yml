@@ -1,0 +1,19 @@
+name: Tooling, MCP & Log Reference
+description: >
+  Tooling, MCP & Log Reference — bundle assembled from the todo_0319 grouping pass.
+_registry:
+  id: tooling_mcp_log_reference
+  name: Tooling, MCP & Log Reference
+  status: active
+  version: 1.0.0
+
+context_files:
+  reference:
+    - ai_context_files/knowledge/reference/ref_log_sources_mapping
+    - ai_context_files/knowledge/reference/ref_tools_manifest
+    - ai_context_files/knowledge/reference/ref_file_history_dir
+    - ai_context_files/knowledge/reference/ref_history_jsonl
+    - ai_context_files/knowledge/reference/ref_context_percentage
+    - ai_context_files/knowledge/reference/ref_reminder_delivery
+    - ai_context_files/knowledge/reference/ref_comms_architecture
+    - ai_context_files/knowledge/reference/ref_comms_session_routing

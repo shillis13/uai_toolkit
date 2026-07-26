@@ -40,6 +40,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "common"))
 from uai_toolkit.hooks.common.lib_hook_base import run_hook, HookResult
+from uai_toolkit.hooks.common.lib_session_state_union import read_union, write_session_state   # session-state bridge (todo_0495)
 
 DEFAULT_MIN_GROWTH = 8192
 DEFAULT_KEEP_LAST_TURNS = 5
@@ -60,13 +61,8 @@ def handler(hook_input, context):
     if not context.tracking_id or not context.session_dir:
         return HookResult.skip("no session identity")
 
-    state_path = Path(context.session_dir) / f"{context.tracking_id}_state.json"
-    state = {}
-    if state_path.exists():
-        try:
-            state = json.loads(state_path.read_text())
-        except (json.JSONDecodeError, OSError):
-            pass
+    # Union read; the single write below is TARGETED via the bridge (todo_0495).
+    state = read_union(context.session_dir, context.tracking_id)
 
     # Opt-in gate (dogfood switch)
     if not state.get("offload.on_stop"):
@@ -141,14 +137,9 @@ def handler(hook_input, context):
             except OSError:
                 pass
 
-    # Record the size we launched against (best-effort; tmp+rename)
-    state["offload.last_size"] = cur_size
-    try:
-        tmp = state_path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(state, indent=2))
-        tmp.rename(state_path)
-    except OSError:
-        pass
+    # Record the size we launched against (best-effort, targeted write via bridge)
+    write_session_state(context.session_dir, context.tracking_id,
+                        {"offload.last_size": cur_size})
 
     return HookResult.allow(f"offload launched (size {cur_size}B, +{cur_size - last_size}B)")
 

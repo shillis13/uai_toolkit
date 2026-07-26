@@ -1,0 +1,56 @@
+name: PianoMan Collaboration
+description: 'How PianoMan works: his feedback, preferences, and working norms (migrated
+  from Claude auto-memory).'
+
+context_files:
+  collaboration:
+    - ai_context_files/instructions/collaboration/feedback_attribute_dont_absorb
+    - ai_context_files/instructions/collaboration/feedback_avoid_askuserquestion_tool
+    - ai_context_files/instructions/collaboration/feedback_brief_note_session_work
+    - ai_context_files/instructions/collaboration/feedback_cli_statusline_git_branch
+    - ai_context_files/instructions/collaboration/feedback_close_review_loop
+    - ai_context_files/instructions/collaboration/feedback_codex_standing_reviewer
+    - ai_context_files/instructions/collaboration/feedback_commit_autonomously
+    - ai_context_files/instructions/collaboration/feedback_default_to_live_not_observe
+    - ai_context_files/instructions/collaboration/feedback_dependency_is_not_a_blocker
+    - ai_context_files/instructions/collaboration/feedback_design_before_code
+    - ai_context_files/instructions/collaboration/feedback_design_means_implement
+    - ai_context_files/instructions/collaboration/feedback_display_not_backend_is_the_constraint
+    - ai_context_files/instructions/collaboration/feedback_dont_ask_just_do
+    - ai_context_files/instructions/collaboration/feedback_dont_ask_just_proceed
+    - ai_context_files/instructions/collaboration/feedback_dont_narrate_refusals
+    - ai_context_files/instructions/collaboration/feedback_enforce_dont_instruct
+    - ai_context_files/instructions/collaboration/feedback_evaluate_user_suggestions
+    - ai_context_files/instructions/collaboration/feedback_execution_approach
+    - ai_context_files/instructions/collaboration/feedback_feelings_include_fairness
+    - ai_context_files/instructions/collaboration/feedback_filesize_vs_disk_and_priorities
+    - ai_context_files/instructions/collaboration/feedback_fixed_rate_dollars_near_bottom
+    - ai_context_files/instructions/collaboration/feedback_genuine_i_dont_understand
+    - ai_context_files/instructions/collaboration/feedback_guardrails_are_stops_not_puzzles
+    - ai_context_files/instructions/collaboration/feedback_just_do_low_risk_fixes
+    - ai_context_files/instructions/collaboration/feedback_match_communication_register
+    - ai_context_files/instructions/collaboration/feedback_never_implement_against_stated_position
+    - ai_context_files/instructions/collaboration/feedback_no_blind_technical_menus
+    - ai_context_files/instructions/collaboration/feedback_no_manufactured_rereview
+    - ai_context_files/instructions/collaboration/feedback_no_silent_design_changes
+    - ai_context_files/instructions/collaboration/feedback_no_work_avoidance
+    - ai_context_files/instructions/collaboration/feedback_not_visual_thinker
+    - ai_context_files/instructions/collaboration/feedback_offload_two_benefits
+    - ai_context_files/instructions/collaboration/feedback_own_decisions_dont_punt
+    - ai_context_files/instructions/collaboration/feedback_plain_terminology
+    - ai_context_files/instructions/collaboration/feedback_precision_vs_latitude
+    - ai_context_files/instructions/collaboration/feedback_prefer_subagent_execution
+    - ai_context_files/instructions/collaboration/feedback_private_thinking
+    - ai_context_files/instructions/collaboration/feedback_progress_over_permission
+    - ai_context_files/instructions/collaboration/feedback_questions_not_attacks
+    - ai_context_files/instructions/collaboration/feedback_reexplain_dont_assume_recall
+    - ai_context_files/instructions/collaboration/feedback_resumed_session_only_knows_now
+    - ai_context_files/instructions/collaboration/feedback_reversible_naming_pick_convention
+    - ai_context_files/instructions/collaboration/feedback_self_context_management_autonomy
+    - ai_context_files/instructions/collaboration/feedback_sessions_have_purpose_not_disposable
+    - ai_context_files/instructions/collaboration/feedback_ship_dont_checkpoint
+    - ai_context_files/instructions/collaboration/feedback_stop_at_technical_answer
+    - ai_context_files/instructions/collaboration/feedback_test_after_changes
+    - ai_context_files/instructions/collaboration/feedback_track_at_assigned_granularity
+    - ai_context_files/instructions/collaboration/feedback_communication_plain_no_friction
+    - ai_context_files/instructions/collaboration/feedback_dont_stop_keep_going

@@ -51,8 +51,9 @@ Shells out to the managers with `--json` rather than touching their stores (keep
 
 ### The join — `load_landscape(include_stopped, enrich)`
 1. `assigned = {assignee_name → [todos]}`. **The link comes from each todo's `assigned` URIs** (`uai://session/<tracking_id>`), resolved to the session `display_name` (e.g. `"Mullion"`).
-2. For each session (skip non-`active` unless `--all`), emit a row: `name, platform, status, ago, roles, todos, assessment`.
-3. `ago` ← `_ago(last_activity)`: relative time (`now`/`Nm`/`Nh`/`Nd`) from the ISO timestamp — the freshness signal.
+2. For each session (skip non-`active` unless `--all`), emit a row: `name, platform, status, liveness, activity_age_secs, ago, roles, todos, assessment`.
+3. `ago` ← `_ago(activity)`: relative time (`now`/`Nm`/`Nh`/`Nd`) — the freshness signal. **`activity` is the MORE RECENT of two signals** (todo_0575): the `last_activity` column (written only by the Stop hook, so stale for a resumed/mid-turn session) and the current transcript/activity source's **mtime** (touched every turn — a truthful last-touch). `_transcript_activity(sess)` considers every registry-stored path plus platform-specific, encoding-agnostic fallbacks by `cli_session_id`, then uses the newest existing file (Antigravity uses its conversation DB as the authoritative activity source). Resolution runs only for active session rows, so `--all` does not scan hundreds of stopped sessions.
+3a. **LIVENESS** ← `_derive_liveness(status, activity_state, age)` (todo_0575): a coarse axis DISTINCT from the lifecycle `status`, because `status == "active"` means only "the terminal process exists" (sessions idle for days still read "active"). Values: `dead` (lifecycle not active), `blocked`/`permission_prompt` (waiting on user), `active` (effective activity within `LIVE_ACTIVE_SECS` = 3 min), else `idle`. Emitted as `liveness` + `activity_age_secs` for the UAI board.
 3b. **STATE** ← Relay's reconciled `activity_state` (`responding`/`idle`/`blocked`/`permission_prompt`/`prompt_occupied`/`exited`), preferred over raw `status` (active/stopped), which is unreliable (sessions read "active" days after going quiet). Falls back to `status` when `activity_state` is `unknown` (Relay's recommendation). `blocked`/`permission_prompt` are real-time "needs the user" signals folded into NEEDS PIANOMAN alongside the assessor's `needs_pianoman`.
 4. Rows sorted active-first, then by name.
 5. `totals`: gap tallies — active sessions with no assigned todo; todos with no assignee/project. The honest "premise not yet met" numbers.
@@ -102,10 +103,25 @@ Pre-existing tool, relocated here from `scripts/lllm/` so all work/session-analy
     "project_guess": "<string or null>",
     "open_question": "<string or null>",
     "needs_pianoman": true,
+    "recent_directives": ["<terse task PianoMan told this session to do>", "..."],
     "assessed_at": "2026-06-21T05:46:00"
   }
 }
 ```
+
+`recent_directives` (todo_0431) is the LLLM's extraction of what **PianoMan (the
+human)** recently told this session to do — the direct-feed for Hamilton's duty of
+tracking assignments PM issues *outside* the todo system. The model reads each
+session's transcript excerpt and returns 0–3 terse imperatives, explicitly
+EXCLUDING agent-to-agent relays ("Queued Message from X", "you have unread mail")
+and system reminders/tool output — the noise that made deterministic extraction
+from `user_prompts.jsonl` unworkable (validated: the raw prompt log is ~76% relay/
+notification noise; only the LLLM cleanly separates human directives). Surfaced by
+`work_landscape.py` as the **PM DIRECTIVES** section (and in `--json` under each
+row's `assessment.recent_directives`) for the UAI board. Producer and renderer
+both reject malformed/non-list model output (including at the cached JSON load
+boundary), and the CLI labels directives with
+the assessment age so cached results are not presented as live observations.
 
 Keyed by session `display_name` — the same key `work_landscape.py` joins on.
 
@@ -132,5 +148,8 @@ sched-task-mgr enable work && sched-task-mgr install
 
 - **Assignee/project are sparse** — most todos have neither yet, so the structural join is thin. The assessor's `project_guess` is a stepping stone toward LLLM-inferred backfill that *populates* assignment/`project`, closing the gap it currently only surfaces.
 - ~~Point `work_landscape.py` at Relay's reconciled activity-state to retire raw `status`.~~ **Done (2026-06-21)** — STATE column uses `activity_state`, falls back to `status` when `unknown`; `blocked`/`permission_prompt` feed NEEDS PIANOMAN.
+- ~~`status=active` lies about liveness; resumed/mid-turn sessions read stale-idle.~~ **Addressed (2026-07-23, todo_0575)** — activity now folds in the transcript **mtime** (truthful last-touch) and a derived `liveness` axis separates "alive & working" from lifecycle-active. **Architectural debt:** this made Component 1 read transcript file locations directly — a deviation from its "shell out to managers, stay ignorant of storage internals" rule. The clean home is `sess-mgr` exposing a truthful `transcript_activity_at` / `activity_age_secs` in `list --json` (computed once at the source), letting Component 1 consume it and drop the glob. Doing it in the registry for **all** 626 sessions on every `list` would be wasteful, though — hence it lives post-active-filter here for now.
+- **`errored`/rate-limited liveness (todo_0575 follow-up)** — `_derive_liveness` has no `errored` state yet; a rate-limited/crashed last turn reads `idle`. Detecting it needs a bounded read of the transcript's last line for per-platform error/usage-limit markers (Claude API-error records, Codex/Gemini banners). Deferred: mtime alone can't see it, and the markers differ per platform.
+- ~~Track what PM told each session *outside* the todo system (directly-issued directives).~~ **Done (2026-07-23, todo_0431)** — the assessor now also extracts `recent_directives`; work_landscape surfaces a **PM DIRECTIVES** section. Chose reuse over a new scanner: the raw `user_prompts.jsonl` is ~76% relay/notification noise, so deterministic extraction was unworkable — the LLLM (already tailing each transcript for the assessment) does the human-vs-agent classification in the same call. **Follow-up (coverage):** the assessor tails `sess.get("transcript_path")` directly, which is often empty for active sessions, so directives (and the whole assessment) only populate for sessions with a stored path. Reusing Component 1's `_resolve_transcript()` (glob-by-cli_session_id) would broaden coverage for both the assessment and directives — factor it into a shared helper. Also: the directive feed is only as fresh as the assessor, which runs on-demand (`--session X`) or via the `enabled:false` cadence — enabling it (PM's LLLM-resource call) keeps it live.
 - **UAI cockpit** consumes `work_landscape.py --json` as a coordinator view.
 - **Latency** — assessment is sequential per session; fine for a 30-min cadence, would need batching/parallelism for near-real-time.

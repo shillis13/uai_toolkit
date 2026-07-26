@@ -45,7 +45,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any
 
-sys.path.insert(0, os.environ.get("AI_SCRIPTS") or str(Path(__file__).resolve().parents[1]))
+_ai_scripts = os.environ.get("AI_SCRIPTS")
+if _ai_scripts:
+    sys.path.insert(0, _ai_scripts)
 from uai_toolkit.paths import AI_ROOT, AI_SCRIPTS  # noqa: E402
 
 _CB = AI_SCRIPTS / "callbacks"
@@ -1094,38 +1096,90 @@ def reply_to_message(
     """
     Reply to a message.
 
-    Finds the original message, sends a new message to the original sender,
-    sets replying_to to the original msg_id, and sets conversation_id to
-    the original message's conversation_id (or the original msg_id if none).
-    After sending, resolves any pending reply that this reply satisfies.
-    """
-    found = _find_message(msg_id)
-    if found is None:
-        return {"success": False, "error": "Message not found: {}".format(msg_id)}
+    Routes through the v2 ``send_message`` contract when the parent message is
+    already in the comms index, so the reply's Message/Delivery rows are written
+    to ``comms.db`` (before the YAML artifact). The UAI Comms panel reads
+    conversations FROM that index, so the reply now shows on the panel's next
+    refresh instead of only after a backfill pass ran (todo_0593 — the legacy
+    ``send_direct`` path wrote the YAML artifact ONLY, leaving the index-backed
+    conversation view stale).
 
-    _, original = found
-    original_sender = original.get("from", "")
+    When the parent predates the index (legacy YAML not yet backfilled), falls
+    back to the legacy ``send_direct`` path unchanged: a reply must never be
+    rejected merely because its parent has not been indexed yet — it will be
+    folded into the index by the next backfill, exactly as before.
+
+    In both cases: sends to the original sender, sets replying_to to the
+    original msg_id, inherits the original's conversation, and afterwards
+    resolves any pending reply that this reply satisfies.
+    """
+    # The panel's source of truth is the index, so consult it FIRST. A valid
+    # indexed message may have no YAML artifact (artifact cleanup/failure, or a
+    # deferred entity delivery); requiring `_find_message` first would make a
+    # message visible in the panel but impossible to reply to. Only fall back to
+    # the YAML search for a genuinely un-indexed legacy parent.
+    index = CommsIndex()
+    indexed_parent = index.get_message(msg_id)
+    if indexed_parent is not None:
+        original = indexed_parent
+        original_sender = original.get("from_id", "")
+    else:
+        found = _find_message(msg_id)
+        if found is None:
+            return {"success": False, "error": "Message not found: {}".format(msg_id)}
+        _, original = found
+        original_sender = original.get("from", "")
     if not original_sender:
         return {"success": False, "error": "Original message has no 'from' field"}
 
     # Determine conversation_id: use original's, or fall back to original msg_id
     convo_id = original.get("conversation_id") or msg_id
 
-    result = send_direct(
-        from_sender=from_sender,
-        to_recipient=original_sender,
-        content=content,
-        urgency=urgency,
-        replying_to=msg_id,
-        conversation_id=convo_id,
-        response_required=response_required,
-        notify=notify,
-    )
+    # Prefer the v2 indexed send path when the parent is already in the index
+    # (true for anything the Comms panel can show — it reads conversations from
+    # the index). send_message writes comms.db BEFORE the YAML artifact, so the
+    # index is never behind the on-disk copy (todo_0593).
+    if indexed_parent is not None:
+        try:
+            v2 = send_message(
+                to=original_sender,
+                content=content,
+                reply_to=msg_id,
+                sender_ctx=from_sender,
+                urgency=urgency,
+                response_type="reply",
+                response_required=response_required,
+                notify=notify,
+                index=index,
+            )
+        except (ReplyRuleError, SenderUnresolved, RecipientNotFound,
+                RecipientAmbiguous) as e:
+            return {"success": False, "error": str(e),
+                    "error_type": type(e).__name__}
+        result = {
+            "success": True,
+            "message_id": v2.get("messageId"),
+            "conversation_id": v2.get("conversationId"),
+            "to": original_sender,
+        }
+        if "delivery" in v2:
+            result["delivery"] = v2["delivery"]
+    else:
+        result = send_direct(
+            from_sender=from_sender,
+            to_recipient=original_sender,
+            content=content,
+            urgency=urgency,
+            replying_to=msg_id,
+            conversation_id=convo_id,
+            response_required=response_required,
+            notify=notify,
+        )
 
     # Resolve any pending reply this message satisfies
     if result.get("success"):
         resolved = resolve_pending_reply(
-            conversation_id=convo_id,
+            conversation_id=result.get("conversation_id") or convo_id,
             message_id=msg_id,
             from_sender=from_sender,
         )
@@ -1163,13 +1217,21 @@ def reply_to_all(
     For broadcasts, sends a broadcast reply.
     After sending, resolves any pending reply that this reply satisfies.
     """
-    found = _find_message(msg_id)
-    if found is None:
-        return {"success": False, "error": "Message not found: {}".format(msg_id)}
-
-    _, original = found
-    original_sender = original.get("from", "")
-    original_to = original.get("to", "")
+    # Index-first for the same reason as reply_to_message: anything visible in
+    # the panel must remain replyable even if its compatibility YAML is absent.
+    index = CommsIndex()
+    indexed_parent = index.get_message(msg_id)
+    if indexed_parent is not None:
+        original = indexed_parent
+        original_sender = original.get("from_id", "")
+        original_to = ""
+    else:
+        found = _find_message(msg_id)
+        if found is None:
+            return {"success": False, "error": "Message not found: {}".format(msg_id)}
+        _, original = found
+        original_sender = original.get("from", "")
+        original_to = original.get("to", "")
 
     # Determine conversation_id
     convo_id = original.get("conversation_id") or msg_id
@@ -1212,24 +1274,66 @@ def reply_to_all(
     if original_to:
         participants.add(original_to)
 
+    if indexed_parent is not None:
+        # Recover the concrete recipients from the canonical Delivery rows; an
+        # indexed parent need not have a YAML `to` field/artifact.
+        detail = index.get_conversation(convo_id)
+        for delivery_row in detail.get("deliveries", []):
+            if delivery_row.get("message_id") == msg_id:
+                recipient = delivery_row.get("recipient")
+                if recipient:
+                    participants.add(recipient)
+
     # Remove the current sender from recipients
     participants.discard(from_sender)
 
     if not participants:
         return {"success": False, "error": "No recipients to reply to (sender is the only participant)"}
 
+    # Same index-freshness fix as reply_to_message (todo_0593): when the parent
+    # is in the comms index, route each participant reply through the v2
+    # send_message contract so it lands in comms.db immediately; otherwise fall
+    # back to the legacy send_direct path unchanged.
+    parent_indexed = indexed_parent is not None
+
     results = []  # type: List[Dict[str, Any]]
     for recipient in sorted(participants):
-        result = send_direct(
-            from_sender=from_sender,
-            to_recipient=recipient,
-            content=content,
-            urgency=urgency,
-            replying_to=msg_id,
-            conversation_id=convo_id,
-            response_required=response_required,
-            notify=notify,
-        )
+        if parent_indexed:
+            try:
+                v2 = send_message(
+                    to=recipient,
+                    content=content,
+                    reply_to=msg_id,
+                    sender_ctx=from_sender,
+                    urgency=urgency,
+                    response_type="reply",
+                    response_required=response_required,
+                    notify=notify,
+                    index=index,
+                )
+                result = {
+                    "success": True,
+                    "message_id": v2.get("messageId"),
+                    "conversation_id": v2.get("conversationId"),
+                    "to": recipient,
+                }
+                if "delivery" in v2:
+                    result["delivery"] = v2["delivery"]
+            except (ReplyRuleError, SenderUnresolved, RecipientNotFound,
+                    RecipientAmbiguous) as e:
+                result = {"success": False, "error": str(e),
+                          "error_type": type(e).__name__, "to": recipient}
+        else:
+            result = send_direct(
+                from_sender=from_sender,
+                to_recipient=recipient,
+                content=content,
+                urgency=urgency,
+                replying_to=msg_id,
+                conversation_id=convo_id,
+                response_required=response_required,
+                notify=notify,
+            )
         results.append(result)
 
     all_success = all(r.get("success") for r in results)

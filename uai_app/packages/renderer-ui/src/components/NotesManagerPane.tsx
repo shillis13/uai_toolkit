@@ -18,6 +18,7 @@ import NoteDialog from './NoteDialog';
 import { consumePendingNoteFocus, TodoLink, ensureRefIndexLoaded } from './RefLink';
 import { sessionColor } from '../utils/session-color';
 import { useMention, MentionPopover, makeRecipientSource } from './mention';
+import NotesBulkPanel from './NotesBulkPanel';
 import { useSessionStore } from '../stores/session-store';
 import { useViewport } from '../viewport';
 import { showContextMenu, type ContextMenuItem } from '../utils/context-menu';
@@ -275,6 +276,10 @@ function saveDraft(noteId: string, d: NoteActionDraft): void {
 export default function NotesManagerPane(): JSX.Element {
   const [notes, setNotes] = useState<NoteListItem[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(() => loadPane().selectedId);
+  // Multi-select (todo_0559) — ctrl/shift-click builds a set, like the Tab Mgr.
+  // When 2+ are selected the detail pane switches to bulk actions (NotesBulkPanel).
+  const [selIds, setSelIds] = useState<Set<string>>(new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
   const [detail, setDetail] = useState<NoteDetail | null>(null);
   const [statusFilter, setStatusFilter] = useState<string>(() => loadPane().statusFilter);
   const [listView, setListView] = useState<NoteListView>(() => loadPane().listView);
@@ -417,7 +422,11 @@ export default function NotesManagerPane(): JSX.Element {
   // (RefLink.focusNoteInNotesMgr). Consume a pending focus on mount and listen
   // for live events. Clear the status filter so the target isn't hidden; the
   // [selectedId] effect loads its detail.
-  const focusNote = useCallback((id: string) => { setStatusFilter(''); setSelectedId(id); }, []);
+  const focusNote = useCallback((id: string) => {
+    setSelIds(new Set());
+    setStatusFilter('');
+    setSelectedId(id);
+  }, []);
   useEffect(() => {
     const pending = consumePendingNoteFocus();
     if (pending) focusNote(pending);
@@ -444,10 +453,59 @@ export default function NotesManagerPane(): JSX.Element {
 
   // Route a list-row click by status: drafts reopen in the dialog; the rest open
   // in the detail/thread panel.
-  const handleRowClick = useCallback((n: { id: string; status?: string }) => {
-    if ((n.status || '').toLowerCase() === 'draft') openDraft(n.id);
-    else setSelectedId(n.id);
-  }, [openDraft]);
+  const handleRowClick = useCallback((n: { id: string; status?: string }, e?: React.MouseEvent) => {
+    // Drafts always reopen in the dialog — they aren't part of multi-select.
+    if ((n.status || '').toLowerCase() === 'draft') {
+      setSelIds(new Set());
+      openDraft(n.id);
+      return;
+    }
+    const toggle = !!e && (e.metaKey || e.ctrlKey);
+    const range = !!e && e.shiftKey;
+    if (toggle) {
+      // Cmd/Ctrl-click toggles this row into the set (seeded with the current
+      // single selection so the first modifier-click starts from what's open).
+      const next = new Set(selIds);
+      if (next.size === 0 && selectedId && selectedId !== n.id) next.add(selectedId);
+      if (next.has(n.id)) next.delete(n.id); else next.add(n.id);
+      // Keep a strict invariant: selIds is either empty (single selection) or
+      // contains 2+ notes (bulk selection). Without this, toggling a 2-note set
+      // down to one left the old primary note and the remaining note both lit.
+      if (next.size <= 1) {
+        const only = next.values().next().value as string | undefined;
+        setSelIds(new Set());
+        if (only) setSelectedId(only);
+      } else {
+        if (!selectedId || !next.has(selectedId)) {
+          setSelectedId(next.values().next().value as string);
+        }
+        setSelIds(next);
+      }
+      return;
+    }
+    if (range && selectedId) {
+      // Shift-click selects the contiguous run over the visible, selectable
+      // order. Drafts are dialog-only and must never leak into a bulk action.
+      const ids = filteredNotesRef.current
+        .filter((x) => (x.status || '').toLowerCase() !== 'draft')
+        .map((x) => x.id);
+      const a = ids.indexOf(selectedId), b = ids.indexOf(n.id);
+      if (a !== -1 && b !== -1) {
+        const [lo, hi] = a < b ? [a, b] : [b, a];
+        const next = new Set(ids.slice(lo, hi + 1));
+        if (next.size <= 1) {
+          setSelIds(new Set());
+          setSelectedId(n.id);
+        } else {
+          setSelIds(next);
+        }
+        return;
+      }
+    }
+    // Plain click — clear the multi-selection and open this one.
+    setSelIds(new Set());
+    setSelectedId(n.id);
+  }, [openDraft, selectedId, selIds]);
 
   useEffect(() => {
     loadList();
@@ -486,6 +544,119 @@ export default function NotesManagerPane(): JSX.Element {
       if (selectedId === id) await loadDetail(id);
     }
   }, [loadList, loadDetail, selectedId]);
+
+  // ── Bulk actions on the multi-selected notes (todo_0559) ────────────────────
+  // Each loops the same note.* commands the single-note actions use, then reloads
+  // once. 'archived' is the soft-delete (notes have no hard-delete verb).
+  const clearSel = useCallback(() => setSelIds(new Set()), []);
+  const reloadBulk = useCallback(async (ids: string[]) => {
+    await loadList();
+    // Bulk mode hides the detail but does not unmount it. Refresh the primary
+    // note too, so Clear selection cannot reveal stale status/thread/link data.
+    if (selectedId && ids.includes(selectedId)) await loadDetail(selectedId);
+  }, [loadList, loadDetail, selectedId]);
+  const bulkSetStatus = useCallback(async (status: string) => {
+    const ids = [...selIds]; if (!ids.length) return;
+    setError(null);
+    setBulkBusy(true);
+    let failed = 0;
+    try {
+      for (const id of ids) {
+        const res = await executeCommand('note.setStatus', { id, status }, { onFailure: 'log' });
+        if (!res.ok) failed += 1;
+      }
+    } finally {
+      setSelIds(new Set());
+      await reloadBulk(ids);
+      if (failed) setError(`Failed to update ${failed} of ${ids.length} notes.`);
+      setBulkBusy(false);
+    }
+  }, [selIds, reloadBulk]);
+  const bulkComment = useCallback(async (text: string) => {
+    const t = text.trim(); if (!t) return;
+    const ids = [...selIds]; if (!ids.length) return;
+    setError(null);
+    setBulkBusy(true);
+    let failed = 0;
+    try {
+      for (const id of ids) {
+        const res = await executeCommand('note.addMessage', { id, author: NOTE_AUTHOR, body: t }, { onFailure: 'log' });
+        if (!res.ok) failed += 1;
+      }
+    } finally {
+      await reloadBulk(ids);
+      if (failed) setError(`Failed to comment on ${failed} of ${ids.length} notes.`);
+      setBulkBusy(false);
+    }
+  }, [selIds, reloadBulk]);
+  const bulkConvert = useCallback(async () => {
+    const ids = [...selIds]; if (!ids.length) return;
+    setError(null);
+    setBulkBusy(true);
+    let failed = 0;
+    try {
+      for (const id of ids) {
+        const res = await executeCommand<{ note: NoteDetail }>('note.read', { id }, { onFailure: 'log' });
+        const note = res.ok ? res.data?.note : null;
+        if (!note) { failed += 1; continue; }
+        const title = (((note?.meta?.title as string) || '') || (note?.content || '').trim().split('\n')[0] || id).slice(0, 80);
+        const created = await executeCommand<{ out: string }>('todo.create', { name: title }, { onFailure: 'log' });
+        const todoId = created.ok
+          ? (created.data?.out || '').match(/Created:\s*(todo_\d+(?:_[a-z0-9_]+)?)/i)?.[1]
+          : undefined;
+        if (!todoId) { failed += 1; continue; }
+        const wrote = await executeCommand('todo.writeNotes', { id: todoId, content: `${note.content || ''}\n\n— converted from ${id}\n` }, { onFailure: 'log' });
+        const linked = await executeCommand('note.linkTodo', { id, todo: todoId }, { onFailure: 'log' });
+        if (!wrote.ok || !linked.ok) failed += 1;
+      }
+    } finally {
+      await reloadBulk(ids);
+      if (failed) setError(`Failed to fully convert ${failed} of ${ids.length} notes.`);
+      setBulkBusy(false);
+    }
+  }, [selIds, reloadBulk]);
+  const bulkTag = useCallback(async (sessionId: string, sessionLabel: string) => {
+    const target = sessionId.trim().replace(/^@+/, ''); if (!target) return;
+    const label = sessionLabel.trim().replace(/^@+/, '') || target;
+    const ids = [...selIds]; if (!ids.length) return;
+    setError(null);
+    setBulkBusy(true);
+    let failed = 0;
+    try {
+      for (const id of ids) {
+        const content =
+          `You've been pulled into note ${id}.\n\n` +
+          `Reply into its thread with workflow_note_add_message(identifier="${id}", author="<you>", body="…").`;
+        const sent = await executeCommand('comms.send', { from: USER_SENDER, to: target, content, urgency: 'prompt', subject: `Note ${id}` }, { onFailure: 'log' });
+        if (!sent.ok) { failed += 1; continue; }
+        const recorded = await executeCommand('note.addMessage', { id, author: NOTE_AUTHOR, body: `@${label} pulled into this note.` }, { onFailure: 'log' });
+        if (!recorded.ok) failed += 1;
+      }
+    } finally {
+      await reloadBulk(ids);
+      if (failed) setError(`Failed to tag ${failed} of ${ids.length} notes.`);
+      setBulkBusy(false);
+    }
+  }, [selIds, reloadBulk]);
+  const bulkDelete = useCallback(async () => {
+    const ids = [...selIds]; if (!ids.length) return;
+    setError(null);
+    setBulkBusy(true);
+    let failed = 0;
+    try {
+      for (const id of ids) {
+        const res = await executeCommand('note.setStatus', { id, status: 'archived' }, { onFailure: 'log' });
+        if (!res.ok) failed += 1;
+      }
+    }
+    finally {
+      setSelIds(new Set());
+      if (selectedId && ids.includes(selectedId)) setSelectedId(null);
+      await loadList();
+      if (failed) setError(`Failed to archive ${failed} of ${ids.length} notes.`);
+      setBulkBusy(false);
+    }
+  }, [selIds, selectedId, loadList]);
 
   // Right-click a list row → change its status (note_0444). Set-status is the
   // only note-mutation command wired; 'archived' is the soft-delete.
@@ -669,6 +840,10 @@ export default function NotesManagerPane(): JSX.Element {
   const filteredNotes = statusFilter
     ? notes.filter((n) => (n.status || '').toLowerCase() === statusFilter)
     : notes;
+  // Ref so the (earlier-declared) row-click handler can range-select over the
+  // current visible order for shift-click without re-creating on every filter.
+  const filteredNotesRef = useRef(filteredNotes);
+  filteredNotesRef.current = filteredNotes;
   const unseenByStatus = useMemo(() => {
     const m: Record<string, number> = { '': 0, open: 0, resolved: 0, archived: 0 };
     for (const n of notes) {
@@ -711,7 +886,7 @@ export default function NotesManagerPane(): JSX.Element {
           return (
             <button
               key={p.key || 'all'}
-              onClick={() => setStatusFilter(p.key)}
+              onClick={() => { setSelIds(new Set()); setStatusFilter(p.key); }}
               style={{
                 display: 'flex', alignItems: 'center', gap: 6,
                 background: on ? 'var(--accent-blue-bg)' : 'var(--bg-panel)',
@@ -767,7 +942,10 @@ export default function NotesManagerPane(): JSX.Element {
             <div style={{ padding: '14px 16px', color: 'var(--text-muted)', fontSize: 12 }}>No notes.</div>
           )}
           {filteredNotes.map((n) => {
-            const active = n.id === selectedId;
+            const inSel = selIds.has(n.id);
+            // A row reads as selected when it's the single open note OR a member of
+            // the multi-select set — same wash either way (todo_0559 / 0558 lesson).
+            const active = n.id === selectedId || inSel;
             const unseen = noteUnseen(n, seen);
             const sc = STATUS_COLOR[n.status] || 'var(--text-muted)';
             const compact = listView === 'compact';
@@ -776,7 +954,7 @@ export default function NotesManagerPane(): JSX.Element {
             return (
               <div
                 key={n.id}
-                onClick={() => handleRowClick(n)}
+                onClick={(e) => handleRowClick(n, e)}
                 onContextMenu={(e) => handleRowContextMenu(e, n)}
                 style={{
                   padding: compact ? '6px 14px' : '10px 14px', cursor: 'pointer',
@@ -787,6 +965,10 @@ export default function NotesManagerPane(): JSX.Element {
                     ? `color-mix(in srgb, ${sc} 20%, var(--bg-card))`
                     : `color-mix(in srgb, ${sc} 7%, transparent)`,
                   borderLeft: `3px solid ${sc}`,
+                  // Multi-select members get a clear inset ring so a set of selected
+                  // rows is unmistakable, not just a slightly brighter wash.
+                  outline: inSel ? '2px solid var(--accent-blue)' : undefined,
+                  outlineOffset: inSel ? '-2px' : undefined,
                 }}
               >
                 {compact ? (
@@ -851,15 +1033,29 @@ export default function NotesManagerPane(): JSX.Element {
           })}
         </div>
 
-        {/* Right — thread */}
+        {/* Right — thread, OR bulk actions when 2+ notes are selected (todo_0559) */}
         <div style={{ flex: 1, overflow: 'auto', minWidth: 0 }}>
-          {!selectedId && (
+          {selIds.size > 1 && (
+            <NotesBulkPanel
+              ids={[...selIds]}
+              statuses={STATUSES}
+              sessionOptions={mentionTargets.map((t) => ({ value: t.memberIds[0] || t.label, label: t.label }))}
+              busy={bulkBusy}
+              onSetStatus={bulkSetStatus}
+              onConvert={bulkConvert}
+              onTag={bulkTag}
+              onComment={bulkComment}
+              onDelete={bulkDelete}
+              onClear={clearSel}
+            />
+          )}
+          {selIds.size <= 1 && !selectedId && (
             <div style={{ padding: '18px 18px', color: 'var(--text-muted)', fontSize: 12 }}>Select a note to view its thread.</div>
           )}
-          {selectedId && detailLoading && (
+          {selIds.size <= 1 && selectedId && detailLoading && (
             <div style={{ padding: '18px 18px', color: 'var(--text-muted)', fontSize: 12 }}>Loading…</div>
           )}
-          {selectedId && !detailLoading && detail && (
+          {selIds.size <= 1 && selectedId && !detailLoading && detail && (
             <div style={{ padding: '16px 18px' }}>
               {/* Note header — id · name · tagged sessions, ABOVE the status (note_0036). */}
               <div style={{ marginBottom: 12, paddingBottom: 10, borderBottom: '1px solid var(--border)' }}>
@@ -929,7 +1125,14 @@ export default function NotesManagerPane(): JSX.Element {
                 <button
                   onClick={() => {
                     const nv = !convertOpen;
-                    const title = nv ? (detail.content || '').trim().split('\n')[0].slice(0, 80) : convertTitle;
+                    // Note title -> Todo title (todo_0613). The note's body/content
+                    // becomes the Todo description (carried into notes.md on convert),
+                    // so seed the title from the note's real title; fall back to the
+                    // first body line only for title-less notes.
+                    const noteTitle = ((detail.meta?.title as string) || selNote?.title || '').trim();
+                    const title = nv
+                      ? (noteTitle || (detail.content || '').trim().split('\n')[0].slice(0, 80))
+                      : convertTitle;
                     setConvertOpen(nv); setMentionOpen(false); setConvertTitle(title);
                     patchDraft({ convertOpen: nv, mentionOpen: false, convertTitle: title });
                   }}
