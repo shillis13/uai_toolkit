@@ -17,7 +17,9 @@ and referenced (extension-less) from composition files in `ai_profiles/`.
 
 ## Directory → filename prefix (match the folder you're in)
 
-Every leaf file's name starts with the prefix for its subdirectory:
+New leaf files use the prefix for their subdirectory. A small number of active files
+still carry pre-standardization names (for example `reference_*` under `reference/`);
+the table is the authoring rule, not a claim that migration debt is already zero.
 
 | Directory | Prefix | Example |
 |---|---|---|
@@ -25,6 +27,9 @@ Every leaf file's name starts with the prefix for its subdirectory:
 | `instructions/how_tos/` | `instr_` | `instr_activity_logging.md` |
 | `instructions/rules/` | `rules_` | `rules_file_conventions.yml` |
 | `instructions/reminders/` | `reminder_` | `reminder_response_format.md` |
+| `instructions/collaboration/` | `feedback_` | `feedback_plain_terminology.md` |
+| `instructions/ux/` | `ux_` | `ux_more_colors_means_bold_backgrounds.md` |
+| `instructions/templates/` | *(none; descriptive names, usually `*_template`)* | `design_template.md` |
 | `knowledge/reference/` | `ref_` | `ref_tools_manifest.yml` |
 | `knowledge/architecture/` | `arch_` | `arch_entity_model.md` |
 | `knowledge/schemas/` | `schema_` | `schema_base.json` |
@@ -49,8 +54,9 @@ not `doc.md.NEEDS_PROCESSING`.
 
 - `_vX.Y` — explicit version (`doc_v3.0.md`).
 - `.condensed.yml` — token-optimized form (loaded first).
-- `*_latest.yml` — symlink to the current version; reference the symlink, not a
-  version-numbered file.
+- `*.latest.*` / `*_latest.*` — legacy compatibility symlinks. The resolver still
+  accepts them and `context_mgr.py move` preserves a sibling `_latest` symlink, but
+  do not create them for new active leaves.
 - Resolution/loading order: `.condensed.yml` → `.yml` → `.md`.
 
 ## Per-instance files carry a discriminator
