@@ -4,7 +4,9 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "uai-toolkit"
-version = "0.1.0"
+# Read from uai_toolkit.__version__ (see [tool.setuptools.dynamic] below) so the
+# version lives in exactly ONE place and cannot drift from the package.
+dynamic = ["version"]
 description = "Portable AI tooling — jsonl readers, hooks, and platform-agnostic helpers."
 requires-python = ">=3.10"
 license = "MIT"
@@ -46,6 +48,10 @@ jfmt = "uai_toolkit.jsonl.catjsonl:jfmt"
 ai-fa-track-read = "uai_toolkit.file_access.hooks:track_read"
 ai-fa-track-write = "uai_toolkit.file_access.hooks:track_write"
 ai-fa-check-write = "uai_toolkit.file_access.hooks:check_before_write"
+
+[tool.setuptools.dynamic]
+# Single source of truth: src/uai_toolkit/__init__.py. Bump the version there.
+version = {attr = "uai_toolkit.__version__"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
