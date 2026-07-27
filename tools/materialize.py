@@ -27,7 +27,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from manifest import (  # noqa: E402
-    APP_EXCLUDE_DIRS, APP_EXCLUDE_FILES, APP_TEXT_SUFFIXES, APP_TREES,
+    APP_EXCLUDE_DIRS, APP_EXCLUDE_FILES, APP_EXCLUDE_REL_PATHS, APP_TEXT_SUFFIXES, APP_TREES,
     CONTENT, CONTENT_EXCLUDE_DIR_PREFIXES, CONTENT_EXCLUDE_DIRS,
     CONTENT_EXCLUDE_FILES, CONTENT_TEXT_SUFFIXES,
     IMPORT_REWRITES, MODULES, SCRUB_PATTERNS, SOURCE_ROOTS,
@@ -236,7 +236,7 @@ def process_app_tree(entry: dict, apply: bool) -> dict:
             continue
         if src.is_symlink() and not src.exists():  # dangling symlink — skip
             continue
-        if src.is_dir() or src.name in APP_EXCLUDE_FILES:
+        if src.is_dir() or src.name in APP_EXCLUDE_FILES or rel.as_posix() in APP_EXCLUDE_REL_PATHS:
             continue
         out = dest_root / rel
         if src.suffix.lower() in APP_TEXT_SUFFIXES:
@@ -393,7 +393,8 @@ def _expected_and_roots():
                 rel = s.relative_to(src_root)
                 if any(p in APP_EXCLUDE_DIRS for p in rel.parts):
                     continue
-                if (s.is_symlink() and not s.exists()) or s.is_dir() or s.name in APP_EXCLUDE_FILES:
+                if ((s.is_symlink() and not s.exists()) or s.is_dir()
+                        or s.name in APP_EXCLUDE_FILES or rel.as_posix() in APP_EXCLUDE_REL_PATHS):
                     continue
                 expected.add(root / rel)
 

@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=61"]
+requires = ["setuptools>=77.0.3"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -7,6 +7,9 @@ name = "uai-toolkit"
 version = "0.1.0"
 description = "Portable AI tooling — jsonl readers, hooks, and platform-agnostic helpers."
 requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Shawn Hillis" }]
 dependencies = [
     # read_jsonl core is stdlib-only. tomli only needed for config on <3.11.
     "tomli; python_version < '3.11'",

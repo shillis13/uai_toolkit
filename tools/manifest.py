@@ -51,6 +51,11 @@ APP_TREES = [
 ]
 APP_EXCLUDE_DIRS = CONTENT_EXCLUDE_DIRS | {".vite", "dist", "out", "UAI.app", ".turbo", "coverage"}
 APP_EXCLUDE_FILES = {".DS_Store", "activity_log.txt"}
+# Repo-root transient bundle emitted by an ad-hoc Vite invocation. It is not app
+# source (the real main entry is app/.vite/build/index.js at build time), and it
+# can inline third-party code such as js-yaml. Keep source-only materialization
+# source-only even when this untracked artifact exists in the live shared tree.
+APP_EXCLUDE_REL_PATHS = {"index.js"}
 APP_TEXT_SUFFIXES = CONTENT_TEXT_SUFFIXES | {".ts", ".tsx", ".js", ".jsx", ".mjs",
                                              ".cjs", ".css", ".scss", ".html", ".d.ts"}
 
