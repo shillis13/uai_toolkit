@@ -23,8 +23,9 @@ dependencies = [
 # httpx: optional per-feature LLM client; websockets/session tools; tqdm/progress.
 full = ["psutil>=5.9", "httpx>=0.27", "websockets>=12", "tqdm>=4"]
 dev = ["pytest>=7"]
-# MCP servers (knowledge, ...) — the skill surface. Opt-in: pip install uai-toolkit[mcp]
-mcp = ["mcp>=1.0", "jsonschema>=4"]
+# MCP servers (knowledge, ...) — the skill surface. httpx is the transport for
+# the optional, config-only sessions reasoning tools.
+mcp = ["mcp>=1.0", "jsonschema>=4", "httpx>=0.27"]
 # PIL/pillow backs the image-dimension-check hook only. Guarded lazy import —
 # absent, the hook skips the check rather than crashing. Opt-in.
 images = ["pillow>=10"]
@@ -57,5 +58,6 @@ where = ["src"]
 # The YAML/JSON globs cover behavior/taxonomy configs loaded beside their Python
 # consumers; without them installed hooks silently degrade or declare_stop fails.
 "uai_toolkit" = ["py.typed", "content/**/*", "ai_env.sh", "**/*.md", "llm/*.json",
+                 "mcp/**/*.yml",
                  "hooks/handlers/**/*.yml", "hooks/handlers/**/*.json",
                  "session_mgmt/*.yml"]

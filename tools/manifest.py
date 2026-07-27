@@ -190,7 +190,8 @@ MODULES = [
     {"dest": "mcp/knowledge/README.md", "source": "mcps:knowledge/README.md",         "kind": "doc"},
     {"dest": "mcp/workflow/README.md",  "source": "mcps:workflow/README.md",          "kind": "doc"},
     {"dest": "mcp/comms/README.md",     "source": "mcps:comms/README.md",             "kind": "doc"},
-    {"dest": "mcp/sessions/README.md",  "source": "mcps:sessions/README.md",          "kind": "doc"},
+    # curated with the toolkit's reduced, configurable-endpoint reasoning surface.
+    {"dest": "mcp/sessions/README.md",  "source": "mcps:sessions/README.md",          "kind": "curated"},
 
     # ---- shared env-var path resolver (source-authoritative in ai_general;
     #      Noctis + Portage merged model: env>config.toml>default, platform-aware
@@ -298,7 +299,10 @@ MODULES = [
     {"dest": "mcp/comms/server.py",             "source": "mcps:comms/server.py",            "kind": "curated", "mcp_pkg": "comms"},
     {"dest": "mcp/comms/tools.yml",             "source": "mcps:comms/tools.yml",            "kind": "clean"},
     {"dest": "mcp/sessions/server.py",          "source": "mcps:sessions/server.py",         "kind": "curated", "mcp_pkg": "sessions"},
-    {"dest": "mcp/sessions/tools.yml",          "source": "mcps:sessions/tools.yml",         "kind": "clean"},
+    # curated: sessions_local_llm's declarations are trimmed to the 3 tools this package
+    # implements (see the MODULE_DIRS note below). A clean copy would re-advertise the
+    # 7 local-server / async tools the toolkit module cannot answer.
+    {"dest": "mcp/sessions/tools.yml",          "source": "mcps:sessions/tools.yml",         "kind": "curated"},
     # hook system: live Python dispatcher + exclusions CLI + image-size checker
     {"dest": "hooks/dispatch.py",               "source": "aigen:data/hooks/dispatch.py",    "kind": "curated"},
     {"dest": "hooks/hook_exclusions.py",        "source": "ai:hooks/hook_exclusions.py",     "kind": "clean"},
@@ -343,12 +347,17 @@ MODULE_DIRS = [
      "exclude": ["archive", "gemini_mcp_lock.py", "gemini_memory_lock.py",
                  "capture_uuid_playwright.py"]},   # capture_uuid: deleted (dead recovery tool, retired 2026-07-12)
     {"dest": "mcp/comms/tools",    "source": "mcps:comms/tools",    "kind": "clean", "mcp_pkg": "comms"},
-    # sessions_local_llm removed: it wrapped non-vendored lllm_prompt/lllm_manager
-    # scripts and mixed prompt calls with local server lifecycle management. A future
-    # prompt-only MCP tool can use the shared mcp_prompt feature without restoring the
-    # server-management surface.
+    # sessions_local_llm: CURATED — substantially rewritten for the toolkit (2026-07-27).
+    # Upstream shells out to scripts/lllm/{lllm_prompt,lllm_manager}.py to drive a LOCAL
+    # model server; this package ships no such server. The toolkit version routes its
+    # reasoning calls through the shared per-feature client (feature "mcp_prompt"), so
+    # the endpoint is configurable (locally-hosted or a hosted API) and unconfigured by
+    # default. It drops the 4 server-lifecycle tools (start/stop/status/switch_model),
+    # which have no meaning for an endpoint we don't run, and the async trio, which
+    # needs the unvendored local request queue. Sidecar-only, so a re-sync can never
+    # restore the subprocess version over it.
     {"dest": "mcp/sessions/tools", "source": "mcps:sessions/tools", "kind": "clean", "mcp_pkg": "sessions",
-     "exclude": ["sessions_local_llm.py"]},
+     "overrides": {"sessions_local_llm.py": "curated"}},
     {"dest": "hooks/common",       "source": "aigen:data/hooks/common", "kind": "clean"},
     {"dest": "hooks/handlers",     "source": "aigen:data/hooks",    "kind": "clean",
      "include_only": ["Notification", "PostCompact", "PostToolUse", "PreCompact", "PreToolUse",

@@ -1,3 +1,8 @@
+# NOTE (uai_toolkit): the sessions_local_llm entries are trimmed to the three
+# tools this package implements. Upstream also declares server_start/stop/status,
+# switch_model, the async reasoning pair and get_result — all of which drive a
+# LOCAL model server / request queue that this package does not ship. Declaring
+# them here would advertise tools the module cannot answer.
 _meta:
   description: Tool definitions for sessions MCP server
   generated_from: existing tools() functions
@@ -311,18 +316,6 @@ tools:
         - brief
         - full
         description: 'Footer verbosity: ''brief'' for a compact one-line footer, ''full'' for the expanded footer.'
-- name: sessions_get_result
-  description: Retrieve the result of an async reasoning request by request_id.
-  handler: sessions_get_result
-  module: sessions_local_llm
-  inputSchema:
-    type: object
-    properties:
-      request_id:
-        type: string
-        description: Request ID from async calls
-    required:
-    - request_id
 - name: sessions_get_status
   description: Get detailed status of an agent session including recent output
   handler: sessions_get_status
@@ -412,7 +405,7 @@ tools:
     required:
     - key
 - name: sessions_list_models
-  description: List all available models from the models registry.
+  description: List the endpoints configured for the mcp_prompt feature, in fallback order. Read-only; contacts nothing.
   handler: sessions_list_models
   module: sessions_local_llm
   inputSchema:
@@ -476,7 +469,8 @@ tools:
     required:
     - session_id
 - name: sessions_reason_on_file
-  description: Read a file and send its contents to the local LLM. Blocks until response.
+  description: Read a local file and ask the configured mcp_prompt model about its contents. The text may be sent to a remote
+    endpoint; capped at 200000 characters. Returns a notice without sending when unconfigured.
   handler: sessions_reason_on_file
   module: sessions_local_llm
   inputSchema:
@@ -487,57 +481,13 @@ tools:
         description: System prompt / instruction
       file_path:
         type: string
-        description: Absolute path to file
-    required:
-    - prompt
-    - file_path
-- name: sessions_reason_on_file_async
-  description: Read a file and submit to the local LLM, returning immediately with a request_id.
-  handler: sessions_reason_on_file_async
-  module: sessions_local_llm
-  inputSchema:
-    type: object
-    properties:
-      prompt:
-        type: string
-        description: System prompt / instruction
-      file_path:
-        type: string
-        description: Absolute path to file
-      callback_uri:
-        type: string
-        description: Callback endpoint URI
-      callback: &id002
-        type: object
-        description: Optional callback for async result delivery.
-        properties:
-          type:
-            type: string
-            enum:
-            - none
-            - file
-            - prompt
-          output_path:
-            type: string
-          target:
-            type: string
-          session:
-            type: string
-          message_template:
-            type: string
-          submit:
-            type: boolean
-            default: true
-          force:
-            type: boolean
-            default: false
-        required:
-        - type
+        description: Local path to the file whose contents may be sent to the configured endpoint.
     required:
     - prompt
     - file_path
 - name: sessions_reason_on_text
-  description: Send prompt + text to the currently loaded local LLM, return response.
+  description: Ask the configured mcp_prompt model about inline text. The text may be sent to a remote endpoint. Returns a
+    notice without sending when unconfigured.
   handler: sessions_reason_on_text
   module: sessions_local_llm
   inputSchema:
@@ -549,26 +499,6 @@ tools:
       input_text:
         type: string
         description: Text to reason about
-    required:
-    - prompt
-    - input_text
-- name: sessions_reason_on_text_async
-  description: Submit prompt + text and return immediately with a request_id.
-  handler: sessions_reason_on_text_async
-  module: sessions_local_llm
-  inputSchema:
-    type: object
-    properties:
-      prompt:
-        type: string
-        description: System prompt / instruction
-      input_text:
-        type: string
-        description: Text to reason about
-      callback_uri:
-        type: string
-        description: Callback endpoint URI
-      callback: *id002
     required:
     - prompt
     - input_text
@@ -609,32 +539,6 @@ tools:
     required:
     - session_id
     - keys
-- name: sessions_server_start
-  description: Start the LLM server with a specific model.
-  handler: sessions_server_start
-  module: sessions_local_llm
-  inputSchema:
-    type: object
-    properties:
-      model:
-        type: string
-        description: Model key from models.yml
-    required:
-    - model
-- name: sessions_server_status
-  description: Get the current status of the LLM server.
-  handler: sessions_server_status
-  module: sessions_local_llm
-  inputSchema:
-    type: object
-    properties: {}
-- name: sessions_server_stop
-  description: Stop the running LLM server.
-  handler: sessions_server_stop
-  module: sessions_local_llm
-  inputSchema:
-    type: object
-    properties: {}
 - name: sessions_set
   description: '[DEPRECATED: use sessions_state_set]'
   handler: sessions_set
@@ -775,18 +679,6 @@ tools:
     required:
     - key
     - value
-- name: sessions_switch_model
-  description: Switch the LLM server to a different model.
-  handler: sessions_switch_model
-  module: sessions_local_llm
-  inputSchema:
-    type: object
-    properties:
-      model:
-        type: string
-        description: Model key from models.yml
-    required:
-    - model
 - name: sessions_test
   description: Test sessions server connectivity and configuration (cli-agent, session, local-llm)
   handler: sessions_test
