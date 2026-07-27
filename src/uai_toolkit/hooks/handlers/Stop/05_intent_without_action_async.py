@@ -20,7 +20,7 @@ LOG → (if push_back) deliver self-prompt, else nothing. Async: always allows.
 `--selftest` runs the regex pre-filter over the config examples and reports recall
 on positives / false-positives on negatives (no LLM, no stdin).
 
-Python 3.9 compatible.
+Python 3.10 compatible.
 """
 
 import json
@@ -33,16 +33,14 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "common"))
 from uai_toolkit.hooks.common.lib_hook_base import run_hook, HookResult
-from uai_toolkit.hooks.common.lib_stop_hooks import (should_evaluate, get_response_tail,
-                            get_response_text, get_last_user_message)
+from uai_toolkit.hooks.common.lib_stop_hooks import (should_evaluate, get_response_text,
+                                                     get_last_user_message)
 
-# Shared resolver: script locations + the interpreter used to spawn lllm/send_prompt.
-# Honor $AI_SCRIPTS override, else derive from location (parents[3] = ai_general).
-sys.path.insert(0, os.environ.get("AI_SCRIPTS") or str(Path(__file__).resolve().parents[3] / "scripts"))
 from uai_toolkit.paths import AI_ROOT, AI_SCRIPTS, AI_PYTHON  # noqa: E402
 
-PYTHON = AI_PYTHON                       # was hardcoded /opt/homebrew/bin/python3
-LLLM_PROMPT = AI_SCRIPTS / "lllm" / "lllm_prompt.py"
+PYTHON = AI_PYTHON
+# The model call goes through uai_toolkit.llm (feature "intent_check") — there is no
+# path to a local script here, and no endpoint unless one is configured.
 SEND_PROMPT = AI_SCRIPTS / "prompting" / "send_prompt.py"
 CONFIG_PATH = Path(__file__).resolve().parent / "intent_without_action.config.yml"
 
@@ -118,11 +116,17 @@ def log_evaluation(cfg, result, reason, message, extra=None):
 # ─── Evaluator (few-shot from config) ────────────────────────────────────────
 
 def lllm_running():
+    """True when this feature has a model endpoint configured.
+
+    uai_toolkit: the endpoint comes from the `intent_check` feature's own entry in
+    the LLM endpoint config (local LLLM, a hosted API, or nothing). Unconfigured
+    means the check is off, and the hook skips exactly as it did when the local
+    model was down. Name kept so the call sites are unchanged.
+    """
     try:
-        r = subprocess.run([PYTHON, str(LLLM_PROMPT), "--status"],
-                           capture_output=True, text=True, timeout=5)
-        return r.returncode == 0 and json.loads(r.stdout).get("state") == "running"
-    except (subprocess.TimeoutExpired, json.JSONDecodeError, OSError):
+        from uai_toolkit.llm import is_configured
+        return is_configured("intent_check")
+    except Exception:
         return False
 
 
@@ -161,21 +165,23 @@ def assess(cfg, last_sentences, user_message=""):
     if user_message:
         body += "User's last message:\n{}\n\n".format(user_message)
     body += "Agent's last sentences:\n{}".format(last_sentences)
+    # uai_toolkit: in-process call to the `intent_check` feature's configured model
+    # (local LLLM, hosted API, or nothing). Any failure -> None -> hook stays silent.
     try:
-        r = subprocess.run([PYTHON, str(LLLM_PROMPT), prompt, "--text", body],
-                           capture_output=True, text=True, timeout=15)
-        if r.returncode != 0 or not r.stdout.strip():
-            return None
-        parts = r.stdout.strip().split("\n", 1)
-        decision = parts[0].strip().lower()
-        reasoning = parts[1].strip() if len(parts) > 1 else ""
-        if "act now" in decision:
-            return ("act now", reasoning)
-        if "wait" in decision:
-            return ("wait", reasoning)
+        from uai_toolkit.llm import complete
+        out = complete("intent_check", prompt, body, max_tokens=200)
+    except Exception:
         return None
-    except (subprocess.TimeoutExpired, OSError):
+    if not out or not out.strip():
         return None
+    parts = out.strip().split("\n", 1)
+    decision = parts[0].strip().lower()
+    reasoning = parts[1].strip() if len(parts) > 1 else ""
+    if "act now" in decision:
+        return ("act now", reasoning)
+    if "wait" in decision:
+        return ("wait", reasoning)
+    return None
 
 
 def _last_sentences(text, n=3):

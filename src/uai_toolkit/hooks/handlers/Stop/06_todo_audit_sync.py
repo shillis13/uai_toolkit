@@ -33,14 +33,20 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "common"))
 from uai_toolkit.hooks.common.lib_hook_base import run_hook, HookResult
 
-sys.path.insert(0, "$AI_ROOT/ai_general/scripts/file_access")
 try:
     from uai_toolkit.file_access.tracker import STATE_FILE as ACCESS_STATE_FILE
 except Exception:
     ACCESS_STATE_FILE = None
 
-AUDIT_LOG = Path("$AI_ROOT/ai_general/data/work/todo_audit.jsonl")
-MODE_CONFIG = Path("$AI_ROOT/ai_general/data/hooks/Stop/todo_audit.config.json")
+# These were hardcoded absolute paths upstream; the materialize path-scrub turned
+# them into LITERAL "$AI_ROOT/..." strings, which Python never expands — so the log
+# went to a bogus relative path and the config was never found. Resolve properly.
+from uai_toolkit.paths import AI_DATA          # noqa: E402
+
+AUDIT_LOG = AI_DATA / "work" / "todo_audit.jsonl"
+# The mode config ships BESIDE this handler in the package, so read it from here
+# rather than from an instance path that may not exist on a fresh install.
+MODE_CONFIG = Path(__file__).resolve().parent / "todo_audit.config.json"
 TODO_RE = re.compile(r"todo_\d{3,}")
 VALID_MODES = ("observe", "warn", "block")
 FALLBACK_WINDOW_SEC = 1800  # if turn start can't be found, look back 30m

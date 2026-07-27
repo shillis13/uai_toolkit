@@ -1,0 +1,28 @@
+# Stop-gate ENFORCEMENT policy  (todo_0520)
+#
+# Read by Stop/12_require_stop_declaration_sync.py. This is the HOOK's concern:
+# how strictly to enforce the declare_stop gate. The reason TAXONOMY the tool
+# understands is a separate, tool-owned file:
+#   scripts/session_mgmt/declare_stop.config.yml
+#
+# Two orthogonal toggles (per-session overrides: session-state keys
+# stop_gate.is_silent / stop_gate.observe_only):
+#   is_silent    : true  = never nudge (pure log);  false = nudge on undeclared stop
+#   observe_only : true  = never block (log/nudge + allow)
+#                  false = ENFORCE — block an undeclared stop (exit 2) until the
+#                          3-strike valve releases + escalates
+#
+# Scope: the handler enforces for claude_cli ONLY (where declare_stop provably
+# works). Codex + other platforms are skipped in-handler until their MCP servers
+# carry session identity (todo_0523) — do NOT flip them on here.
+#
+# LIVE since 2026-07-16 (was observe-only 2026-07-12..16; mechanism verified over
+# 367 firings across 23 sessions, 0 errors, + a real-session MCP E2E).
+is_silent: false
+observe_only: false
+
+# Consecutive undeclared blocks before the valve escalates + RELEASES the stop
+# (anti-deadlock — a session can never be trapped by the gate).
+max_consecutive_blocks: 3
+# Who the valve escalation names (feed post + data/work/stop_gate_escalations.jsonl).
+escalate_to: [PianoMan, Hamilton]

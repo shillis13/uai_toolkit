@@ -1,0 +1,106 @@
+# declare_stop — reason TAXONOMY  (todo_0520)
+#
+# The vocabulary the declare_stop tool understands. Read by declare_stop.py (this
+# directory) to validate reason ids and derive board_status / downstream effects.
+# It is the TOOL's data and lives with the tool.
+#
+# Gate ENFORCEMENT policy (observe/warn/block mode, the 3-strike valve) is a
+# separate, hook-owned concern: data/hooks/Stop/stop_gate.config.yml.
+#
+# The session calls the declare_stop MCP tool before ending its turn, selecting
+# one or more `reasons` (by id) + per-reason `params` + optional free-text note.
+#
+# Each reason:
+#   id            — stable key (what the tool receives)
+#   label         — human text (Live Board, notifications)
+#   category      — grouping for the board: complete|continue|decision|blocked|
+#                   capacity|waiting|scheduling|preference|directive
+#   params        — expected keys in the tool's `params` (schema hint)
+#   control       — allow (default) | block_continue (block the stop, hand control
+#                   back to the session; counts toward the gate's 3-strike valve)
+#   downstream    — effects fired on declaration (P2 wires these):
+#                     schedule_wake{after_min} | flag_human | check_assigned_todos |
+#                     verify_todo | board_status{state}
+#   default       — true for the cheap conversational fall-through
+reasons:
+  - id: awaiting_user
+    label: "Responded — awaiting user"
+    category: complete
+    default: true
+    downstream: [ "board_status: idle" ]
+
+  - id: more_work
+    label: "Not stopping — I have more work to do"
+    category: continue
+    control: block_continue          # self-continuation; 3-strike capped
+
+  - id: finished_todo
+    label: "Finished a todo"
+    category: complete
+    params: { todo_id: "todo_####" }
+    downstream: [ verify_todo, "board_status: active" ]
+
+  - id: need_decision
+    label: "I need a real decision made"
+    category: decision
+    params:
+      subconditions: >-
+        any of: not_passing_buck | lack_pivotal_info |
+        impacts_pianoman | nontrivial_risk_beyond_rework
+    downstream: [ flag_human, "board_status: needs_decision" ]
+
+  - id: context_pressure
+    label: "Need to address context usage over threshold"
+    category: capacity
+    params: { pct: 0 }
+    downstream: [ "board_status: managing_context" ]
+
+  - id: waiting_on
+    label: "Waiting on a response"
+    category: waiting
+    params: { source: "who/what", wake_after_min: 0 }
+    downstream: [ schedule_wake, "board_status: waiting" ]
+
+  - id: blocked
+    label: "Blocked"
+    category: blocked
+    params: { reason: "why" }
+    downstream: [ "board_status: blocked" ]
+
+  - id: no_more_work
+    label: "I have no other work that could be done"
+    category: complete
+    downstream: [ check_assigned_todos, "board_status: idle" ]
+    # check_assigned_todos: if unblocked assigned todos exist → flag_human
+    # (stop still proceeds; a note is raised for Hamilton/PianoMan to follow up)
+
+  - id: told_to_stop
+    label: "I was told not to go past this point"
+    category: directive
+    downstream: [ "board_status: parked" ]
+
+  - id: wake_me
+    label: "Wake me in N minutes to re-check blockers/responses"
+    category: scheduling
+    params: { after_min: 0 }
+    downstream: [ schedule_wake ]
+
+  - id: break
+    label: "I'd like to take a break, thank you"
+    category: preference
+    downstream: [ "board_status: paused" ]
+
+  - id: switch_work
+    label: "I'd rather work on something else, please"
+    category: preference
+    params: { toward: "optional — what I'd prefer" }
+    downstream: [ flag_human, "board_status: active" ]
+
+  - id: discuss_soonest
+    label: "I'd like to discuss something with PianoMan or Hamilton soonest"
+    category: preference
+    params: { topic: "what about" }
+    downstream: [ flag_human, "board_status: wants_discussion" ]
+
+# `note` (free-text) is always accepted alongside any selection, and a
+# declaration MAY be note-only (custom reason not in the list above).

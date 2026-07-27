@@ -20,7 +20,7 @@ dependencies = [
 
 [project.optional-dependencies]
 # Heavier features (archive/engram/REPL) and Windows shims, opt-in.
-# httpx/websockets: local-LLM quality gate + session tools; tqdm: progress bars.
+# httpx: optional per-feature LLM client; websockets/session tools; tqdm/progress.
 full = ["psutil>=5.9", "httpx>=0.27", "websockets>=12", "tqdm>=4"]
 dev = ["pytest>=7"]
 # MCP servers (knowledge, ...) — the skill surface. Opt-in: pip install uai-toolkit[mcp]
@@ -53,4 +53,9 @@ where = ["src"]
 # The knowledge base (ai_context_files) + composition layer (ai_profiles) ship
 # as package data; `uai-toolkit install` copies them into AI_ROOT and builds the
 # guidance index (context.db, via context_mgr reindex) from them on a fresh box.
-"uai_toolkit" = ["py.typed", "content/**/*", "ai_env.sh", "**/*.md"]
+# The endpoint JSON is an example only and is never loaded automatically.
+# The YAML/JSON globs cover behavior/taxonomy configs loaded beside their Python
+# consumers; without them installed hooks silently degrade or declare_stop fails.
+"uai_toolkit" = ["py.typed", "content/**/*", "ai_env.sh", "**/*.md", "llm/*.json",
+                 "hooks/handlers/**/*.yml", "hooks/handlers/**/*.json",
+                 "session_mgmt/*.yml"]

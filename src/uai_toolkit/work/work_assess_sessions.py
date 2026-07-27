@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""work_assess_sessions.py — LLLM interpretive layer for the work landscape.
+"""work_assess_sessions.py — model-assisted layer for the work landscape.
 
 The landscape query (work_landscape.py) gives the structural skeleton: which
 session owns which todo, status, freshness. It cannot tell that a session is
 *stuck*, or ended its last turn with an open question to PianoMan. This script
 adds that soft layer: it tails each active session's transcript and asks the
-local LLM (no tools, text-in / structured-out) for a per-session assessment,
+model configured for ``session_assess`` for a per-session assessment,
 written to data/work/assessments.json for work_landscape.py to consume.
 
 Designed to run headless on a schedule (sched-task-mgr / cron) so the coordinator
@@ -22,11 +22,10 @@ import subprocess
 import sys
 from datetime import datetime
 
-_ENV_ROOT = os.environ.get("AI_ROOT")
-AI_ROOT = _ENV_ROOT if (_ENV_ROOT and os.path.isdir(_ENV_ROOT)) else "$AI_ROOT"
-MGR_DIR = AI_ROOT + "/ai_general/scripts/mgrs"
-LLLM_PROMPT = AI_ROOT + "/ai_general/scripts/lllm/lllm_prompt.py"
-OUT_DIR = AI_ROOT + "/ai_general/data/work"
+from uai_toolkit.paths import AI_DATA, AI_SCRIPTS
+
+MGR_DIR = str(AI_SCRIPTS / "mgrs")
+OUT_DIR = str(AI_DATA / "work")
 OUT_FILE = OUT_DIR + "/assessments.json"
 
 # Only assess sessions whose last activity is within this many hours (skip stale).
@@ -157,26 +156,33 @@ def _normalize_recent_directives(value):
 
 
 def assess_one(name, excerpt):
-    """Run the LLLM assessment for one session's excerpt. None on failure."""
-    result = None
+    """Run the assessment for one session's excerpt. None on failure.
+
+    uai_toolkit: the model comes from the `session_assess` feature's own entry in the
+    LLM endpoint config (local LLLM, a hosted API, or nothing). Unconfigured returns
+    None, which main() treats exactly like the model being down — a no-op merge that
+    preserves the last-good assessments rather than clobbering them.
+
+    The shared client is optional (install ``uai-toolkit[full]`` for httpx), but the
+    import and call are in-process, so there is no interpreter/shebang mismatch.
+    """
+    from uai_toolkit.llm import complete, is_configured
+
+    if not is_configured("session_assess"):
+        return None
     try:
-        # Invoke lllm_prompt.py via its own shebang (the MCP venv python, which has
-        # httpx) — NOT the caller's interpreter. /usr/bin/python3 lacks httpx, so
-        # using sys.executable here made every call fail under the scheduler.
-        proc = subprocess.run(
-            [LLLM_PROMPT, ASSESS_PROMPT, "--text", excerpt],
-            capture_output=True, text=True, timeout=120,
-        )
-        if proc.returncode == 0:
-            result = _parse_assessment(proc.stdout)
-            if isinstance(result, dict):
-                result["recent_directives"] = _normalize_recent_directives(
-                    result.get("recent_directives")
-                )
-            else:
-                result = None
-    except (subprocess.SubprocessError, OSError):
-        result = None
+        raw = complete("session_assess", ASSESS_PROMPT, excerpt, max_tokens=800)
+    except Exception:
+        return None
+    if not raw:
+        return None
+    # Local models often wrap JSON in prose/fences — the existing parser handles that.
+    result = _parse_assessment(raw)
+    if not isinstance(result, dict):
+        return None
+    result["recent_directives"] = _normalize_recent_directives(
+        result.get("recent_directives")
+    )
     return result
 
 
@@ -207,13 +213,14 @@ def gather(only_session):
 ASSESS_EPILOG = """\
 WHAT IT DOES
   The interpretive layer behind `work_landscape.py --enrich`. It reads each
-  fresh session's recent transcript and asks the local LLM the questions that
+  fresh session's recent transcript and asks its configured model the questions that
   structure can't answer -- is it stuck? waiting on PianoMan? what's its open
   question? -- then caches a structured verdict per session. Built to run
   HEADLESS on a schedule.
 
-  LLLM = local LLM: a tool-less llama-server model (text in, JSON out). It can
-  only assess, never act. Reached via scripts/lllm/lllm_prompt.py.
+  The ``session_assess`` endpoint is independently configured and may be a local
+  tool-less model or a hosted service. With no endpoint (the default), this command
+  performs no model call and preserves its last-good cache.
 
 PIPELINE  (per run)
   1. sess-mgr list --json, then a FRESHNESS GATE -- skip "active" ghosts idle
@@ -221,14 +228,12 @@ PIPELINE  (per run)
      bypasses the gate.)
   2. Read the tail of the session's newest transcript: ~the last 60 JSONL
      lines -> the last 6000 chars of human-readable user/assistant text.
-  3. Run lllm_prompt.py with the assess prompt. The model must return ONE JSON
+  3. Call the shared client with the assess prompt. The model must return ONE JSON
      object: {state, project_guess, open_question, needs_pianoman,
      recent_directives}. recent_directives (todo_0431) = 0-3 terse tasks
      PianoMan (the human) told this session to do, extracted from the excerpt
      while ignoring agent relays / system notifications -> the PM DIRECTIVES
      feed on the board.
-     NB: lllm_prompt.py is invoked via its OWN shebang/venv (which has httpx) --
-     using the caller's python silently zeroed every assessment under launchd.
   4. Defensively parse the first {...} block (local models wrap JSON in prose).
   5. Stamp each verdict with assessed_at.
 
@@ -239,14 +244,14 @@ OUTPUT -- data/work/assessments.json   (MERGE, never overwrite)
                    "needs_pianoman": true, "recent_directives": [<str>, ...],
                    "assessed_at": "2026-..." }, ... }
   New verdicts are merged OVER the existing file. A run that produces nothing
-  (LLLM down/busy, or no fresh sessions) is a no-op -- it never clobbers
+  (model unavailable, or no fresh sessions) is a no-op -- it never clobbers
   last-good data; un-reassessed sessions keep their prior verdict (an older
   assessed_at is how you spot staleness). --stdout prints instead of writing.
 
 SCHEDULING  (off by default)
   data/scheduled_tasks/work.yml defines an assess_sessions job (*/30 * * * *,
-  enabled: false). Running the LLLM every 30 min keeps a model warm ~always --
-  a GPU/RAM commitment, so it's PianoMan's call. To activate:
+  enabled: false). A local endpoint may keep a model warm and a hosted endpoint
+  may incur usage cost, so activation is an operator decision:
     sched-task-mgr enable work && sched-task-mgr install
 
 EXAMPLES
@@ -263,7 +268,7 @@ SEE ALSO
 
 def main():
     parser = argparse.ArgumentParser(
-        description="LLLM per-session assessor: reads fresh sessions' transcripts and caches a "
+        description="Model-assisted per-session assessor: reads fresh sessions' transcripts and caches a "
                     "structured verdict (state / open_question / needs_pianoman / "
                     "recent_directives) that feeds `work_landscape.py --enrich`. "
                     "Read-only except for its own output file.",
@@ -284,11 +289,10 @@ def main():
         print(json.dumps(new, indent=2))
         return 0
 
-    if not os.path.isdir(OUT_DIR):
-        os.mkdir(OUT_DIR)
+    os.makedirs(OUT_DIR, exist_ok=True)
 
     # Merge over any existing assessments rather than overwrite. A run that
-    # produces nothing (LLLM busy/down, no fresh sessions) must NOT clobber the
+    # produces nothing (model unavailable, no fresh sessions) must NOT clobber the
     # last-good data; sessions not re-assessed this run keep their prior verdict.
     merged = {}
     if os.path.isfile(OUT_FILE):

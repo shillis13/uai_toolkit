@@ -286,14 +286,15 @@ if __name__ == "__main__":
                           keep_recent_turns=a.keep_recent, strategy=a.strategy,
                           leaf_uuid=a.leaf)
     elif a.summarizer == "local-llm":
-        # Noctis's headless fallback: LLLM summaries, optional inline gate, one command.
-        print("NOTICE: using local-LLM summaries (headless fallback — NOT Claude-quality; "
-              "PianoMan's directive is to prefer Claude summaries when an agent is present).",
+        # Headless fallback: summaries from the model configured for the
+        # `consolidation_summary` feature (local LLLM, a hosted API, or nothing).
+        print("NOTICE: using model-generated summaries (headless fallback — NOT "
+              "Claude-quality; prefer Claude summaries when an agent is present).",
               file=sys.stderr)
         def _llm_summary(text, _cand):
             r = SM.summarize_via_local_llm(text)
             if not r.get("ok"):
-                raise RuntimeError(f"local-llm summarize failed: {r.get('error')}")
+                raise RuntimeError(f"summarize failed: {r.get('error')}")
             return r["summary"]
         if a.used_pct is not None:
             out = reclaim_and_stage(a.jsonl, a.session, used_pct=a.used_pct,

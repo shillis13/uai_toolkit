@@ -23,7 +23,12 @@ import subprocess
 import sys
 from datetime import datetime
 
-MGR_DIR = "$AI_ROOT/ai_general/scripts/mgrs"
+# These were hardcoded absolute paths upstream; the materialize path-scrub rewrote
+# them to LITERAL "$AI_ROOT/..." strings, which Python never expands — every one
+# resolved to a bogus relative path. Use the resolver instead.
+from uai_toolkit.paths import AI_DATA, AI_SCRIPTS   # noqa: E402
+
+MGR_DIR = str(AI_SCRIPTS / "mgrs")
 STATUS_CODE = {
     "Triaging": "TR", "Needs_Research": "NR", "Needs_Derivation": "ND",
     "Ready": "RD", "In_Progress": "IP", "Reviewing": "RV",
@@ -203,7 +208,7 @@ def _derive_liveness(status, raw_state, age):
     return "idle"
 
 
-ASSESSMENTS_FILE = "$AI_ROOT/ai_general/data/work/assessments.json"
+ASSESSMENTS_FILE = str(AI_DATA / "work" / "assessments.json")
 
 
 def _normalize_directives(value):
@@ -242,7 +247,7 @@ def _load_assessments():
     return data
 
 
-PM_DECISIONS_FILE = "$AI_ROOT/ai_general/data/work/pm_decisions.json"
+PM_DECISIONS_FILE = str(AI_DATA / "work" / "pm_decisions.json")
 
 
 def _load_pm_decisions():

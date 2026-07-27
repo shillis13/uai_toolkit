@@ -14,8 +14,8 @@ Two outputs per evaluation:
 The evaluator is a CONFIGURABLE ORDERED ENDPOINT CHAIN: endpoints are tried in
 order until one returns a valid verdict. Supports OpenAI-compatible endpoints
 (local LLM, remote LLMs, Codex/OpenAI-served) and Anthropic endpoints. Config
-is loaded from a JSON file (env QUALITY_GATE_ENDPOINTS, else the default path);
-if absent, a built-in default chain is used.
+comes from the shared ``quality_gate`` feature in uai_toolkit.llm. If absent,
+the hook skips; there is no built-in endpoint.
 """
 
 import glob
@@ -35,17 +35,6 @@ from uai_toolkit.hooks.common.lib_stop_hooks import should_evaluate
 OBSERVE_ONLY = True
 MIN_RESPONSE_TOKENS = 80
 MAX_CONTEXT_TURNS = 3
-DEFAULT_TIMEOUT = 15
-
-HAIKU_MODEL = "claude-haiku-4-5-20251001"
-DEFAULT_LLLM_URL = "http://localhost:11881"
-
-# Where to load the endpoint chain from (override with QUALITY_GATE_ENDPOINTS).
-DEFAULT_ENDPOINTS_PATH = (
-    "$AI_ROOT/ai_general/data/hooks/common/"
-    "quality_gate_endpoints.json"
-)
-
 EVALUATOR_PROMPT = """You are a quality gate evaluating an AI assistant's response.
 
 You receive the last few turns of conversation: user messages and assistant responses.
@@ -142,61 +131,16 @@ def extract_last_turns(jsonl_path, n_turns=MAX_CONTEXT_TURNS):
     return result
 
 
-# ─── Evaluator: configurable ordered endpoint chain ───────────────────────
-
-def _import_httpx():
-    """Load httpx from the MCP venv shim; return module or None (degrade)."""
-    try:
-        venv_path = Path.home() / "AI/ai_root/ai_general/apps/mcps/.venv/lib"
-        for p in venv_path.glob("python*/site-packages"):
-            if str(p) not in sys.path:
-                sys.path.insert(0, str(p))
-        import httpx
-        return httpx
-    except ImportError:
-        return None
-
-
-def _default_endpoints():
-    """Built-in default chain (used when no config file is present)."""
-    chain = [
-        {
-            "name": "local-lllm",
-            "kind": "openai",
-            "base_url": DEFAULT_LLLM_URL,
-            "model": "local",
-            "timeout": DEFAULT_TIMEOUT,
-        },
-    ]
-    if os.environ.get("ANTHROPIC_API_KEY"):
-        chain.append({
-            "name": "haiku",
-            "kind": "anthropic",
-            "base_url": "https://api.anthropic.com",
-            "model": HAIKU_MODEL,
-            "api_key_env": "ANTHROPIC_API_KEY",
-            "timeout": DEFAULT_TIMEOUT,
-        })
-    return chain
+# ─── Evaluator: shared configurable endpoint chain ────────────────────────
 
 
 def load_endpoints():
-    """Load the endpoint chain from JSON config, else the built-in default.
-
-    Config file may be either a bare JSON array of endpoints, or an object
-    with an "endpoints" key (so it can carry a top-level comment field).
-    """
-    path = os.environ.get("QUALITY_GATE_ENDPOINTS") or DEFAULT_ENDPOINTS_PATH
+    """Load this hook's independently configured shared-client endpoint chain."""
     try:
-        p = Path(path)
-        if p.exists():
-            data = json.loads(p.read_text())
-            eps = data.get("endpoints") if isinstance(data, dict) else data
-            if isinstance(eps, list) and eps:
-                return eps
+        from uai_toolkit.llm import load_endpoints as shared_load_endpoints
+        return shared_load_endpoints("quality_gate")
     except Exception:
-        pass
-    return _default_endpoints()
+        return []
 
 
 def load_context_config():
@@ -208,7 +152,11 @@ def load_context_config():
     how much data the judge sees during the eval phase.
     """
     cfg = {"turns": MAX_CONTEXT_TURNS, "max_chars": 0}
-    path = os.environ.get("QUALITY_GATE_ENDPOINTS") or DEFAULT_ENDPOINTS_PATH
+    # Compatibility-only context knob. Endpoint selection never comes from this
+    # legacy file; it always goes through uai_toolkit.llm above.
+    path = os.environ.get("QUALITY_GATE_ENDPOINTS")
+    if not path:
+        return cfg
     try:
         data = json.loads(Path(path).read_text())
         ctx = data.get("context") if isinstance(data, dict) else None
@@ -224,7 +172,7 @@ def load_context_config():
 
 def _parse_verdict(text):
     """Parse a verdict dict from raw model text, tolerating prose/markdown."""
-    if not text:
+    if not isinstance(text, str) or not text:
         return None
     try:
         return json.loads(text)
@@ -241,75 +189,38 @@ def _parse_verdict(text):
     return None
 
 
-def _call_openai(httpx, ep, messages):
-    """Call an OpenAI-compatible /v1/chat/completions endpoint."""
-    headers = {}
-    key_env = ep.get("api_key_env")
-    if key_env and os.environ.get(key_env):
-        headers["Authorization"] = f"Bearer {os.environ[key_env]}"
-    base = ep.get("base_url", DEFAULT_LLLM_URL).rstrip("/")
-    body = {
-        "model": ep.get("model", "local"),
-        "messages": [{"role": "system", "content": EVALUATOR_PROMPT}, *messages],
-        "max_tokens": 500,
-        # vLLM/local extension to disable thinking; ignored by servers that
-        # don't support it. If a strict server 400s, the chain falls through.
-        "chat_template_kwargs": {"enable_thinking": False},
-    }
-    with httpx.Client(timeout=ep.get("timeout", DEFAULT_TIMEOUT)) as client:
-        resp = client.post(f"{base}/v1/chat/completions", headers=headers, json=body)
-        data = resp.json()
-        text = data["choices"][0]["message"]["content"]
-        return _parse_verdict(text)
-
-
-def _call_anthropic(httpx, ep, messages):
-    """Call an Anthropic /v1/messages endpoint."""
-    key_env = ep.get("api_key_env", "ANTHROPIC_API_KEY")
-    key = os.environ.get(key_env)
-    if not key:
-        return None
-    base = (ep.get("base_url") or "https://api.anthropic.com").rstrip("/")
-    headers = {
-        "x-api-key": key,
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json",
-    }
-    body = {
-        "model": ep["model"],
-        "max_tokens": 500,
-        "system": EVALUATOR_PROMPT,
-        "messages": messages,
-    }
-    with httpx.Client(timeout=ep.get("timeout", DEFAULT_TIMEOUT)) as client:
-        resp = client.post(f"{base}/v1/messages", headers=headers, json=body)
-        data = resp.json()
-        text = data["content"][0]["text"]
-        return _parse_verdict(text)
-
-
 def evaluate(messages):
-    """Try each configured endpoint in order until one returns a valid verdict.
+    """Use the shared client; return a strict verdict and actual endpoint label.
 
     Returns (verdict_dict, endpoint_label) on first success, else (None, None).
     """
-    httpx = _import_httpx()
-    if httpx is None:
+    conversation = "\n\n".join(
+        f"{str(m.get('role', 'user')).upper()}: {m.get('content', '')}"
+        for m in messages if isinstance(m, dict)
+    )
+    try:
+        from uai_toolkit.llm import complete_with_endpoint
+        result = complete_with_endpoint(
+            "quality_gate", EVALUATOR_PROMPT, conversation, max_tokens=500,
+        )
+    except Exception:
+        result = None
+    if not result:
         return None, None
-
-    for ep in load_endpoints():
-        kind = ep.get("kind", "openai")
-        try:
-            if kind == "anthropic":
-                verdict = _call_anthropic(httpx, ep, messages)
-            else:
-                verdict = _call_openai(httpx, ep, messages)
-        except Exception:
-            verdict = None
-        if isinstance(verdict, dict) and ("pass" in verdict or "findings" in verdict):
-            label = f"{ep.get('name', '?')}:{ep.get('model', '?')}"
-            return verdict, label
-    return None, None
+    text, endpoint = result
+    verdict = _parse_verdict(text)
+    if not isinstance(verdict, dict) or not isinstance(verdict.get("pass"), bool):
+        return None, None
+    findings = verdict.get("findings")
+    if not isinstance(findings, list) or not all(
+        isinstance(f, dict)
+        and isinstance(f.get("type"), str)
+        and isinstance(f.get("detail"), str)
+        for f in findings
+    ):
+        return None, None
+    label = f"{endpoint.get('name', '?')}:{endpoint.get('model', '?')}"
+    return verdict, label
 
 
 # ─── Findings persistence ─────────────────────────────────────────────────

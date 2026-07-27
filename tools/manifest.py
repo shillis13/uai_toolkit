@@ -152,6 +152,32 @@ SCRUB_PATTERNS = [
 # dest is relative to src/uai_toolkit/. source is "<root_key>:<relpath>".
 # rename is implicit (source basename may differ from dest basename).
 MODULES = [
+    # ---- Hook BEHAVIOR configs ----
+    # MODULE_DIRS only globs *.py, so a sibling config file that a handler LOADS was
+    # silently absent and the handler ran with an empty policy. Git Guardian caught
+    # intent_check being inert for exactly this reason (2026-07-27). Listed here
+    # per-file; kind=doc = copy + path-scrub, no import rewriting. The intent
+    # config is curated only to correct its evaluator comment for the toolkit's
+    # shared `intent_check` client; its policy values still match the source.
+    #
+    # DELIBERATELY NOT VENDORED (instance data, not code):
+    #   Stop/exclusions.yml, PreToolUse/exclusions.yml,
+    #   Stop/turn_digest_allowlist.yml, Stop/branch_index_allowlist.yml
+    #     — these list REAL session tracking IDs (personal data). Per DESIGN.md the
+    #       package carries no personal data; they belong in the user's AI_ROOT.
+    #   common/quality_gate_endpoints.json
+    #     — a live endpoint chain. This package ships NO endpoints by design.
+    {"dest": "hooks/handlers/Stop/intent_without_action.config.yml",
+     "source": "aigen:data/hooks/Stop/intent_without_action.config.yml", "kind": "curated"},
+    {"dest": "hooks/handlers/Stop/stop_gate.config.yml",
+     "source": "aigen:data/hooks/Stop/stop_gate.config.yml",             "kind": "doc"},
+    {"dest": "hooks/handlers/Stop/todo_audit.config.json",
+     "source": "aigen:data/hooks/Stop/todo_audit.config.json",           "kind": "doc"},
+    # declare_stop.py HARD-FAILS (raises RuntimeError) without its sibling taxonomy
+    # config — not a soft degrade like the hooks above. Same *.py-only glob gap.
+    {"dest": "session_mgmt/declare_stop.config.yml",
+     "source": "ai:session_mgmt/declare_stop.config.yml",                "kind": "doc"},
+
     # ---- per-dir docs for the per-file-sourced packages (dir-glob pkgs get theirs
     #      automatically). kind=doc = copy + scrub, no import rewrite. ----
     {"dest": "jsonl/README.md",         "source": "ai:jsonl/README.md",              "kind": "doc"},
@@ -213,7 +239,9 @@ MODULES = [
     {"dest": "jsonl/scrub_files.py",                  "source": "ai:jsonl/scrub_files.py",                     "kind": "clean"},
     {"dest": "jsonl/deferred_self_compact.py",        "source": "ai:jsonl/deferred_self_compact.py",           "kind": "clean"},
     {"dest": "jsonl/resume_note.py",                  "source": "ai:jsonl/resume_note.py",                     "kind": "clean"},
-    {"dest": "jsonl/summarizer.py",                   "source": "ai:jsonl/summarizer.py",                      "kind": "clean"},
+    # curated 2026-07-27: the shadow path uses the independently configured
+    # consolidation_summary client instead of a non-vendored scripts/lllm import.
+    {"dest": "jsonl/summarizer.py",                   "source": "ai:jsonl/summarizer.py",                      "kind": "curated"},
     {"dest": "jsonl/catjsonl.py",                     "source": "ai:jsonl/catjsonl.py",                        "kind": "curated"},
     # jsonl/discovery.py = native shim (no source) — omitted.
 
@@ -315,8 +343,12 @@ MODULE_DIRS = [
      "exclude": ["archive", "gemini_mcp_lock.py", "gemini_memory_lock.py",
                  "capture_uuid_playwright.py"]},   # capture_uuid: deleted (dead recovery tool, retired 2026-07-12)
     {"dest": "mcp/comms/tools",    "source": "mcps:comms/tools",    "kind": "clean", "mcp_pkg": "comms"},
+    # sessions_local_llm removed: it wrapped non-vendored lllm_prompt/lllm_manager
+    # scripts and mixed prompt calls with local server lifecycle management. A future
+    # prompt-only MCP tool can use the shared mcp_prompt feature without restoring the
+    # server-management surface.
     {"dest": "mcp/sessions/tools", "source": "mcps:sessions/tools", "kind": "clean", "mcp_pkg": "sessions",
-     "overrides": {"sessions_local_llm.py": "curated"}},              # hardcoded /opt/homebrew python -> AI_PYTHON (WSL); source-side fix pending
+     "exclude": ["sessions_local_llm.py"]},
     {"dest": "hooks/common",       "source": "aigen:data/hooks/common", "kind": "clean"},
     {"dest": "hooks/handlers",     "source": "aigen:data/hooks",    "kind": "clean",
      "include_only": ["Notification", "PostCompact", "PostToolUse", "PreCompact", "PreToolUse",
@@ -324,17 +356,40 @@ MODULE_DIRS = [
      # 10_force_mcp_for_context_sync: hook RETIRED in source 2026-07-11.
      "exclude": ["10_force_mcp_for_context_sync.py"],
      # hardcoded /opt/homebrew python -> AI_PYTHON (WSL); source-side migration missed these.
+     # 03_quality_gate: curated 2026-07-27 — model calls use the shared per-feature
+     # client with no default host and no key-derived endpoint. It contacts nothing
+     # unless the operator configures the quality_gate feature in that environment.
+     # 05_intent_without_action: curated — rewired from a scripts/lllm subprocess to
+     # the shared per-feature LLM client (feature "intent_check").
+     # 06_todo_audit: curated — the path scrub had turned its config/log paths into
+     # LITERAL "$AI_ROOT/..." strings (never expanded by Python), so the log went to a
+     # bogus relative path and the config was never found. Now resolver-based, and the
+     # config is read from beside the handler in the package.
      "overrides": {"04_store_session_data_async.py": "curated",
-                   "11_turn_digest_async.py": "curated"}},
+                   "11_turn_digest_async.py": "curated",
+                   "03_quality_gate_sync.py": "curated",
+                   "05_intent_without_action_async.py": "curated",
+                   "06_todo_audit_sync.py": "curated"}},
     # transitively-required dirs surfaced by the import-tail scan (port faithfully)
-    {"dest": "session_bounce", "source": "ai:session_bounce", "kind": "clean"},
+    # reclaim_and_stage: curated 2026-07-27 — its historical --summarizer local-llm
+    # mode uses the shared consolidation_summary feature (local or hosted endpoint).
+    {"dest": "session_bounce", "source": "ai:session_bounce", "kind": "clean",
+     "overrides": {"reclaim_and_stage.py": "curated"}},
     # added 2026-07-12 (PianoMan): devTrees (git-worktree mgmt), notes, prompts, work.
-    # projects/ deferred ("soon, not yet"). work_summarize's lllm_prompt import is
-    # lazy (degrades if lllm/ absent — not vendored).
+    # projects/ deferred ("soon, not yet").
     {"dest": "devTrees", "source": "ai:devTrees", "kind": "clean"},
     {"dest": "notes",    "source": "ai:notes",    "kind": "clean"},
     {"dest": "prompts",  "source": "ai:prompts",  "kind": "clean"},
-    {"dest": "work",     "source": "ai:work",     "kind": "clean"},
+    # work_assess_sessions / work_summarize_sessions: curated — rewired from the
+    # scripts/lllm subprocess to the shared per-feature LLM client (features
+    # "session_assess" / "session_summarize"), each independently configurable.
+    # work_landscape: curated — same scrub artifact as 06_todo_audit; MGR_DIR,
+    # ASSESSMENTS_FILE and PM_DECISIONS_FILE were literal "$AI_ROOT/..." strings that
+    # Python never expands, so all three resolved to bogus relative paths.
+    {"dest": "work",     "source": "ai:work",     "kind": "clean",
+     "overrides": {"work_assess_sessions.py": "curated",
+                   "work_summarize_sessions.py": "curated",
+                   "work_landscape.py": "curated"}},
     {"dest": "prompting",      "source": "ai:prompting",      "kind": "clean",
      # scheduling trio set aside (crontab redesign); macOS desktop/webui senders -> curated (Tier-C)
      "exclude": ["set_scheduled_prompt.py", "send_scheduled_prompt.py", "scheduled_prompts_daemon.py"],

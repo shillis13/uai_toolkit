@@ -1,8 +1,8 @@
-#!$AI_ROOT/ai_general/apps/mcps/.venv/bin/python
-"""Summarize AI session activity using the local LLM.
+#!/usr/bin/env python3
+"""Summarize AI session activity using a per-feature configured model.
 
 Reads recent turns from JSONL transcripts or terminal scrollback for running
-sessions, sends them to the local LLM for summarization, and appends the
+sessions, sends them to the ``session_summarize`` endpoint, and appends the
 result to {session_dir}/{tracking_id}_lllmSummary.log.
 
 Usage:
@@ -14,18 +14,9 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import os
-import sys
 from datetime import datetime
 from pathlib import Path
 from textwrap import dedent
-
-# Add script paths. This script lives in scripts/work/ but imports lllm_prompt
-# from scripts/lllm/ — so add that explicitly (NOT this file's own dir).
-_SCRIPTS = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(_SCRIPTS / "session_mgmt"))
-sys.path.insert(0, str(_SCRIPTS / "jsonl"))
-sys.path.insert(0, str(_SCRIPTS / "lllm"))
 
 from uai_toolkit.session_mgmt.session_ops import list_sessions, read_terminal
 from uai_toolkit.session_mgmt.session_store import SessionStore
@@ -99,8 +90,20 @@ def summarize_session(
     mode: str = "jsonl",
     count: int = 3,
 ) -> str | None:
-    """Summarize a single session. Returns the summary text or None on failure."""
-    from lllm_prompt import prompt_text
+    """Summarize a single session. Returns the summary text or None on failure.
+
+    uai_toolkit: the model comes from the `session_summarize` feature's own entry in
+    the LLM endpoint config (local LLLM, a hosted API, or nothing). Unconfigured is
+    the normal default and returns None — the caller treats that as "no summary",
+    exactly as it treats the model being down.
+
+    The shared client is optional (install ``uai-toolkit[full]`` for httpx), but the
+    call is in-process and has no interpreter/shebang mismatch.
+    """
+    from uai_toolkit.llm import complete, is_configured
+
+    if not is_configured("session_summarize"):
+        return None
 
     cli_uuid = session_info.get("cli_session_id", "")
     display_name = session_info.get("display_name") or session_info.get("name") or tracking_id
@@ -127,9 +130,11 @@ def summarize_session(
     input_text = f"Source: {source_desc}\n\n{context}"
 
     try:
-        summary = prompt_text(prompt, input_text)
+        summary = complete("session_summarize", prompt, input_text, max_tokens=800)
     except Exception as e:
         return f"[ERROR summarizing {tracking_id}: {e}]"
+    if not summary:
+        return None            # endpoint chain returned nothing — same as model down
 
     # Append to log
     if session_dir:
@@ -148,8 +153,8 @@ def summarize_session(
 SUMMARIZE_EPILOG = """\
 WHAT IT DOES
   Standalone per-session summarizer. For each selected session it reads recent
-  activity and asks the local LLM (LLLM -- a tool-less llama-server: text in,
-  prose out) for a free-text, human-readable summary of what that session has
+  activity and asks the model configured for ``session_summarize`` for a free-text,
+  human-readable summary of what that session has
   been doing, then APPENDS it to:
     {session_dir}/{tracking_id}_lllmSummary.log
   (and prints it too, unless -q).
@@ -186,7 +191,7 @@ SEE ALSO
 def main():
     parser = argparse.ArgumentParser(
         description="Summarize a session's recent activity into a free-text narrative via the "
-                    "local LLM, appended to {session_dir}/{id}_lllmSummary.log. Standalone -- "
+                    "configured session_summarize model, appended to {session_dir}/{id}_lllmSummary.log. Standalone -- "
                     "does NOT feed the work-landscape join.",
         epilog=SUMMARIZE_EPILOG,
         formatter_class=argparse.RawDescriptionHelpFormatter,

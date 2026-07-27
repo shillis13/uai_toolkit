@@ -1,0 +1,4 @@
+{
+  "mode": "warn",
+  "_modes": "observe | warn | block — flip to advance the enforcement ramp. Per-session: todo_audit.mode in session state."
+}

@@ -1,0 +1,120 @@
+{
+  "_comment": [
+    "Per-feature LLM endpoint configuration for uai_toolkit.",
+    "",
+    "Copy to $AI_ROOT/config/llm_endpoints.json and edit, or point AI_LLM_ENDPOINTS at it.",
+    "NOTHING is configured by default: any feature you leave out (or leave with an empty",
+    "endpoints list) is simply disabled and makes no network connection.",
+    "",
+    "Each feature is INDEPENDENT — give each one whichever model suits it.",
+    "Endpoints within a feature are tried IN ORDER, so you can put a local model first",
+    "and a hosted one as fallback.",
+    "",
+    "Endpoint fields:",
+    "  name         label for logs",
+    "  kind         'openai'    -> POST {base_url}/v1/chat/completions",
+    "                             (local LLLM, vLLM, Ollama, LM Studio, OpenAI, ...)",
+    "               'anthropic' -> POST {base_url}/v1/messages",
+    "  base_url     REQUIRED http(s) destination. Host root or a URL ending in /v1.",
+    "               URL-embedded credentials, query strings, and fragments are rejected.",
+    "  model        model id the endpoint expects",
+    "  api_key_env  NAME OF AN ENV VAR holding the credential (never the key itself).",
+    "               Omit for a local server that needs no auth.",
+    "  timeout      seconds (default 15)",
+    "  max_tokens   response cap (default 500)",
+    "  enabled      set false to switch one endpoint off without deleting it",
+    "  extra_body   optional dict for server-specific knobs; cannot replace prompt/model/token fields",
+    "",
+    "The HTTP transport is optional: install uai-toolkit[full] to provide httpx."
+  ],
+
+  "features": {
+    "quality_gate": {
+      "_doc": "Reviews an assistant response at end of turn. Sends prompt+response text.",
+      "endpoints": [
+        {
+          "name": "local-lllm",
+          "kind": "openai",
+          "base_url": "http://localhost:11881",
+          "model": "local",
+          "timeout": 15
+        },
+        {
+          "name": "hosted-fallback",
+          "kind": "anthropic",
+          "base_url": "https://api.anthropic.com",
+          "model": "claude-haiku-4-5-20251001",
+          "api_key_env": "ANTHROPIC_API_KEY",
+          "enabled": false,
+          "timeout": 15
+        }
+      ]
+    },
+
+    "intent_check": {
+      "_doc": "Checks whether a turn stated an intent but took no action.",
+      "endpoints": [
+        {
+          "name": "local-lllm",
+          "kind": "openai",
+          "base_url": "http://localhost:11881",
+          "model": "local",
+          "timeout": 15
+        }
+      ]
+    },
+
+    "session_assess": {
+      "_doc": "Structured per-session assessment feeding the work landscape.",
+      "endpoints": [
+        {
+          "name": "local-lllm",
+          "kind": "openai",
+          "base_url": "http://localhost:11881",
+          "model": "local",
+          "timeout": 30
+        }
+      ]
+    },
+
+    "session_summarize": {
+      "_doc": "Free-text per-session activity summaries.",
+      "endpoints": [
+        {
+          "name": "local-lllm",
+          "kind": "openai",
+          "base_url": "http://localhost:11881",
+          "model": "local",
+          "timeout": 30
+        }
+      ]
+    },
+
+    "consolidation_summary": {
+      "_doc": "Summarizes a turn-range during context consolidation.",
+      "endpoints": [
+        {
+          "name": "local-lllm",
+          "kind": "openai",
+          "base_url": "http://localhost:11881",
+          "model": "local",
+          "timeout": 60,
+          "max_tokens": 1000
+        }
+      ]
+    },
+
+    "mcp_prompt": {
+      "_doc": "Reserved for a future prompt-only MCP tool; no shipped consumer yet.",
+      "endpoints": [
+        {
+          "name": "local-lllm",
+          "kind": "openai",
+          "base_url": "http://localhost:11881",
+          "model": "local",
+          "timeout": 60
+        }
+      ]
+    }
+  }
+}

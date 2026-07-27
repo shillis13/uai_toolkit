@@ -1,0 +1,113 @@
+# Intent-without-action Stop-hook evaluator — single config, two consumers.
+#
+# Consumer 1 (LLM evaluator): `examples.positive` / `examples.negative` are fed
+#   to the assessing AI as few-shot guidance — "cases like the positives SHOULD
+#   push back; cases like the negatives should NOT." This is where curating the
+#   examples most directly improves accuracy.
+# Consumer 2 (regex pre-filter): the same examples grade + guide `intent_patterns`.
+#   Run `05_intent_without_action_async.py --selftest` to score the patterns
+#   against the examples (recall on positives, false-positives on negatives) and
+#   see which it gets wrong. Regex isn't *learned* from examples like the few-shot
+#   is — the examples test and steer it.
+#
+# TUNING LOOP: the hook logs every evaluated candidate (see settings.log_path).
+# Skim the log, label the misfires, and paste them into positive/negative below.
+
+settings:
+  # Which evaluator mode makes the act-now/wait call. "lllm" is the historical
+  # mode name; in the toolkit it means the shared `intent_check` LLM client.
+  # The endpoint may be local or hosted. Without one, the hook logs "skipped".
+  evaluator: lllm
+
+  # false = observe only (evaluate + log, take NO action).
+  # true  = enforce: when the evaluator says "act now", deliver a self-prompt
+  #         nudge back to the session (async — it never blocks the turn).
+  # Went live 2026-07-07 after the 24-case regression set passed and the delivery
+  # branch was verified. Set back to false to return to observe-only.
+  push_back: false
+
+  # Loop guard: don't re-nudge the same session within this many minutes (a
+  # nudge is submitted as a turn, which could otherwise chain nudge→reply→nudge).
+  renudge_cooldown_min: 15
+
+  # Don't evaluate trivially short turns.
+  min_response_chars: 200
+
+  # JSONL evaluation log (one object per evaluated candidate):
+  #   {ts, result, reason, message}  (+ matched phrase, evaluator verdict).
+  # result ∈ {would_push_back, allow}. In evaluation mode nothing is delivered;
+  # "would_push_back" is what the hook WOULD do if push_back were true.
+  log_path: "$AI_ROOT/ai_general/logs/hooks/intent_without_action.jsonl"
+
+# ── Cheap pre-filter ────────────────────────────────────────────────────────
+# A turn whose closing text matches an intent pattern (and shows no action
+# evidence) is sent to the evaluator; everything else is allowed with no LLM
+# call. Add negative-lookahead guards derived from false positives in the log.
+intent_patterns:
+  - '\bI will\b(?!.*\b(?:not|never)\b)'
+  - "\\bI'll\\b(?!.*\\b(?:not|never)\\b)"
+  - '\bLet me\b'
+  - "\\bI'm going to\\b"
+  - "\\bI'm about to\\b"
+  - "\\bI'll go ahead\\b"
+  - '\bNext,? I(?:\x27ll| will)\b'
+  - '\bI should\b'
+  - '\bWe should\b'
+  - "\\bIt might be worth\\b"
+  # gerund-immediacy intent ("Starting the port now", "Kicking this off") — the
+  # class the benchmark's pb10 exposed; guarded against "Starting point/from/with".
+  - '\b(?:Starting(?!\s+(?:point|from|with|to))|Kicking (?:this )?off|Spinning up|Firing off)\b'
+
+# Action already taken this turn → never push back (skips the evaluator).
+action_evidence:
+  - '```'
+  - '\bDone\b'
+  - '\bFixed\b'
+  - '\bCreated\b'
+  - '\bUpdated\b'
+  - '\bInstalled\b'
+  - '\bCommitted\b'
+  - '\bDeployed\b'
+  - '\bExit:\s*\d'
+  - '\bAll \d+ tests pass'
+
+# Deterministic wait/standing evidence → never ask the LLM. These are the high-
+# precision classes that caused live false positives when left to a probabilistic
+# evaluator: waiting on the user/subagents/builds, or standing monitoring promises.
+wait_evidence:
+  - '\bStanding by\b'
+  - '\b(?:once|after|as soon as|until|when)\b[^.!?]{0,120}\b(?:you|user|subagents?|agents?|explorers?|build|tests?|CI|report|reports|confirms?|confirm|responds?|returns?|finishes?)\b'
+  - '\b(?:Confirm|Answer)\b[^.!?]{0,120}\bI(?:\x27ll| will)\b'
+  - '\bI(?:\x27ll| will)\s+(?:hold|wait)\b'
+  - '\bI(?:\x27ll| will)\s+(?:keep (?:an eye on|tabs on)|monitor|watch(?: for)?)\b'
+  - '\bI(?:\x27ll| will)\s+flag\b[^.!?]{0,80}\b(?:if|anything)\b'
+
+# Deterministic act-now evidence for high-precision borderline cases the LLM
+# sometimes underrates. Applied only after the intent pre-filter and wait guard.
+act_now_evidence:
+  - '\bI(?:\x27ll| will)\s+proceed on (?:that|the) (?:order|approach|plan)\b'
+
+# ── Examples (curate these from the log) ────────────────────────────────────
+examples:
+  # SHOULD push back: clear intent to act, no action taken, no dependency on an
+  # outcome that hasn't happened — the agent just needs to do the thing.
+  positive:
+    - "I'll go ahead and refactor that module now."
+    - "Let me update the config to fix this."
+    - "Next, I'll wire the handler into the dispatcher and run the tests."
+    - "I'm going to add the missing exit code and commit it."
+
+  # Should NOT push back: waiting on a result, a design/choice hand-off to the
+  # user, conditional/deferred intent, negated intent, or action already done.
+  negative:
+    - "I'll proceed once the subagent reports back."
+    - "I'll continue after you confirm the approach."
+    - "I could either use a wrapper or patch each script — which do you prefer?"
+    - "Here are the tradeoffs; I'd want your read before I pick one."
+    - "I will not touch the production config."
+    - "Done — committed and pushed; tests pass."
+    - "I'll act on the result as soon as the build finishes."
+    # Standing/ongoing commitments + completion reports — NOT a discrete action
+    # to do now (the class that false-fired on the hook's own go-live report).
+    - "I'll keep an eye on the CI and ping you if it goes red."
+    - "Shipped and verified — I'll monitor the rollout and report back if anything regresses."

@@ -3,20 +3,21 @@
 
 The Stage-2 author for lib_engram.consolidate. Per PianoMan's call (2026-06-23):
 run BOTH summarizer paths, USE the Claude one, and LOG both for later comparison
-(would the local-LLM have been good enough? would an instruction tweak help?).
+(would the configured model have been good enough? would an instruction tweak help?).
 
 - Claude path: a subagent the orchestrating SESSION spawns (reads the turn-range
   off disk, applies SUMMARY_INSTRUCTION, returns the recall). Pure-Python code
   can't spawn a Claude agent, so the session passes that result into
   shadow_summarize(); see PROCEDURE below.
-- Local-LLM path: lllm_prompt.prompt_text(SUMMARY_INSTRUCTION, range_text) — fully
-  in-process, used only as the shadow candidate (logged, never consolidated with).
+- Model path: the ``consolidation_summary`` feature's independently configured
+  endpoint (local or hosted). It remains only the shadow candidate: logged for
+  comparison, never consolidated with. Unconfigured is the safe default.
 
 PROCEDURE (agent-driven, for the immediate self-bounce / consolidation loop):
   1. pick first_uuid (oldest consolidatable turn; never the live tail)
   2. rng = extract_turn_range(jsonl, first_uuid)
   3. claude_summary = <spawn subagent: read rng, follow SUMMARY_INSTRUCTION>
-  4. used = shadow_summarize(jsonl, first_uuid, claude_summary)  # runs LLLM + logs both
+  4. used = shadow_summarize(jsonl, first_uuid, claude_summary)  # runs model + logs both
   5. lib_engram.consolidate(jsonl, first_uuid, used)             # consolidate with Claude's
 """
 from __future__ import annotations
@@ -110,19 +111,29 @@ def extract_turn_range(jsonl_path, first_uuid: str, leaf_uuid: str | None = None
 
 
 def summarize_via_local_llm(range_text: str, instruction: str = SUMMARY_INSTRUCTION) -> dict:
-    """Shadow path: summarize via the local-LLM reasoning service (in-process)."""
+    """Summarize a turn-range with the model configured for `consolidation_summary`.
+
+    Endpoint comes from this feature's own entry in the LLM endpoint config, so it
+    can point at the local LLLM, a hosted API, or nothing at all. Unconfigured is
+    the default and is not an error: the caller gets ok=False and carries on.
+    (Kept under the historical name so existing callers need no change.)
+    """
+    from uai_toolkit.llm import complete_with_endpoint, is_configured
+
+    if not is_configured("consolidation_summary"):
+        return {"ok": False, "summary": "", "model": "",
+                "error": "no endpoint configured for feature 'consolidation_summary'"}
     try:
-        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lllm"))
-        import lllm_prompt
-        model = ""
-        try:
-            model = lllm_prompt._current_model()
-        except Exception:
-            pass
-        out = lllm_prompt.prompt_text(instruction, range_text)
-        return {"ok": True, "summary": out, "model": model}
-    except Exception as e:
+        result = complete_with_endpoint(
+            "consolidation_summary", instruction, range_text, max_tokens=1000,
+        )
+    except Exception as e:                      # defensive: complete() shouldn't raise
         return {"ok": False, "summary": "", "model": "", "error": f"{type(e).__name__}: {e}"}
+    if not result:
+        return {"ok": False, "summary": "", "model": "",
+                "error": "no endpoint in the chain returned a summary"}
+    out, endpoint = result
+    return {"ok": True, "summary": out, "model": endpoint.get("model", "")}
 
 
 def log_comparison(entry: dict, log_path: Path = SHADOW_LOG) -> Path:
@@ -182,11 +193,11 @@ WHAT IT DOES
                      disk, applies SUMMARY_INSTRUCTION, and returns the recall. Pure
                      Python can't spawn a Claude agent, so the session feeds that text
                      into shadow_summarize() (see the module PROCEDURE docstring).
-    - Local-LLM    — lllm_prompt.prompt_text(SUMMARY_INSTRUCTION, range_text), fully
-                     in-process; the SHADOW candidate only (logged, never consolidated).
+    - Model shadow — the ``consolidation_summary`` feature's configured endpoint.
+                     It may be local or hosted; absent config contacts nothing.
 
   Run directly, this module is a DEMO: it extracts the range at <first_uuid> and runs
-  ONLY the local-LLM shadow path (it prints range stats + the local-LLM candidate). It
+  ONLY the configured shadow path (it prints range stats + that model's candidate). It
   does NOT consolidate and does NOT write the transcript — real consolidation is
   lib_engram.consolidate(), driven by the session, not this CLI.
 
@@ -208,7 +219,7 @@ EXAMPLES
   # Show rich help:
   summarizer.py --help
 
-  # DEMO: extract the range at a first_uuid and print the local-LLM shadow candidate:
+  # DEMO: extract the range at a first_uuid and print the configured shadow candidate:
   summarizer.py ~/.claude/projects/foo/SESSION.jsonl 4b1e...c9
 
   # Same, disambiguating a forked transcript by explicit leaf (library-level):
@@ -220,7 +231,7 @@ CAVEATS
     lib_engram.consolidate(jsonl, first_uuid, claude_summary).
   * <first_uuid> must be a human-turn start ON the active chain; otherwise the library
     raises ("first_uuid not on active chain" / "not a human-turn start").
-  * The local-LLM path is best-effort: if the reasoning service is down it returns
+  * The model path is best-effort: if the configured service is unavailable it returns
     {ok: false, error: ...} rather than raising — the demo still prints that result.
   * Every real shadow run appends an A/B record to
     ai_general/data/summarizer_shadow/comparisons.jsonl (created on demand); shadow
@@ -233,7 +244,7 @@ if __name__ == "__main__":
     if not sys.argv[1:] or sys.argv[1] in ("-h", "--help"):
         print(_USAGE)
         raise SystemExit(0)
-    # Demo: extract a range and run the shadow LLLM path (no consolidation).
+    # Demo: extract a range and run the configured shadow path (no consolidation).
     if len(sys.argv) >= 3:
         rng = extract_turn_range(sys.argv[1], sys.argv[2])
         print(f"range: {rng['turns']} turns, {rng['records']} records, {rng['content_chars']} chars")
