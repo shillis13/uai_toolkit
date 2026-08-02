@@ -224,6 +224,18 @@ MODULES = [
 
     # ---- jsonl ----
     {"dest": "jsonl/standardized_session.py",         "source": "ai:jsonl/lib_standardized_session.py",        "kind": "clean"},
+    # HARD dependencies of read_jsonl that were never vendored — the shipped
+    # read_jsonl was broken without them (verified 2026-08-01):
+    #   `read --turns N`  -> FileNotFoundError (lib_cli_common loaded BY PATH)
+    #   `branches`        -> ModuleNotFoundError: lib_branch_index
+    #   `tail`            -> ModuleNotFoundError: lib_jsonl_tail
+    # NOTE the jsonl-local lib_cli_common is a DIFFERENT, smaller file (266 lines)
+    # than cli/lib_cli_common.py (1976). read_jsonl loads it by path from its own
+    # directory precisely to avoid that same-name collision, so it must land HERE,
+    # not be aliased to the cli one.
+    {"dest": "jsonl/lib_cli_common.py",               "source": "ai:jsonl/lib_cli_common.py",                  "kind": "clean"},
+    {"dest": "jsonl/lib_branch_index.py",             "source": "ai:jsonl/lib_branch_index.py",                "kind": "clean"},
+    {"dest": "jsonl/lib_jsonl_tail.py",               "source": "ai:jsonl/lib_jsonl_tail.py",                  "kind": "clean"},
     {"dest": "jsonl/platform_adapters/__init__.py",   "source": "ai:jsonl/platform_adapters/__init__.py",      "kind": "clean"},
     {"dest": "jsonl/platform_adapters/common.py",     "source": "ai:jsonl/platform_adapters/common.py",        "kind": "clean"},
     {"dest": "jsonl/platform_adapters/agy.py",        "source": "ai:jsonl/platform_adapters/agy.py",           "kind": "clean"},

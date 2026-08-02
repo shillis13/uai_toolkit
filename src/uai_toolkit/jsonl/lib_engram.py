@@ -1,17 +1,13 @@
-"""Engram layer: turn-consolidation disk-ops on top of lib_jsonl_archive.
+"""Compatibility readers for legacy archived Engram stubs.
 
-An *engram* is a stored memory trace: the archived bytes of a consolidated
-turn-range, plus a summary stub left in its place on the active chain. This
-module adds two reversible disk-ops on top of the proven archive engine
-(`lib_jsonl_archive.py`) — it imports the engine's primitives and only extends
-it with a manifest lock + atomic manifest rewrite:
+todo_0692 retired the content-overwrite writer. ``consolidate`` and its
+``summarize`` alias now fail loudly; new reclaim uses ``chain_skip`` (pure
+parentUuid re-pointing, with no archive or stub). This module remains because
+existing transcripts may still contain archived Engram stubs that must be safe
+to read or restore:
 
-  consolidate(...)        page-out — the "Summarize" operation: archive a
-                          turn-range, stub it, re-route the chain. Public alias:
-                          `summarize(...)` (same signature; "consolidate" is
-                          retained as the internal name for back-compat).
-  rehydrate_engram(...)   exact inverse — the user-facing "Restore" operation:
-                          restore the originals + pointers (byte-exact)
+  recall(...)             read an existing archived memory without mutation
+  rehydrate_engram(...)   restore its original records + pointers byte-exactly
 
 Terms
   Engram id    — durable unique id `<first_uuid8>.<uuid4hex8>` minted per
@@ -29,12 +25,8 @@ Terms
   Successor    — the first record of the NEXT human turn (its parentUuid is the
                  pointer we re-route).
 
-Crash-recovery (two-phase commit): bodies are written, then a manifest record
-is appended with state="prepared", then the transcript is committed, then the
-manifest record is flipped to state="committed". recall/rehydrate act only on
-committed records (or recover from the FULL restoration metadata embedded in the
-stub itself). On a CAS race / error the record is flipped to "aborted" and the
-prepared body files are deleted (collectable via memory_manager.py gc-archive).
+Legacy crash-recovery used a two-phase manifest. recall/rehydrate act only on
+committed records (or recover from restoration metadata embedded in the stub).
 
 Manifest: one `kind:"engram"` record per consolidation in the session archive's
 offload_manifest.jsonl (flat locator fields + schema_version + engram_id + state).
@@ -55,7 +47,7 @@ if str(_HERE) not in sys.path:
 
 from uai_toolkit.jsonl.lib_jsonl_archive import (  # noqa: E402  (sys.path tweak above)
     Archive, BodyIntegrityError, _stat_sig, commit, human_turn_indices,
-    render_readable, sha8, tokens, wire_size,
+    is_turn_start, render_readable, sha8, tokens, wire_size,
 )
 
 ENGRAM_STUB_PREFIX = "[engram archived:"
@@ -217,15 +209,8 @@ def _hydrate_body(body, i: int, engram_id, engram_first, range_uuids) -> dict:
 
 # ── leaf / chain selection ────────────────────────────────────────────────
 def _is_human_prompt(rec) -> bool:
-    """Genuine human prompt heuristic (mirrors human_turn_indices fallback)."""
-    if not (isinstance(rec, dict) and rec.get("type") == "user"
-            and not rec.get("isSidechain")):
-        return False
-    content = _content_of(rec)
-    if isinstance(content, str):
-        return True
-    return isinstance(content, list) and not any(
-        isinstance(b, dict) and b.get("type") == "tool_result" for b in content)
+    """Canonical submitted-prompt boundary shared by every planner/enactor surface."""
+    return is_turn_start(rec)
 
 
 def select_active_leaf(records: list, *, leaf_policy: str = "conversational"):
@@ -506,6 +491,16 @@ def consolidate(jsonl_path, first_uuid: str, summary_text: str, *,
     Returns {"ok":True,"engram":<rec>,"orphaned":<n>} | {"error":..} |
     {"raced":True}. Honors dry_run (no writes; returns the would-be result).
     """
+    raise NotImplementedError(
+        "lib_engram.consolidate() is REMOVED (2026-07-27 cutover). It was the legacy "
+        "content-overwrite Summarize: it rewrote a record's message.content with an engram "
+        "stub and mirrored the bodies into a separate archive/manifest. The target "
+        "architecture is pure parentUuid re-pointing — nothing is moved, rewritten, or "
+        "archived, so Restore is byte-exact by construction. Use "
+        "chain_skip.summarize_turn(jsonl_path, first_uuid, summary_text, leaf_uuid=...) "
+        "(path-level), or chain_skip.summarize_range(records, first, last, summary_text=...) "
+        "in-memory. Reading EXISTING engram stubs (recall / rehydrate_engram) still works."
+    )
     jsonl_path = Path(jsonl_path)
     guard = _refuse_if_not_claude(jsonl_path)
     if guard:
@@ -698,14 +693,7 @@ def consolidate(jsonl_path, first_uuid: str, summary_text: str, *,
 
 
 def summarize(*args, **kwargs):
-    """Public alias for :func:`consolidate` — the "Summarize" operation.
-
-    The context-reclaim lever is user-facing-named *Summarize* (it summarizes a
-    turn-range into a reversible summary stub). The historical internal name
-    ``consolidate`` is retained (tests + in-flight callers import it), so this is
-    a thin passthrough with the identical signature/return contract. Prefer
-    ``summarize`` in new call sites; ``consolidate`` keeps working.
-    """
+    """Retired writer alias; raises via :func:`consolidate`."""
     return consolidate(*args, **kwargs)
 
 
@@ -714,7 +702,7 @@ def rehydrate_engram(jsonl_path, first_uuid: str | None = None, *,
                      engram_id: str | None = None, dry_run: bool = False,
                      force: bool = False, force_partial: bool = False,
                      allow_corrupt: bool = False) -> dict:
-    """Exact inverse of consolidate(): restore the archived range content,
+    """Exact inverse of the former consolidate writer: restore archived content,
     set the successor's parentUuid back to its original, and drop the engram
     manifest record. Record CONTENT round-trips byte-exactly. CAS-commit.
 
@@ -909,6 +897,68 @@ def chain_size(jsonl_path, leaf_uuid: str | None = None, *,
 
 
 # ── plan_eviction (size-aware admission control, ADVISORY / read-only) ─────
+def _ESTIMATOR_PROVENANCE(point_tokens: int) -> dict:
+    """What the projected number IS, and what it is not.
+
+    CO-3 was pre-registered to calibrate this divisor and FAILED STRUCTURALLY: the frozen
+    calibration set supplied only one attachment-stratum turn, so no divisor change is
+    licensed and the hold-out stays sealed. What CO-3 did establish, from three
+    thinking-stratum turns measured as supplementary evidence, is that `wire/4` overstated
+    measured NET reclaim by 1.54x to 4.17x. Three turns in one stratum cannot license a
+    numeric lower bound, so the only safe floor is ZERO.
+
+    This block exists so no reader has to re-derive that, and so nobody re-promotes the
+    point estimate to a guarantee. See CO3_RESULT.md and FINDING_bytes_per_token.md.
+    """
+    return {
+        "formula": "max(1, round(wire_chars / 4))",
+        "unit_note": "wire_size() counts CHARACTERS (len of the JSON text), NOT bytes; "
+                     "the /4 divisor is not calibrated against measured tokens",
+        "calibrated": False,
+        "point_tokens": point_tokens,
+        "point_basis": "legacy uncalibrated heuristic",
+        "lower_bound_tokens": 0,
+        # There is no supported numeric UPPER bound either. wire/4 came out high in three
+        # thinking-stratum samples; three samples in one stratum bound nothing, and calling
+        # it an upper bound would invent the same authority in the other direction.
+        "upper_bound_tokens": None,
+        "upper_bound_basis": "unsupported — no calibration establishes an upper bound",
+        "lower_bound_basis": "CO-3 licensed no numeric lower bound (n=3, single stratum, "
+                             "and without the run-time CLI version its registration "
+                             "required); 0 is the only defensible floor",
+        "measured_net_overstatement": {
+            "range_multiple": [1.54, 4.17],
+            "implied_net_divisors": [6.18, 7.69, 16.68],
+            "sample": "n=3 thinking-stratum turns measured as SUPPLEMENTARY evidence; "
+                      "NOT the CO-3 calibration set, whose registered decision rule failed "
+                      "structurally before the hold-out was opened",
+            "transfers_to_other_strata": False,
+        },
+        "guarantee": "NONE — projection only. Do not treat as guaranteed reclaim.",
+        # Every field below is derived from the SAME uncalibrated point estimate. Named
+        # here so a consumer cannot treat them as independently reliable just because they
+        # are not called "tokens".
+        "point_derived_fields": ["selected[].tokens", "total_freed_tokens",
+                                 "chain_tokens_after_est", "feasible", "shortfall_tokens"],
+        # Machine-readable, not a comment: legacy name -> the explicit field that says what
+        # it actually is. A consumer can migrate without reading prose.
+        "compatibility_aliases": {
+            "selected[].tokens": "selected[].tokens_point_estimate",
+            "total_freed_tokens": "total_freed_tokens_point",
+            "chain_tokens_after_est": "chain_tokens_after_point_estimate",
+            "feasible": "feasible_on_point_estimate",
+            "shortfall_tokens": "shortfall_tokens_point_estimate",
+        },
+        "evidence_artifact": "work/experiments/t2_context_agency/CO3_RESULT.md",
+        "excludes_summary_residue": (
+            "NET reclaim is this gross figure MINUS the summary this plan will insert, "
+            "which is re-injected on resume. That subtraction is NOT applied here: the "
+            "one measured residue (405 tokens for a fixed 400-character summary) is "
+            "specific to that control and does not transfer to LLM-authored summaries of "
+            "unknown length."),
+    }
+
+
 def plan_eviction(jsonl_path, *, need_tokens: int, keep_recent_turns: int = 3,
                   strategy: str = "oldest", leaf_uuid: str | None = None,
                   leaf_policy: str = "conversational") -> dict:
@@ -977,13 +1027,25 @@ def plan_eviction(jsonl_path, *, need_tokens: int, keep_recent_turns: int = 3,
         content = _content_of(rec) if isinstance(rec.get("message"), dict) else None
         has_successor = ordinal < n_turns
         in_recent_window = ordinal > n_turns - keep_recent_turns
-        if is_engram_stub(content) or not has_successor or in_recent_window:
+        # pos == 0 is the CHAIN ROOT. It anchors the resumed chain (post-compaction it is
+        # the isCompactSummary), so it can never be summarized — chain_skip refuses it
+        # outright. The legacy consolidate() silently allowed it; the 2026-07-27 cutover
+        # surfaced that as a planner/enactor mismatch (planner proposed an un-enactable
+        # candidate and reclaim returned "nothing consolidated"). Exclude it at the source.
+        is_chain_root = pos == 0
+        if (is_engram_stub(content) or not has_successor or in_recent_window
+                or is_chain_root):
             continue
         nexti = human[ordinal]                       # next human pos on the chain
         segment = chain[pos:nexti]
         seg_tokens = tokens(sum(wire_size(r) for r in segment))
         candidates.append({"first_uuid": rec.get("uuid"),
-                           "turn_index": ordinal, "tokens": seg_tokens})
+                           "turn_index": ordinal,
+                           # `tokens` is a COMPATIBILITY ALIAS; the explicit name says
+                           # which estimate it is. A bare field named `tokens` reads as a
+                           # measurement to both machines and people.
+                           "tokens": seg_tokens,
+                           "tokens_point_estimate": seg_tokens})
 
     if strategy == "largest":
         ordered = sorted(candidates, key=lambda c: c["tokens"], reverse=True)
@@ -1010,7 +1072,22 @@ def plan_eviction(jsonl_path, *, need_tokens: int, keep_recent_turns: int = 3,
         "strategy": strategy,
         "keep_recent_turns": keep_recent_turns,
         "selected": selected,
+        # UNCHANGED for callers. This is a POINT ESTIMATE, not guaranteed reclaim; see
+        # `estimator` below and read `guaranteed_reclaim_tokens` before gating on it.
         "total_freed_tokens": total,
+        "total_freed_tokens_point": total,
+        "chain_tokens_after_point_estimate": chain_tokens_before - total,
+        "feasible_on_point_estimate": feasible,
+        "shortfall_tokens_point_estimate": max(0, need_tokens - total),
+        # The same two decisions on the only bound CO-3 licenses. Emitted side by side so
+        # the difference between "the heuristic says we can" and "we can prove we can" is
+        # visible in the payload rather than inferable from a distant metadata list.
+        "feasible_on_guaranteed_bound": need_tokens <= 0,
+        "shortfall_tokens_on_guaranteed_bound": max(0, need_tokens),
+        # The only floor CO-3 licenses. Stated explicitly so a caller cannot mistake the
+        # point estimate for a promise, which is exactly what happened before.
+        "guaranteed_reclaim_tokens": 0,
+        "estimator": _ESTIMATOR_PROVENANCE(total),
         "chain_tokens_before": chain_tokens_before,
         "chain_tokens_after_est": chain_tokens_before - total,
         "feasible": feasible,

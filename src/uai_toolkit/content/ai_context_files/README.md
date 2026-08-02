@@ -20,24 +20,41 @@ References from `ai_profiles/` are **extension-less, `ai_general`-relative paths
 
 ### `instructions/` — how to operate
 
-| Category | Dir | Prefix | What |
-|---|---|---|---|
-| Collaboration | `collaboration/` | `feedback_` | How PianoMan works: preferences, working norms, standing feedback |
-| Rules | `rules/` | `rules_` | Normative conventions (naming, versioning, formatting, multi-session safety) |
-| How-tos | `how_tos/` | `instr_` | Procedures for a specific system or task |
-| Perspectives | `perspectives/` | `perspective_` | Mindsets / operating principles / verification & quality discipline |
-| Reminders | `reminders/` | `reminder_` | Short recurring nudges |
-| UX | `ux/` | `ux_` | Visual / UI standards |
-| Templates | `templates/` | *(none; descriptive names, usually `*_template`)* | Document scaffolding that generates dynamic instances |
+┌───────────────┬──────────────────┬──────────────────────────────────────────┬────────────────────────────────────────────────────────────┐
+│ **Category**  │ **Dir**          │ **Prefix**                               │ **What**                                                   │
+├───────────────┼──────────────────┼──────────────────────────────────────────┼────────────────────────────────────────────────────────────┤
+│ Collaboration │ `collaboration/` │ `feedback_`                              │ How PianoMan works: preferences, working norms, standing   │
+│               │                  │                                          │ feedback                                                   │
+├───────────────┼──────────────────┼──────────────────────────────────────────┼────────────────────────────────────────────────────────────┤
+│ Rules         │ `rules/`         │ `rules_`                                 │ Normative conventions (naming, versioning, formatting,     │
+│               │                  │                                          │ multi-session safety)                                      │
+├───────────────┼──────────────────┼──────────────────────────────────────────┼────────────────────────────────────────────────────────────┤
+│ How-tos       │ `how_tos/`       │ `instr_`                                 │ Procedures for a specific system or task                   │
+├───────────────┼──────────────────┼──────────────────────────────────────────┼────────────────────────────────────────────────────────────┤
+│ Perspectives  │ `perspectives/`  │ `perspective_`                           │ Mindsets / operating principles / verification & quality   │
+│               │                  │                                          │ discipline                                                 │
+├───────────────┼──────────────────┼──────────────────────────────────────────┼────────────────────────────────────────────────────────────┤
+│ Reminders     │ `reminders/`     │ `reminder_`                              │ Short recurring nudges                                     │
+├───────────────┼──────────────────┼──────────────────────────────────────────┼────────────────────────────────────────────────────────────┤
+│ UX            │ `ux/`            │ `ux_`                                    │ Visual / UI standards                                      │
+├───────────────┼──────────────────┼──────────────────────────────────────────┼────────────────────────────────────────────────────────────┤
+│ Templates     │ `templates/`     │ *(none; descriptive names, usually       │ Document scaffolding that generates dynamic instances      │
+│               │                  │ `*_template` )*                          │                                                            │
+└───────────────┴──────────────────┴──────────────────────────────────────────┴────────────────────────────────────────────────────────────┘
 
 ### `knowledge/` — what is
 
-| Category | Dir | Prefix | What |
-|---|---|---|---|
-| Reference | `reference/` | `ref_` | Facts about tools, systems, and mechanisms |
-| Architecture | `architecture/` | `arch_` | Structural / system understanding |
-| Schemas | `schemas/` | `schema_` | Data schemas (`.json`) |
-| Specs | `specs/` | `spec_` | Specifications |
+┌──────────────┬─────────────────┬────────────┬────────────────────────────────────────────┐
+│ **Category** │ **Dir**         │ **Prefix** │ **What**                                   │
+├──────────────┼─────────────────┼────────────┼────────────────────────────────────────────┤
+│ Reference    │ `reference/`    │ `ref_`     │ Facts about tools, systems, and mechanisms │
+├──────────────┼─────────────────┼────────────┼────────────────────────────────────────────┤
+│ Architecture │ `architecture/` │ `arch_`    │ Structural / system understanding          │
+├──────────────┼─────────────────┼────────────┼────────────────────────────────────────────┤
+│ Schemas      │ `schemas/`      │ `schema_`  │ Data schemas (`.json`)                     │
+├──────────────┼─────────────────┼────────────┼────────────────────────────────────────────┤
+│ Specs        │ `specs/`        │ `spec_`    │ Specifications                             │
+└──────────────┴─────────────────┴────────────┴────────────────────────────────────────────┘
 
 ## Also here
 
@@ -62,12 +79,17 @@ References from `ai_profiles/` are **extension-less, `ai_general`-relative paths
 
 Leaves are composed into:
 
-| Kind | Dir | Is |
-|---|---|---|
-| **bundle** | `ai_profiles/bundles/` | A curated content-set (references leaves + other bundles) |
-| **role** | `ai_profiles/roles/` | Bundle + responsibilities; composes sub-roles |
-| **skill** | `ai_profiles/skills/` | A capability |
-| **global** | `ai_profiles/globals/` | Loaded for every agent |
+┌────────────┬────────────────────────┬───────────────────────────────────────────────────────────┐
+│ **Kind**   │ **Dir**                │ **Is**                                                    │
+├────────────┼────────────────────────┼───────────────────────────────────────────────────────────┤
+│ **bundle** │ `ai_profiles/bundles/` │ A curated content-set (references leaves + other bundles) │
+├────────────┼────────────────────────┼───────────────────────────────────────────────────────────┤
+│ **role**   │ `ai_profiles/roles/`   │ Bundle + responsibilities; composes sub-roles             │
+├────────────┼────────────────────────┼───────────────────────────────────────────────────────────┤
+│ **skill**  │ `ai_profiles/skills/`  │ A capability                                              │
+├────────────┼────────────────────────┼───────────────────────────────────────────────────────────┤
+│ **global** │ `ai_profiles/globals/` │ Loaded for every agent                                    │
+└────────────┴────────────────────────┴───────────────────────────────────────────────────────────┘
 
 The `profile` kind is **retired** — a session carries roles and bundles directly. See
 `ai_profiles/DESIGN.md`.
